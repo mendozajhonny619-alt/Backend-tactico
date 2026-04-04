@@ -2,14 +2,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from flask import Flask
-from app.api.routes import api_bp
+from app.api.routes import register_routes
 
-def create_app():
-    app = Flask(__name__)
-    app.register_blueprint(api_bp)
-    return app
+app = Flask(__name__)
+register_routes(app)
 
-app = create_app()
-
+# 👇 IMPORTANTE PARA RENDER
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    import os
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
