@@ -1,8 +1,8 @@
 import os
 
 class Config:
-    API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "")
-    THE_ODDS_API_KEY = os.getenv("THE_ODDS_API_KEY", "")
+    API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "").strip()
+    THE_ODDS_API_KEY = os.getenv("THE_ODDS_API_KEY", "").strip()
 
     CUOTA_MINIMA = 1.50
     CUOTA_MAXIMA = 2.10
