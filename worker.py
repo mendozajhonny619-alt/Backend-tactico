@@ -7,6 +7,7 @@ load_dotenv()
 from app.services.scan_service import ScanService
 from app.services.signal_service import SignalService
 from app.services.history_service import HistoryService
+from app.services.live_signal_manager import LiveSignalManager
 from app.fetchers.live_match_fetcher import LiveMatchFetcher
 from app.fetchers.odds_fetcher import OddsFetcher
 
@@ -35,8 +36,10 @@ def iniciar_worker():
             if not live_matches:
                 logging.info("No hay partidos elegibles en este ciclo.")
             else:
-                signals = scanner.escanear_partidos(live_matches, live_odds)
-                logging.info(f"Señales válidas detectadas: {len(signals)}")
+                signals_raw = scanner.escanear_partidos(live_matches, live_odds)
+                signals = LiveSignalManager.actualizar_signales(signals_raw)
+
+                logging.info(f"Señales activas detectadas: {len(signals)}")
 
                 for signal in signals:
                     msg = SignalService.crear_formato_v16(signal["match"], signal["motores"])
@@ -44,7 +47,9 @@ def iniciar_worker():
                     HistoryService.registrar_senal(signal["match"], signal["motores"])
 
                     logging.info(
-                        f"SEÑAL EMITIDA: {signal['match'].get('home')} vs {signal['match'].get('away')}"
+                        f"SEÑAL ACTIVA: {signal['match'].get('home')} vs {signal['match'].get('away')} "
+                        f"| Score: {signal['match'].get('signal_score')} "
+                        f"| Rank: {signal['match'].get('signal_rank')}"
                     )
 
             time.sleep(60)
