@@ -37,7 +37,7 @@ def iniciar_worker():
                 logging.info("No hay partidos elegibles en este ciclo.")
             else:
                 signals_raw = scanner.escanear_partidos(live_matches, live_odds)
-                signals = LiveSignalManager.actualizar_signales(signals_raw)
+                signals = LiveSignalManager.actualizar_signales(signals_raw, live_matches)
 
                 logging.info(f"Señales activas detectadas: {len(signals)}")
 
