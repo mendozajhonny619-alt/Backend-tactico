@@ -16,11 +16,21 @@ class LiveMatchFetcher:
         }
 
     def fetch_live_data(self):
+        if not Config.API_FOOTBALL_KEY:
+            logging.warning("API_FOOTBALL_KEY no configurada.")
+            return []
+
         try:
             response = requests.get(self.url, headers=self.headers, timeout=10)
+
+            if response.status_code != 200:
+                logging.error(f"FETCH_ERROR API-Football status {response.status_code}: {response.text}")
+                return []
+
             data = response.json()
 
             if not data.get("response"):
+                logging.info("API-Football no devolvió partidos en vivo.")
                 return []
 
             return self._normalize(data["response"])
@@ -34,25 +44,31 @@ class LiveMatchFetcher:
 
         for m in raw_matches:
             try:
-                fixture = m["fixture"]
-                goals = m["goals"]
+                fixture = m.get("fixture", {})
+                goals = m.get("goals", {})
+                teams = m.get("teams", {})
+                league = m.get("league", {})
+                statistics = m.get("statistics", [])
 
-                if not fixture or goals["home"] is None:
+                if not fixture or goals.get("home") is None:
                     continue
 
+                minuto = fixture.get("status", {}).get("elapsed") or 0
+
                 match_map = {
-                    "match_id": fixture["id"],
-                    "home": m["teams"]["home"]["name"],
-                    "away": m["teams"]["away"]["name"],
-                    "league": m["league"]["name"],
-                    "country": m["league"]["country"],
-                    "minute": fixture["status"]["elapsed"],
-                    "score": f"{goals['home']}-{goals['away']}",
-                    "dangerous_attacks": self._get_stat(m.get("statistics", []), "Dangerous Attacks"),
-                    "shots": self._get_stat(m.get("statistics", []), "Total Shots"),
-                    "shots_on_target": self._get_stat(m.get("statistics", []), "Shots on Goal"),
-                    "corners": self._get_stat(m.get("statistics", []), "Corner Kicks"),
-                    "xG": float(self._get_stat(m.get("statistics", []), "expected_goals") or 0.0),
+                    "match_id": fixture.get("id"),
+                    "home": teams.get("home", {}).get("name", "Desconocido"),
+                    "away": teams.get("away", {}).get("name", "Desconocido"),
+                    "league": league.get("name", "Desconocida"),
+                    "country": league.get("country", "Desconocido"),
+                    "minute": minuto,
+                    "score": f"{goals.get('home', 0)}-{goals.get('away', 0)}",
+                    "dangerous_attacks": self._get_stat(statistics, "Dangerous Attacks"),
+                    "shots": self._get_stat(statistics, "Total Shots"),
+                    "shots_on_target": self._get_stat(statistics, "Shots on Goal"),
+                    "corners": self._get_stat(statistics, "Corner Kicks"),
+                    "xG": float(self._get_stat(statistics, "expected_goals") or 0.0),
+                    "red_cards": self._get_stat(statistics, "Red Cards"),
                     "confidence": 80.0,
                     "prob_real": 0.65
                 }
