@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 import threading
 
-# IMPORTAMOS EL WORKER
 from worker import iniciar_worker
 
 app = FastAPI(title="JHONNY ELITE V16 API")
+
+worker_started = False
 
 @app.get("/")
 def root():
@@ -14,10 +15,10 @@ def root():
 def health():
     return {"status": "ok"}
 
-
-# 🚀 INICIAR WORKER EN SEGUNDO PLANO
-def start_worker():
-    iniciar_worker()
-
-
-threading.Thread(target=start_worker, daemon=True).start()
+@app.on_event("startup")
+def startup_event():
+    global worker_started
+    if not worker_started:
+        thread = threading.Thread(target=iniciar_worker, daemon=True)
+        thread.start()
+        worker_started = True
