@@ -44,6 +44,10 @@ class HistoryService:
             "value_category": motores.get("value", {}).get("value_category"),
             "match_state": motores.get("tactica", {}).get("match_state"),
             "risk_score": motores.get("riesgo", {}).get("risk_score"),
+            "signal_score": match.get("signal_score"),
+            "signal_rank": match.get("signal_rank"),
+            "publish_ready": match.get("publish_ready"),
+            "reason": match.get("reason"),
             "resultado_final": "PENDIENTE",
             "motivo_fallo": "N/A"
         }
