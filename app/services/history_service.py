@@ -30,7 +30,7 @@ class HistoryService:
         registro = {
             "timestamp": datetime.now().isoformat(),
             "match_id": match.get("match_id"),
-            "partido": f"{match.get('home')} vs {match.get('away')}",
+            "partido": f"{match.get('home', 'N/A')} vs {match.get('away', 'N/A')}",
             "liga": match.get("league"),
             "pais": match.get("country"),
             "minuto": match.get("minute"),
