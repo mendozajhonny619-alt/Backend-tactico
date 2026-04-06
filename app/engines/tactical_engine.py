@@ -14,7 +14,7 @@ class TacticalEngine:
         if ppm > 1.2 and remates_arco >= 3:
             estado = "EXPLOSIVO"
             razon = "Alta frecuencia de ataques peligrosos con puntería"
-        elif ppm > 0.8:
+        elif ppm > 0.8 and remates_arco >= 1:
             estado = "CALIENTE"
             razon = "Presión constante en área rival"
         elif ppm < 0.3 and minuto > 20:
@@ -29,7 +29,9 @@ class TacticalEngine:
             "match_state": estado,
             "match_state_reason": razon,
             "intensity_score": round(ppm * 10, 2),
-            "shots": remates_total
+            "shots": remates_total,
+            "shots_on_target": remates_arco,
+            "dangerous_attacks": ataques_p
         }
 
     @staticmethod
@@ -50,4 +52,4 @@ class TacticalEngine:
             "gol_inminente": es_inminente,
             "confianza_ventana": confianza_gol,
             "ventana_minutos": 10 if es_inminente else 0
-          }
+        }
