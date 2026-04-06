@@ -1,4 +1,4 @@
- import time
+import time
 import logging
 from dotenv import load_dotenv
 
@@ -6,6 +6,7 @@ load_dotenv()
 
 from app.services.scan_service import ScanService
 from app.services.signal_service import SignalService
+from app.services.notifier_service import NotifierService
 from app.services.history_service import HistoryService
 from app.fetchers.live_match_fetcher import LiveMatchFetcher
 from app.fetchers.odds_fetcher import OddsFetcher
@@ -41,7 +42,7 @@ def iniciar_worker():
 
                 for signal in signals:
                     msg = SignalService.crear_formato_v16(signal["match"], signal["motores"])
-                    print(msg)
+                    NotifierService.send_telegram_signal(msg)
                     HistoryService.registrar_senal(signal["match"], signal["motores"])
 
                     logging.info(
@@ -56,6 +57,3 @@ def iniciar_worker():
         except Exception as e:
             logging.exception(f"FALLO CRÍTICO EN WORKER: {e}")
             time.sleep(30)
-
-if __name__ == "__main__":
-    iniciar_worker()
