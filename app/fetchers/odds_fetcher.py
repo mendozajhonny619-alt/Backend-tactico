@@ -12,6 +12,10 @@ class OddsFetcher:
         self.base_url = "https://api.the-odds-api.com/v4/sports/soccer/odds"
 
     def get_live_odds(self, regions="eu"):
+        if not Config.THE_ODDS_API_KEY:
+            logging.warning("THE_ODDS_API_KEY no configurada.")
+            return []
+
         params = {
             "api_key": self.api_key,
             "regions": regions,
@@ -23,10 +27,18 @@ class OddsFetcher:
             response = requests.get(self.base_url, params=params, timeout=10)
 
             if response.status_code != 200:
-                logging.error(f"ODDS_ERROR: Status {response.status_code}")
+                logging.error(
+                    f"ODDS_ERROR: Status {response.status_code} - {response.text}"
+                )
                 return []
 
-            return response.json()
+            data = response.json()
+
+            if not isinstance(data, list):
+                logging.warning("The Odds API devolvió un formato inesperado.")
+                return []
+
+            return data
 
         except Exception as e:
             logging.error(f"FETCH_ERROR en The Odds API: {e}")
