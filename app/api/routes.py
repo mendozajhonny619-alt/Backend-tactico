@@ -3,6 +3,7 @@ from app.services.dashboard_service import DashboardService
 
 router = APIRouter()
 
+
 @router.get("/")
 def home():
     return {
@@ -10,6 +11,7 @@ def home():
         "service": "JHONNY_ELITE V16",
         "message": "API operativa 🚀"
     }
+
 
 @router.get("/health")
 def health():
@@ -21,6 +23,7 @@ def health():
             "message": "Healthcheck falló"
         }
 
+
 @router.get("/stats")
 def stats():
     try:
@@ -31,6 +34,7 @@ def stats():
             "data": {}
         }
 
+
 @router.get("/history")
 def history():
     try:
@@ -40,3 +44,14 @@ def history():
             "error": "No se pudo obtener historial",
             "data": []
         }
+
+
+@router.get("/signals")
+def signals():
+    try:
+        return DashboardService.get_active_signals()
+    except Exception:
+        return {
+            "error": "No se pudieron obtener señales activas",
+            "data": []
+            }
