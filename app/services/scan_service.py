@@ -36,6 +36,8 @@ class ScanService:
                 minuto = match.get("minute", 0)
                 shots_on_target = match.get("shots_on_target", 0)
                 dangerous_attacks = match.get("dangerous_attacks", 0)
+                edge = valor.get("edge", 0)
+                mercado_valido = mercado.get("valid", False)
 
                 # 1. BLOQUEOS DUROS
                 if riesgo.get("is_blocked", False):
@@ -47,7 +49,7 @@ class ScanService:
                 if confidence < 60:
                     continue
 
-                # 2. VENTANAS FLEXIBLES
+                # 2. VENTANAS OPERATIVAS FLEXIBLES
                 en_ventana = (
                     (25 <= minuto <= 45)
                     or (60 <= minuto <= 75)
@@ -58,17 +60,11 @@ class ScanService:
                 if not en_ventana:
                     continue
 
-                # 3. MERCADO
-                # Si hay odds reales válidas, mejor.
-                # Si no, permitimos competir a la señal, pero con castigo en score.
-                mercado_valido = mercado.get("valid", False)
-
-                # 4. VALUE FLEXIBLE
-                edge = valor.get("edge", 0)
-                if edge < 0.02:
+                # 3. VALUE MÍNIMO FLEXIBLE
+                if edge < 0.01:
                     continue
 
-                # 5. CONSENSO FLEXIBLE
+                # 4. CONSENSO FLEXIBLE
                 consenso = 0
 
                 if tactica.get("match_state") in ["CONTROLADO", "CALIENTE", "EXPLOSIVO"]:
@@ -86,10 +82,10 @@ class ScanService:
                 if riesgo.get("risk_score", 99) <= 5:
                     consenso += 1
 
-                if consenso < 3:
+                if consenso < 2:
                     continue
 
-                # 6. SCORE FINAL
+                # 5. SCORE FINAL
                 signal_score = self._calcular_signal_score(
                     confidence=confidence,
                     edge=edge,
@@ -102,8 +98,8 @@ class ScanService:
                     dangerous_attacks=dangerous_attacks
                 )
 
-                # mínimo flexible para entrar al top
-                if signal_score < 62:
+                # 6. SCORE MÍNIMO PARA COMPETIR EN EL TOP
+                if signal_score < 55:
                     continue
 
                 signal_rank = self._clasificar_signal_rank(signal_score)
@@ -144,13 +140,13 @@ class ScanService:
                 print(f"ERROR en escanear_partidos: {e}")
                 continue
 
-        # ordenar por score, de más fuerte a más débil
+        # Ordenar de la más fuerte a la más débil
         candidatas.sort(
             key=lambda x: x["match"].get("signal_score", 0),
             reverse=True
         )
 
-        # devolver máximo 6
+        # Máximo 6 señales
         return candidatas[:6]
 
     def _calcular_signal_score(
@@ -167,10 +163,10 @@ class ScanService:
     ):
         score = 0
 
-        # confianza: hasta 30
+        # Confianza: hasta 30 puntos
         score += min(max(confidence, 0), 100) * 0.30
 
-        # edge: hasta 20
+        # Edge: hasta 20 puntos
         if edge >= 0.15:
             score += 20
         elif edge >= 0.10:
@@ -179,8 +175,10 @@ class ScanService:
             score += 12
         elif edge >= 0.02:
             score += 8
+        elif edge >= 0.01:
+            score += 4
 
-        # táctica: hasta 15
+        # Estado táctico: hasta 15 puntos
         if match_state == "EXPLOSIVO":
             score += 15
         elif match_state == "CALIENTE":
@@ -188,31 +186,32 @@ class ScanService:
         elif match_state == "CONTROLADO":
             score += 7
 
-        # predictor de gol: hasta 8
+        # Gol inminente: hasta 8 puntos
         if gol_inminente:
             score += 8
 
-        # consenso: hasta 10
+        # Consenso: hasta 10 puntos
         score += consenso * 2
 
-        # mercado: bono pequeño
+        # Mercado válido: bono o castigo
         if mercado_valido:
             score += 7
         else:
             score -= 5
 
-        # presión real
+        # Remates a puerta
         if shots_on_target >= 3:
             score += 5
         elif shots_on_target >= 1:
             score += 2
 
+        # Ataques peligrosos
         if dangerous_attacks >= 25:
             score += 5
         elif dangerous_attacks >= 15:
             score += 2
 
-        # riesgo: castigo
+        # Riesgo: castigo
         score -= min(risk_score * 2, 15)
 
         return round(max(score, 0), 2)
