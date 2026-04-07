@@ -46,7 +46,7 @@ class ScanService:
                 if tactica.get("match_state") in ["MUERTO", "CAOS PELIGROSO"]:
                     continue
 
-                if confidence < 60:
+                if confidence < 50:
                     continue
 
                 # 2. VENTANAS OPERATIVAS FLEXIBLES
@@ -61,7 +61,7 @@ class ScanService:
                     continue
 
                 # 3. VALUE MÍNIMO FLEXIBLE
-                if edge < 0.01:
+                if edge < 0.005:
                     continue
 
                 # 4. CONSENSO FLEXIBLE
@@ -99,7 +99,7 @@ class ScanService:
                 )
 
                 # 6. SCORE MÍNIMO PARA COMPETIR EN EL TOP
-                if signal_score < 55:
+                if signal_score < 45:
                     continue
 
                 signal_rank = self._clasificar_signal_rank(signal_score)
@@ -140,13 +140,11 @@ class ScanService:
                 print(f"ERROR en escanear_partidos: {e}")
                 continue
 
-        # Ordenar de la más fuerte a la más débil
         candidatas.sort(
             key=lambda x: x["match"].get("signal_score", 0),
             reverse=True
         )
 
-        # Máximo 6 señales
         return candidatas[:6]
 
     def _calcular_signal_score(
@@ -177,6 +175,8 @@ class ScanService:
             score += 8
         elif edge >= 0.01:
             score += 4
+        elif edge >= 0.005:
+            score += 2
 
         # Estado táctico: hasta 15 puntos
         if match_state == "EXPLOSIVO":
