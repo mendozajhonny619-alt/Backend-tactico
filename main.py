@@ -10,14 +10,6 @@ app.include_router(router)
 
 worker_started = False
 
-@app.get("/")
-def root():
-    return {"message": "API funcionando 🚀"}
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
 @app.on_event("startup")
 def startup_event():
     global worker_started
