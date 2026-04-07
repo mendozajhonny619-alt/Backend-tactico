@@ -1,25 +1,42 @@
-from flask import Blueprint, jsonify
+from fastapi import APIRouter
 from app.services.dashboard_service import DashboardService
-from app.services.history_service import HistoryService
 
-api_bp = Blueprint("api", __name__)
+router = APIRouter()
 
-@api_bp.route("/", methods=["GET"])
+@router.get("/")
 def home():
-    return jsonify({
+    return {
         "ok": True,
         "service": "JHONNY_ELITE V16",
-        "message": "API operativa"
-    }), 200
+        "message": "API operativa 🚀"
+    }
 
-@api_bp.route("/health", methods=["GET"])
+@router.get("/health")
 def health():
-    return jsonify(DashboardService.healthcheck()), 200
+    try:
+        return DashboardService.healthcheck()
+    except Exception:
+        return {
+            "status": "error",
+            "message": "Healthcheck falló"
+        }
 
-@api_bp.route("/stats", methods=["GET"])
+@router.get("/stats")
 def stats():
-    return jsonify(DashboardService.get_stats()), 200
+    try:
+        return DashboardService.get_stats()
+    except Exception:
+        return {
+            "error": "No se pudieron obtener stats",
+            "data": {}
+        }
 
-@api_bp.route("/history", methods=["GET"])
+@router.get("/history")
 def history():
-    return jsonify(DashboardService.get_history_panel()), 200
+    try:
+        return DashboardService.get_history_panel()
+    except Exception:
+        return {
+            "error": "No se pudo obtener historial",
+            "data": []
+        }
