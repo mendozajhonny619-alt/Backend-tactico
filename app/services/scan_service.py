@@ -13,12 +13,11 @@ class ScanService:
 
         for match in live_matches:
             try:
+                market = match.get("market", "OVER_MATCH_DYNAMIC")
+
                 tactica = TacticalEngine.analizar_momentum(match)
                 predictor = TacticalEngine.predictor_gol_inminente(match)
-                riesgo = RiskEngine.evaluar_riesgo(
-                    match,
-                    match.get("market", "OVER_MATCH_DYNAMIC")
-                )
+                riesgo = RiskEngine.evaluar_riesgo(match, market)
                 mercado = self.market_engine.validar_mercado(match, odds_data)
 
                 if mercado.get("valid"):
@@ -34,9 +33,21 @@ class ScanService:
                     }
 
                 confidence = match.get("confidence", 0)
-
-                # REGLA 1: ventanas operativas
                 minuto = match.get("minute", 0)
+                shots_on_target = match.get("shots_on_target", 0)
+                dangerous_attacks = match.get("dangerous_attacks", 0)
+
+                # 1. BLOQUEOS DUROS
+                if riesgo.get("is_blocked", False):
+                    continue
+
+                if tactica.get("match_state") in ["MUERTO", "CAOS PELIGROSO"]:
+                    continue
+
+                if confidence < 60:
+                    continue
+
+                # 2. VENTANAS FLEXIBLES
                 en_ventana = (
                     (25 <= minuto <= 45)
                     or (60 <= minuto <= 75)
@@ -44,74 +55,76 @@ class ScanService:
                     or (76 <= minuto <= 85 and riesgo.get("risk_score", 0) <= 4)
                 )
 
-                # REGLA 2: NO BET premium
                 if not en_ventana:
                     continue
 
-                # REGLA 3: filtros duros
-                if riesgo.get("is_blocked", True):
+                # 3. MERCADO
+                # Si hay odds reales válidas, mejor.
+                # Si no, permitimos competir a la señal, pero con castigo en score.
+                mercado_valido = mercado.get("valid", False)
+
+                # 4. VALUE FLEXIBLE
+                edge = valor.get("edge", 0)
+                if edge < 0.02:
                     continue
 
-                if not mercado.get("valid", False):
-                    continue
-
-                if confidence < Config.CONFIANZA_MINIMA:
-                    continue
-
-                if valor.get("status") != "OK":
-                    continue
-
-                if tactica.get("match_state") in ["MUERTO", "CAOS PELIGROSO"]:
-                    continue
-
-                # REGLA 4: consenso interno simple
+                # 5. CONSENSO FLEXIBLE
                 consenso = 0
 
-                if tactica.get("match_state") in ["CALIENTE", "EXPLOSIVO"]:
+                if tactica.get("match_state") in ["CONTROLADO", "CALIENTE", "EXPLOSIVO"]:
                     consenso += 1
 
                 if predictor.get("gol_inminente"):
                     consenso += 1
 
-                if valor.get("status") == "OK":
+                if edge >= 0.05:
                     consenso += 1
 
-                if mercado.get("valid"):
+                if mercado_valido:
                     consenso += 1
 
-                if not riesgo.get("is_blocked", True) and riesgo.get("risk_score", 99) <= 6:
+                if riesgo.get("risk_score", 99) <= 5:
                     consenso += 1
 
-                if consenso < 4:
+                if consenso < 3:
                     continue
 
+                # 6. SCORE FINAL
                 signal_score = self._calcular_signal_score(
                     confidence=confidence,
-                    edge=valor.get("edge", 0),
+                    edge=edge,
                     risk_score=riesgo.get("risk_score", 0),
                     match_state=tactica.get("match_state"),
                     gol_inminente=predictor.get("gol_inminente", False),
-                    consenso=consenso
+                    consenso=consenso,
+                    mercado_valido=mercado_valido,
+                    shots_on_target=shots_on_target,
+                    dangerous_attacks=dangerous_attacks
                 )
 
-                # Solo señales buenas de verdad
-                if signal_score < 70:
+                # mínimo flexible para entrar al top
+                if signal_score < 62:
                     continue
 
                 signal_rank = self._clasificar_signal_rank(signal_score)
 
                 match_data = match.copy()
                 match_data.update({
-                    "market": match.get("market", "OVER_MATCH_DYNAMIC"),
+                    "market": market,
                     "selection": match.get("selection", "Over"),
                     "line": match.get("line", "Auto"),
                     "risk_score": riesgo.get("risk_score", 0),
-                    "cuota": mercado.get("cuota"),
+                    "cuota": mercado.get("cuota", 1.80),
                     "recomendacion_final": signal_rank,
                     "signal_score": signal_score,
                     "signal_rank": signal_rank,
                     "publish_ready": True,
-                    "reason": f"Consenso {consenso}/5 + {tactica.get('match_state')} + edge {valor.get('edge', 0)}"
+                    "reason": (
+                        f"Consenso {consenso}/5 | "
+                        f"Estado {tactica.get('match_state')} | "
+                        f"Edge {round(edge, 4)} | "
+                        f"Riesgo {riesgo.get('risk_score', 0)}"
+                    )
                 })
 
                 motores_data = {
@@ -131,53 +144,85 @@ class ScanService:
                 print(f"ERROR en escanear_partidos: {e}")
                 continue
 
-        # Ordenar de más fuerte a más débil
+        # ordenar por score, de más fuerte a más débil
         candidatas.sort(
             key=lambda x: x["match"].get("signal_score", 0),
             reverse=True
         )
 
-        # Máximo 6 mejores del momento
+        # devolver máximo 6
         return candidatas[:6]
 
-    def _calcular_signal_score(self, confidence, edge, risk_score, match_state, gol_inminente, consenso):
+    def _calcular_signal_score(
+        self,
+        confidence,
+        edge,
+        risk_score,
+        match_state,
+        gol_inminente,
+        consenso,
+        mercado_valido,
+        shots_on_target,
+        dangerous_attacks
+    ):
         score = 0
 
-        # confianza: 0-35
-        score += min(max(confidence, 0), 100) * 0.35
+        # confianza: hasta 30
+        score += min(max(confidence, 0), 100) * 0.30
 
-        # edge: 0-25
+        # edge: hasta 20
         if edge >= 0.15:
-            score += 25
-        elif edge >= 0.10:
             score += 20
+        elif edge >= 0.10:
+            score += 16
         elif edge >= 0.05:
-            score += 15
+            score += 12
+        elif edge >= 0.02:
+            score += 8
 
-        # táctica: 0-15
+        # táctica: hasta 15
         if match_state == "EXPLOSIVO":
             score += 15
         elif match_state == "CALIENTE":
-            score += 10
+            score += 12
         elif match_state == "CONTROLADO":
-            score += 5
+            score += 7
 
-        # gol inminente: 0-10
+        # predictor de gol: hasta 8
         if gol_inminente:
-            score += 10
+            score += 8
 
-        # consenso: 0-10
+        # consenso: hasta 10
         score += consenso * 2
 
-        # riesgo: resta hasta 15
+        # mercado: bono pequeño
+        if mercado_valido:
+            score += 7
+        else:
+            score -= 5
+
+        # presión real
+        if shots_on_target >= 3:
+            score += 5
+        elif shots_on_target >= 1:
+            score += 2
+
+        if dangerous_attacks >= 25:
+            score += 5
+        elif dangerous_attacks >= 15:
+            score += 2
+
+        # riesgo: castigo
         score -= min(risk_score * 2, 15)
 
         return round(max(score, 0), 2)
 
     def _clasificar_signal_rank(self, signal_score):
-        if signal_score >= 90:
+        if signal_score >= 88:
             return "PREMIUM"
-        elif signal_score >= 80:
+        elif signal_score >= 78:
             return "FUERTE"
+        elif signal_score >= 70:
+            return "BUENA"
         else:
-            return "NORMAL"
+            return "ACEPTABLE"
