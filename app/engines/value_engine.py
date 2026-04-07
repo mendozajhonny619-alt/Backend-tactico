@@ -18,11 +18,15 @@ class ValueEngine:
         prob_implicita = 1 / cuota
         edge = prob_real - prob_implicita
 
-        if edge >= 0.15:
+        # Modo más flexible para pruebas operativas
+        if edge >= 0.10:
             categoria = "VALUE_PREMIUM"
             status = "OK"
-        elif edge >= Config.EDGE_MINIMO:
+        elif edge >= 0.02:
             categoria = "VALUE"
+            status = "OK"
+        elif edge >= -0.02:
+            categoria = "VALUE_LIGERO"
             status = "OK"
         else:
             categoria = "SIN_VALOR"
@@ -34,4 +38,4 @@ class ValueEngine:
             "value_category": categoria,
             "prob_real": round(prob_real, 4),
             "prob_implicita": round(prob_implicita, 4)
-        }
+            }
