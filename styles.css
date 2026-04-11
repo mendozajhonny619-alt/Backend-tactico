@@ -1,0 +1,69 @@
+.league-block {
+  margin-bottom: 20px;
+  padding: 10px;
+  border: 1px solid #333;
+  border-radius: 10px;
+}
+
+.match-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  border-bottom: 1px solid #444;
+}
+
+.open-button {
+  background: #00cfff;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #000;
+  font-weight: bold;
+}
+
+.summary-box {
+  display: flex;
+  justify-content: space-around;
+  margin-top: 20px;
+}
+
+.summary-item {
+  padding: 15px;
+  border-radius: 10px;
+  text-align: center;
+  width: 100px;
+}
+
+.summary-item.success {
+  background: rgba(0, 255, 100, 0.2);
+}
+
+.summary-item.error {
+  background: rgba(255, 0, 0, 0.2);
+}
+
+.summary-item.active {
+  background: rgba(255, 200, 0, 0.2);
+}
+
+.status {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 5px 10px;
+  border-radius: 5px;
+  font-weight: bold;
+}
+
+.signal-card.acertada .status {
+  background: green;
+}
+
+.signal-card.fallida .status {
+  background: red;
+}
+
+.signal-card.activa .status {
+  background: orange;
+}
