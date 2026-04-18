@@ -1,136 +1,139 @@
 class MatchOpportunityService:
+    """
+    Detecta si un partido:
+    - Tiene oportunidad OVER
+    - Tiene oportunidad UNDER
+    - Solo es OBSERVACIÓN
+    - Debe ser RECHAZADO
+
+    Este módulo evita perder oportunidades ocultas.
+    """
 
     @staticmethod
-    def evaluar(match, tactica, predictor, riesgo, window_data):
-        """
-        Clasifica el partido en:
-        - OVER_CANDIDATE
-        - UNDER_CANDIDATE
-        - OBSERVE
-        - REJECTED
-        """
-
-        ai_score = float(match.get("ai_score", 0) or 0)
-        goal_prob = float(match.get("goal_probability", 0) or 0)
-        over_prob = float(match.get("over_probability", 0) or 0)
-        confidence = float(match.get("confidence", 0) or 0)
-
+    def evaluar(match, tactica, predictor, riesgo, window):
+        minuto = int(match.get("minute", 0) or 0)
         shots_on_target = float(match.get("shots_on_target", 0) or 0)
         dangerous_attacks = float(match.get("dangerous_attacks", 0) or 0)
-        total_xg = float(match.get("xG", 0) or 0)
+        corners = float(match.get("corners", 0) or 0)
+        xg = float(match.get("xG", 0) or 0)
 
-        match_state = tactica.get("match_state", "ESTABLE")
-        risk_score = float(riesgo.get("risk_score", 10) or 10)
-        risk_level = match.get("risk_level", "MEDIO")
+        match_state = tactica.get("match_state", "CONTROLADO")
+        intensidad = float(tactica.get("intensity_score", 0) or 0)
 
-        data_quality = str(match.get("data_quality", "LOW")).upper()
+        gol_inminente = predictor.get("gol_inminente", False)
+        confianza_gol = float(predictor.get("confianza_ventana", 0) or 0)
+
+        risk_score = float(riesgo.get("risk_score", 0) or 0)
 
         reasons = []
+        strength = 0
 
         # =========================
-        # 1. BLOQUEO DURO
+        # 1. DETECCIÓN OVER
         # =========================
-        if data_quality == "LOW" and total_xg == 0 and shots_on_target == 0:
-            return {
-                "type": "REJECTED",
-                "side": None,
-                "reasons": ["DATA_QUALITY_CRITICA"]
-            }
+        over_signals = 0
 
-        if risk_level == "ALTO" and risk_score >= 9:
-            return {
-                "type": "REJECTED",
-                "side": None,
-                "reasons": ["RIESGO_EXTREMO"]
-            }
+        if gol_inminente:
+            over_signals += 2
+            strength += 12
+            reasons.append("Gol inminente detectado")
 
-        # =========================
-        # 2. DETECCIÓN OVER
-        # =========================
-        over_strength = 0
+        if shots_on_target >= 3:
+            over_signals += 2
+            strength += 10
+            reasons.append("Remates a puerta altos")
 
-        if goal_prob >= 55:
-            over_strength += 2
-        elif goal_prob >= 45:
-            over_strength += 1
+        if dangerous_attacks >= 18:
+            over_signals += 2
+            strength += 8
+            reasons.append("Alta presión ofensiva")
 
-        if over_prob >= 50:
-            over_strength += 2
-        elif over_prob >= 40:
-            over_strength += 1
+        if xg >= 1.0:
+            over_signals += 2
+            strength += 10
+            reasons.append("xG elevado")
 
-        if shots_on_target >= 2:
-            over_strength += 1
+        if intensidad >= 30:
+            over_signals += 1
+            strength += 6
+            reasons.append("Intensidad alta")
 
-        if dangerous_attacks >= 10:
-            over_strength += 1
+        if corners >= 4:
+            over_signals += 1
+            strength += 4
+            reasons.append("Corners acumulados")
 
-        if total_xg >= 0.6:
-            over_strength += 1
-
-        if match_state in ["CALIENTE", "EXPLOSIVO", "ACTIVO"]:
-            over_strength += 2
-
-        if predictor.get("gol_inminente"):
-            over_strength += 2
+        if 25 <= minuto <= 80:
+            strength += 4
 
         # =========================
-        # 3. DETECCIÓN UNDER
+        # 2. DETECCIÓN UNDER
         # =========================
-        under_strength = 0
-
-        if goal_prob <= 35:
-            under_strength += 2
-
-        if over_prob <= 35:
-            under_strength += 2
+        under_signals = 0
 
         if shots_on_target == 0:
-            under_strength += 1
+            under_signals += 2
+            strength += 6
+            reasons.append("Sin remates a puerta")
 
-        if dangerous_attacks <= 5:
-            under_strength += 1
+        if dangerous_attacks <= 6:
+            under_signals += 2
+            strength += 6
+            reasons.append("Poca presión ofensiva")
 
-        if total_xg <= 0.4:
-            under_strength += 1
+        if xg < 0.5:
+            under_signals += 2
+            strength += 6
+            reasons.append("xG bajo")
 
-        if match_state in ["MUERTO", "TIBIO", "CONTROLADO"]:
-            under_strength += 2
+        if match_state in ["MUERTO", "CONTROLADO"]:
+            under_signals += 2
+            strength += 8
+            reasons.append("Partido cerrado")
+
+        if minuto >= 60:
+            strength += 6
 
         # =========================
-        # 4. CLASIFICACIÓN FINAL
+        # 3. DECISIÓN FINAL
         # =========================
 
-        if over_strength >= 5 and window_data.get("publish_over", False):
+        # 🔥 OVER CLARO
+        if over_signals >= 4 and risk_score <= 8:
             return {
                 "type": "OVER_CANDIDATE",
                 "side": "OVER",
-                "strength": over_strength,
-                "reasons": ["OVER_POTENTE"]
+                "strength": strength,
+                "reasons": reasons,
             }
 
-        if under_strength >= 5 and window_data.get("publish_under", False):
+        # 🧊 UNDER CLARO
+        if under_signals >= 4 and minuto >= 55 and risk_score <= 7:
             return {
                 "type": "UNDER_CANDIDATE",
                 "side": "UNDER",
-                "strength": under_strength,
-                "reasons": ["UNDER_POTENTE"]
+                "strength": strength,
+                "reasons": reasons,
             }
 
-        # =========================
-        # 5. OBSERVACIÓN
-        # =========================
-
-        if over_strength >= 3 or under_strength >= 3:
+        # 👁️ OBSERVACIÓN (MUY IMPORTANTE)
+        if (
+            over_signals >= 2
+            or under_signals >= 2
+            or gol_inminente
+            or intensidad >= 20
+        ):
             return {
                 "type": "OBSERVE",
-                "side": "OVER" if over_strength >= under_strength else "UNDER",
-                "strength": max(over_strength, under_strength),
-                "reasons": ["CERCA_PERO_NO_LISTO"]
+                "side": "MIXTO",
+                "strength": strength,
+                "reasons": reasons if reasons else ["Partido con señales débiles pero observables"],
             }
 
+        # ❌ RECHAZADO
         return {
             "type": "REJECTED",
-            "side": None,
-            "reasons": ["SIN_VALOR_OPERATIVO"]
+            "side": "NONE",
+            "strength": 0,
+            "reasons": ["Sin señales suficientes"],
         }
