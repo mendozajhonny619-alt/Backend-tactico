@@ -155,7 +155,7 @@ class SignalLifecycleService:
             detail = str(event.get("detail") or "").upper()
             event_minute = self._event_minute(event)
 
-            if event_minute < minute:
+            if event_minute <= minute:
                 continue
 
             if event_type == "GOAL" or "GOAL" in detail:
