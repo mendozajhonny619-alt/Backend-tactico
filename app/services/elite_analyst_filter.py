@@ -11,6 +11,7 @@ class EliteAnalystFilter:
     - No generar más señales por generar.
     - Mejorar la selección final.
     - Evitar señales débiles disfrazadas.
+    - Evitar OVER tardíos.
     - Permitir UNDER cuando el partido realmente está cerrado.
     """
 
@@ -30,6 +31,10 @@ class EliteAnalystFilter:
         rank = str(signal.get("rank") or "").upper()
 
         minute = self._safe_int(signal.get("minute") or context.get("minute"))
+        home_score = self._safe_int(signal.get("home_score"))
+        away_score = self._safe_int(signal.get("away_score"))
+        total_goals = home_score + away_score
+
         ai_score = self._safe_float(ai.get("ai_score") or signal.get("ai_score"))
         goal_probability = self._safe_float(ai.get("goal_probability") or signal.get("goal_probability"))
         over_probability = self._safe_float(ai.get("over_probability") or signal.get("over_probability"))
@@ -60,6 +65,7 @@ class EliteAnalystFilter:
             return self._validate_over(
                 rank=rank,
                 minute=minute,
+                total_goals=total_goals,
                 ai_score=ai_score,
                 goal_probability=goal_probability,
                 over_probability=over_probability,
@@ -92,6 +98,7 @@ class EliteAnalystFilter:
         self,
         rank: str,
         minute: int,
+        total_goals: int,
         ai_score: float,
         goal_probability: float,
         over_probability: float,
@@ -102,8 +109,14 @@ class EliteAnalystFilter:
         game_quality: str,
         risk_score: float,
     ) -> Dict[str, Any]:
-        if minute > 88:
+        if minute >= 80:
             return self._downgrade("OBSERVACION", "ANALYST_OVER_TOO_LATE")
+
+        if minute >= 75 and total_goals >= 2:
+            return self._downgrade("OBSERVACION", "ANALYST_OVER_LATE_SCORE_TRAP")
+
+        if minute >= 70 and total_goals >= 2 and rank in {"BUENA", "OPERABLE"}:
+            return self._downgrade("OBSERVACION", "ANALYST_OVER_WEAK_LATE_ENTRY")
 
         if context_state in {"MUERTO", "FRIO"}:
             return self._downgrade("OBSERVACION", "ANALYST_OVER_CONTEXT_NOT_ALIVE")
@@ -186,21 +199,21 @@ class EliteAnalystFilter:
         if context_state in {"CALIENTE", "MUY_CALIENTE"}:
             return self._reject("ANALYST_UNDER_CONTEXT_TOO_HOT")
 
-        if pressure > 22:
+        if pressure > 26:
             return self._reject("ANALYST_UNDER_PRESSURE_TOO_HIGH")
 
         if rhythm > 16:
             return self._downgrade("OBSERVACION", "ANALYST_UNDER_RHYTHM_TOO_HIGH")
 
-        if goal_probability > 55:
-            return self._reject("ANALYST_UNDER_GOAL_PROB_TOO_HIGH")
+        if goal_probability > 58:
+            return self._downgrade("OBSERVACION", "ANALYST_UNDER_GOAL_PROB_TOO_HIGH")
 
         if rank == "OPERABLE":
             if (
                 ai_score >= 60
                 and under_probability >= 64
-                and goal_probability <= 50
-                and pressure <= 18
+                and goal_probability <= 52
+                and pressure <= 20
                 and rhythm <= 14
                 and context_state in {"CONTROLADO", "FRIO", "MUERTO", "TIBIO"}
                 and data_quality in {"MEDIUM", "HIGH"}
@@ -214,8 +227,8 @@ class EliteAnalystFilter:
             if (
                 ai_score >= 62
                 and under_probability >= 66
-                and goal_probability <= 48
-                and pressure <= 17
+                and goal_probability <= 52
+                and pressure <= 20
                 and rhythm <= 13
                 and context_state in {"CONTROLADO", "FRIO", "MUERTO", "TIBIO"}
                 and data_quality in {"MEDIUM", "HIGH"}
@@ -229,10 +242,10 @@ class EliteAnalystFilter:
             if (
                 ai_score >= 68
                 and under_probability >= 70
-                and goal_probability <= 45
-                and pressure <= 15
-                and rhythm <= 11
-                and context_state in {"CONTROLADO", "FRIO", "MUERTO"}
+                and goal_probability <= 48
+                and pressure <= 18
+                and rhythm <= 12
+                and context_state in {"CONTROLADO", "FRIO", "MUERTO", "TIBIO"}
                 and data_quality == "HIGH"
                 and risk_score <= 6.0
             ):
@@ -244,8 +257,8 @@ class EliteAnalystFilter:
             if (
                 ai_score >= 74
                 and under_probability >= 74
-                and goal_probability <= 42
-                and pressure <= 13
+                and goal_probability <= 45
+                and pressure <= 15
                 and rhythm <= 10
                 and context_state in {"CONTROLADO", "FRIO", "MUERTO"}
                 and data_quality == "HIGH"
