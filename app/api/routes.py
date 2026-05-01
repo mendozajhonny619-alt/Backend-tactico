@@ -17,6 +17,18 @@ def _safe_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _market(item: Dict[str, Any]) -> str:
+    return str(item.get("market") or "").upper()
+
+
+def _type(item: Dict[str, Any]) -> str:
+    return str(item.get("type") or "").upper()
+
+
+def _rank(item: Dict[str, Any]) -> str:
+    return str(item.get("rank") or "").upper()
+
+
 @router.get("/health")
 def health() -> Dict[str, Any]:
     runtime_state = app_container.runtime_state
@@ -50,6 +62,7 @@ def signals() -> Dict[str, Any]:
         "ok": True,
         "count": len(items),
         "items": items,
+        "signals": items,
         "updated_at": stats.get("updated_at"),
     }
 
@@ -63,6 +76,7 @@ def history() -> Dict[str, Any]:
         "ok": True,
         "count": len(items),
         "items": items,
+        "history": items,
     }
 
 
@@ -71,47 +85,73 @@ def opportunities() -> Dict[str, Any]:
     runtime_state = app_container.runtime_state
 
     opportunities_items = _safe_list(runtime_state.get_opportunities())
+    active_signals = _safe_list(runtime_state.get_active_signals())
     blocked_items = _safe_list(runtime_state.get_blocked())
     stats = _safe_dict(runtime_state.get_stats())
 
-    premium = 0
-    strong = 0
-    good = 0
-    observation = 0
-    no_bet = 0
+    combined = []
+    seen = set()
 
-    for item in opportunities_items:
-        rank = str(item.get("rank") or "").upper()
-        item_type = str(item.get("type") or "").upper()
+    for item in active_signals + opportunities_items:
+        if not isinstance(item, dict):
+            continue
 
-        if rank == "PREMIUM":
-            premium += 1
-        elif rank == "FUERTE":
-            strong += 1
-        elif rank in {"BUENA", "OPERABLE"}:
-            good += 1
-        elif rank == "OBSERVACION" or item_type == "OBSERVE":
-            observation += 1
-        elif rank == "NO_BET" or item_type == "NO_BET":
-            no_bet += 1
+        key = str(
+            item.get("signal_key")
+            or item.get("signal_id")
+            or item.get("opportunity_id")
+            or f"{item.get('match_id')}:{item.get('market') or item.get('type')}"
+        )
 
-    top = [
-        item for item in opportunities_items
-        if str(item.get("rank") or "").upper() in {"PREMIUM", "FUERTE", "BUENA", "OPERABLE"}
-    ]
+        if key in seen:
+            continue
 
-    observe = [
-        item for item in opportunities_items
-        if str(item.get("rank") or "").upper() == "OBSERVACION"
-        or str(item.get("type") or "").upper() == "OBSERVE"
-    ]
+        seen.add(key)
+        combined.append(item)
 
-    blocked_preview = blocked_items[:20]
+    over_candidates = []
+    under_candidates = []
+    observe = []
+    rejected = []
+
+    for item in combined:
+        market = _market(item)
+        item_type = _type(item)
+        rank = _rank(item)
+
+        if market == "OVER" or item_type == "OVER_CANDIDATE":
+            over_candidates.append(item)
+        elif market == "UNDER" or item_type == "UNDER_CANDIDATE":
+            under_candidates.append(item)
+        elif item_type in {"REJECTED", "NO_BET"} or rank in {"RECHAZADO", "NO_BET"}:
+            rejected.append(item)
+        else:
+            observe.append(item)
+
+    for item in blocked_items[:20]:
+        if isinstance(item, dict):
+            rejected.append(item)
+
+    premium = sum(1 for x in combined if _rank(x) == "PREMIUM")
+    strong = sum(1 for x in combined if _rank(x) == "FUERTE")
+    good = sum(1 for x in combined if _rank(x) in {"BUENA", "OPERABLE"})
+    observation = sum(
+        1 for x in combined
+        if _rank(x) == "OBSERVACION" or _type(x) == "OBSERVE"
+    )
+    no_bet = sum(
+        1 for x in combined
+        if _rank(x) == "NO_BET" or _type(x) == "NO_BET"
+    )
 
     return {
         "ok": True,
         "summary": {
-            "total": len(opportunities_items),
+            "total": len(combined),
+            "over": len(over_candidates),
+            "under": len(under_candidates),
+            "observe": len(observe),
+            "rejected": len(rejected),
             "premium": premium,
             "strong": strong,
             "good": good,
@@ -120,9 +160,17 @@ def opportunities() -> Dict[str, Any]:
             "blocked_total": len(blocked_items),
             "updated_at": stats.get("updated_at"),
         },
-        "top": top,
+        "sections": {
+            "over_candidates": over_candidates,
+            "under_candidates": under_candidates,
+            "observe": observe,
+            "rejected": rejected,
+        },
+        "items": combined,
+        "top": over_candidates + under_candidates,
         "observe": observe,
-        "blocked": blocked_preview,
+        "blocked": rejected,
+        "updated_at": stats.get("updated_at"),
     }
 
 
