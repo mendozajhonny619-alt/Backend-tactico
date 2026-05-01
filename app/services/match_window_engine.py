@@ -1,163 +1,180 @@
+from __future__ import annotations
+
+from typing import Any, Dict
+
+
 class MatchWindowEngine:
     """
-    Motor de ventanas inteligentes por minuto.
+    Controla ventanas operativas del partido.
 
-    Objetivo:
-    - No leer todos los minutos igual
-    - Cambiar exigencia según fase del partido
-    - Dar preferencia distinta a OVER y UNDER
+    Reglas base:
+    - 25–45 y 60–75 => PREMIUM
+    - 15–24 y 76–85 => OPERABLE con filtro extra
+    - 1–14 => bloqueado
+    - 86+ => bloqueado salvo premium real (de momento restringido)
+
+    Devuelve:
+    - phase
+    - reason
+    - allowed
+    - allow_over
+    - allow_under
+    - bias
+    - gate_min_score
     """
 
-    @staticmethod
-    def evaluar(match):
-        minute = int(match.get("minute", 0) or 0)
-        score = str(match.get("score", "0-0") or "0-0")
-        goal_probability = float(match.get("goal_probability", 0) or 0)
-        over_probability = float(match.get("over_probability", 0) or 0)
-        shots_on_target = float(match.get("shots_on_target", 0) or 0)
-        dangerous_attacks = float(match.get("dangerous_attacks", 0) or 0)
-        total_xg = float(match.get("xG", 0) or 0)
+    PHASE_BLOCKED = "BLOCKED"
+    PHASE_RESTRICTED = "RESTRICTED"
+    PHASE_OPERABLE = "OPERABLE"
+    PHASE_PREMIUM = "PREMIUM"
 
-        total_goals = MatchWindowEngine._parse_total_goals(score)
+    def evaluate(self, match: Dict[str, Any]) -> Dict[str, Any]:
+        minute = self._extract_minute(match)
 
-        phase = "OBSERVE"
-        reason = "Fuera de ventana útil"
-        over_bias = 0
-        under_bias = 0
-        over_min_gate = 0
-        under_min_gate = 0
-        publish_over = False
-        publish_under = False
+        if minute <= 0:
+            return self._build_response(
+                minute=minute,
+                phase=self.PHASE_BLOCKED,
+                allowed=False,
+                allow_over=False,
+                allow_under=False,
+                bias="NONE",
+                gate_min_score=999,
+                reason="WINDOW_INVALID_MINUTE",
+            )
 
-        # 1-17 -> solo observar
-        if 1 <= minute <= 17:
-            phase = "EARLY_OBSERVE"
-            reason = "Inicio de partido, solo observación"
-            over_min_gate = 78
-            under_min_gate = 82
+        # 1–14 bloqueado
+        if 1 <= minute <= 14:
+            return self._build_response(
+                minute=minute,
+                phase=self.PHASE_BLOCKED,
+                allowed=False,
+                allow_over=False,
+                allow_under=False,
+                bias="NONE",
+                gate_min_score=999,
+                reason="WINDOW_TOO_EARLY",
+            )
 
-        # 18-35 -> buena ventana over temprana
-        elif 18 <= minute <= 35:
-            phase = "OVER_EARLY_WINDOW"
-            reason = "Ventana temprana útil para OVER"
-            over_bias = 8
-            under_bias = -3
-            over_min_gate = 66
-            under_min_gate = 78
-            publish_over = True
+        # 15–24 operable con filtro extra, más sesgo a OVER
+        if 15 <= minute <= 24:
+            return self._build_response(
+                minute=minute,
+                phase=self.PHASE_OPERABLE,
+                allowed=True,
+                allow_over=True,
+                allow_under=False,
+                bias="OVER",
+                gate_min_score=72,
+                reason="WINDOW_OPERABLE_FIRST_HALF",
+            )
 
-        # 36-45 -> cautela antes del descanso
-        elif 36 <= minute <= 45:
-            phase = "HALFTIME_CAUTION"
-            reason = "Tramo previo al descanso"
-            over_bias = 2
-            under_bias = 4
-            over_min_gate = 72
-            under_min_gate = 70
-            publish_over = True
-            publish_under = True
+        # 25–45 premium
+        if 25 <= minute <= 45:
+            return self._build_response(
+                minute=minute,
+                phase=self.PHASE_PREMIUM,
+                allowed=True,
+                allow_over=True,
+                allow_under=False,
+                bias="OVER",
+                gate_min_score=68,
+                reason="WINDOW_PREMIUM_FIRST_HALF",
+            )
 
-        # 46-54 -> transición
-        elif 46 <= minute <= 54:
-            phase = "SECOND_HALF_TRANSITION"
-            reason = "Inicio segundo tiempo, lectura intermedia"
-            over_bias = 3
-            under_bias = 2
-            over_min_gate = 70
-            under_min_gate = 72
-            publish_over = True
-            publish_under = True
+        # 46–59 intermedio, operable conservador
+        if 46 <= minute <= 59:
+            return self._build_response(
+                minute=minute,
+                phase=self.PHASE_OPERABLE,
+                allowed=True,
+                allow_over=True,
+                allow_under=False,
+                bias="OVER",
+                gate_min_score=70,
+                reason="WINDOW_SECOND_HALF_BUILDUP",
+            )
 
-        # 55-72 -> ventana premium over
-        elif 55 <= minute <= 72:
-            phase = "OVER_PREMIUM_WINDOW"
-            reason = "Ventana premium para OVER"
-            over_bias = 12
-            under_bias = -2
-            over_min_gate = 64
-            under_min_gate = 76
-            publish_over = True
-            publish_under = True
+        # 60–75 premium
+        if 60 <= minute <= 75:
+            return self._build_response(
+                minute=minute,
+                phase=self.PHASE_PREMIUM,
+                allowed=True,
+                allow_over=True,
+                allow_under=True,
+                bias="BALANCED",
+                gate_min_score=68,
+                reason="WINDOW_PREMIUM_SECOND_HALF",
+            )
 
-        # 73-78 -> mixta, pero más exigente
-        elif 73 <= minute <= 78:
-            phase = "MIXED_DECISION_WINDOW"
-            reason = "Ventana mixta, requiere confirmación fuerte"
-            over_bias = 4
-            under_bias = 6
-            over_min_gate = 72
-            under_min_gate = 70
-            publish_over = True
-            publish_under = True
+        # 76–85 operable con filtro extra, sesgo a UNDER
+        if 76 <= minute <= 85:
+            return self._build_response(
+                minute=minute,
+                phase=self.PHASE_OPERABLE,
+                allowed=True,
+                allow_over=False,
+                allow_under=True,
+                bias="UNDER",
+                gate_min_score=74,
+                reason="WINDOW_OPERABLE_LATE_GAME",
+            )
 
-        # 79-86 -> fuerte para under controlado, over solo muy claro
-        elif 79 <= minute <= 86:
-            phase = "LATE_CONTROL_WINDOW"
-            reason = "Tramo final, UNDER favorecido si el partido está cerrado"
-            over_bias = -4
-            under_bias = 10
-            over_min_gate = 80
-            under_min_gate = 66
-            publish_over = True
-            publish_under = True
+        # 86–90 restringido: solo UNDER en contextos muy limpios, el resto bloqueado en capas siguientes
+        if 86 <= minute <= 90:
+            return self._build_response(
+                minute=minute,
+                phase=self.PHASE_RESTRICTED,
+                allowed=True,
+                allow_over=False,
+                allow_under=True,
+                bias="UNDER",
+                gate_min_score=80,
+                reason="WINDOW_RESTRICTED_LATE_UNDER_ONLY",
+            )
 
-        # 87+ -> ultra selectivo
-        elif minute >= 87:
-            phase = "ULTRA_LATE"
-            reason = "Tramo ultra tardío, máxima exigencia"
-            over_bias = -8
-            under_bias = 4
-            over_min_gate = 86
-            under_min_gate = 78
-            publish_over = False
-            publish_under = True
+        return self._build_response(
+            minute=minute,
+            phase=self.PHASE_BLOCKED,
+            allowed=False,
+            allow_over=False,
+            allow_under=False,
+            bias="NONE",
+            gate_min_score=999,
+            reason="WINDOW_TOO_LATE",
+        )
 
-        # Ajuste por marcador
-        if total_goals >= 3:
-            under_bias -= 8
-            over_bias += 3
-
-        if total_goals == 0 and minute >= 55:
-            under_bias += 5
-
-        if total_goals == 1 and minute >= 65:
-            under_bias += 3
-
-        # Ajuste por producción ofensiva
-        if shots_on_target >= 4:
-            over_bias += 5
-
-        if dangerous_attacks >= 18:
-            over_bias += 4
-
-        if total_xg >= 1.4:
-            over_bias += 5
-
-        if shots_on_target == 0 and dangerous_attacks <= 8 and total_xg <= 0.45:
-            under_bias += 8
-
-        # Ajuste por probabilidades del propio sistema
-        if goal_probability >= 65:
-            over_bias += 4
-
-        if over_probability <= 42:
-            under_bias += 4
-
-        return {
-            "phase": phase,
-            "reason": reason,
-            "over_bias": round(over_bias, 2),
-            "under_bias": round(under_bias, 2),
-            "over_min_gate": over_min_gate,
-            "under_min_gate": under_min_gate,
-            "publish_over": publish_over,
-            "publish_under": publish_under,
-        }
-
-    @staticmethod
-    def _parse_total_goals(score):
+    def _extract_minute(self, match: Dict[str, Any]) -> int:
+        raw = (
+            match.get("minute")
+            or match.get("current_minute")
+            or match.get("match_minute")
+            or 0
+        )
         try:
-            home, away = str(score).split("-")
-            return int(home) + int(away)
-        except Exception:
+            return int(raw)
+        except (TypeError, ValueError):
             return 0
+
+    def _build_response(
+        self,
+        minute: int,
+        phase: str,
+        allowed: bool,
+        allow_over: bool,
+        allow_under: bool,
+        bias: str,
+        gate_min_score: int,
+        reason: str,
+    ) -> Dict[str, Any]:
+        return {
+            "minute": minute,
+            "phase": phase,
+            "allowed": allowed,
+            "allow_over": allow_over,
+            "allow_under": allow_under,
+            "bias": bias,
+            "gate_min_score": gate_min_score,
+            "reason": reason,
+        }
