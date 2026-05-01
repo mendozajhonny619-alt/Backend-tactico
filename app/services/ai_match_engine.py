@@ -1,364 +1,459 @@
-from typing import Dict, Any
+from __future__ import annotations
+
+from typing import Any, Dict
 
 
 class AIMatchEngine:
     """
-    Motor IA V1
-    Lee el estado del partido usando datos en vivo
-    y devuelve una interpretación táctica + predictiva.
+    Convierte contexto + datos del partido en lectura IA operativa.
     """
 
-    @staticmethod
-    def analyze(match: Dict[str, Any]) -> Dict[str, Any]:
-        minute = int(match.get("minute") or 0)
+    def evaluate(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        pressure = self._safe_float(context.get("pressure_index"))
+        rhythm = self._safe_float(context.get("rhythm_index"))
+        goal_window = self._safe_float(context.get("goal_window_score"))
+        over_window = self._safe_float(context.get("over_window_score"))
 
-        home_score, away_score = AIMatchEngine._parse_score(match.get("score", "0-0"))
+        data_quality = str(context.get("data_quality") or "LOW").upper()
+        game_quality = str(context.get("game_quality") or "LOW").upper()
+        context_state = str(context.get("context_state") or "MUERTO").upper()
+        dominance = str(context.get("dominance") or "BALANCED").upper()
+        attack_side = str(context.get("attack_side") or "BALANCED").upper()
+        red_alert = bool(context.get("red_alert", False))
+        minute = self._safe_int(context.get("minute"))
 
-        home_stats = match.get("home_stats", {}) or {}
-        away_stats = match.get("away_stats", {}) or {}
+        home_pressure = self._safe_float(context.get("home_pressure"))
+        away_pressure = self._safe_float(context.get("away_pressure"))
 
-        home_possession = AIMatchEngine._safe_int(home_stats.get("possession"))
-        away_possession = AIMatchEngine._safe_int(away_stats.get("possession"))
-
-        home_shots = AIMatchEngine._safe_int(home_stats.get("shots"))
-        away_shots = AIMatchEngine._safe_int(away_stats.get("shots"))
-
-        home_shots_on_target = AIMatchEngine._safe_int(home_stats.get("shots_on_target"))
-        away_shots_on_target = AIMatchEngine._safe_int(away_stats.get("shots_on_target"))
-
-        home_corners = AIMatchEngine._safe_int(home_stats.get("corners"))
-        away_corners = AIMatchEngine._safe_int(away_stats.get("corners"))
-
-        home_dangerous = AIMatchEngine._safe_int(home_stats.get("dangerous_attacks"))
-        away_dangerous = AIMatchEngine._safe_int(away_stats.get("dangerous_attacks"))
-
-        home_red = AIMatchEngine._safe_int(home_stats.get("red_cards"))
-        away_red = AIMatchEngine._safe_int(away_stats.get("red_cards"))
-
-        home_xg = AIMatchEngine._safe_float(home_stats.get("xG"))
-        away_xg = AIMatchEngine._safe_float(away_stats.get("xG"))
-
-        total_goals = home_score + away_score
-        total_shots = home_shots + away_shots
-        total_shots_on_target = home_shots_on_target + away_shots_on_target
-        total_corners = home_corners + away_corners
-        total_dangerous = home_dangerous + away_dangerous
-        total_xg = round(home_xg + away_xg, 2)
-        total_red = home_red + away_red
-
-        pressure_score = (
-            total_shots_on_target * 3
-            + total_dangerous * 0.8
-            + total_corners * 1.2
-            + total_xg * 12
+        is_dead_empty = (
+            pressure <= 0
+            and rhythm <= 0
+            and goal_window <= 0
+            and over_window <= 0
+            and home_pressure <= 0
+            and away_pressure <= 0
+            and data_quality == "LOW"
+            and game_quality == "LOW"
         )
 
-        rhythm_score = (
-            total_shots * 0.8
-            + total_shots_on_target * 2
-            + total_dangerous * 0.5
-            + total_corners
+        if is_dead_empty:
+            return {
+                "ai_score": 0.0,
+                "goal_probability": 0.0,
+                "over_probability": 0.0,
+                "under_probability": 95.0,
+                "risk_score": 9.0,
+                "risk_level": "ALTO",
+                "momentum_label": "ESTABLE",
+                "result_prediction": "NO_EDGE",
+                "winner_prediction": "DRAW_LEAN",
+            }
+
+        base_activity = (
+            (pressure * 0.37)
+            + (rhythm * 0.27)
+            + (goal_window * 0.19)
+            + (over_window * 0.17)
         )
 
-        dominance = AIMatchEngine._detect_dominance(
-            home_possession,
-            away_possession,
-            home_shots_on_target,
-            away_shots_on_target,
-            home_dangerous,
-            away_dangerous,
-            home_xg,
-            away_xg
+        quality_bonus = {
+            "LOW": -2.0,
+            "MEDIUM": 6.0,
+            "HIGH": 11.0,
+        }.get(data_quality, 0.0)
+
+        game_bonus = {
+            "LOW": -2.0,
+            "MEDIUM": 5.0,
+            "HIGH": 9.0,
+        }.get(game_quality, 0.0)
+
+        state_bonus = {
+            "MUERTO": -12.0,
+            "FRIO": -5.0,
+            "CONTROLADO": 1.0,
+            "TIBIO": 8.0,
+            "CALIENTE": 17.0,
+            "MUY_CALIENTE": 25.0,
+        }.get(context_state, 0.0)
+
+        minute_bonus = self._minute_bonus(minute)
+
+        side_bonus = 0.0
+        if dominance in {"HOME", "AWAY"}:
+            side_bonus += 2.5
+        if attack_side in {"HOME", "AWAY"}:
+            side_bonus += 1.5
+
+        max_side_pressure = max(home_pressure, away_pressure)
+
+        pressure_side_bonus = 0.0
+        if max_side_pressure >= 10:
+            pressure_side_bonus += 1.5
+        if max_side_pressure >= 16:
+            pressure_side_bonus += 2.0
+        if max_side_pressure >= 22:
+            pressure_side_bonus += 2.0
+
+        red_bonus = 6.0 if red_alert else 0.0
+
+        ai_score = (
+            base_activity
+            + quality_bonus
+            + game_bonus
+            + state_bonus
+            + minute_bonus
+            + side_bonus
+            + pressure_side_bonus
+            + red_bonus
         )
 
-        momentum_label = AIMatchEngine._detect_momentum(
+        if data_quality in {"MEDIUM", "HIGH"} and (pressure >= 8 or rhythm >= 8):
+            ai_score = max(ai_score, 42.0)
+
+        if data_quality == "HIGH" and game_quality in {"MEDIUM", "HIGH"} and (pressure >= 12 or rhythm >= 10):
+            ai_score = max(ai_score, 50.0)
+
+        if context_state in {"CALIENTE", "MUY_CALIENTE"} and pressure >= 16:
+            ai_score = max(ai_score, 60.0)
+
+        if context_state == "MUY_CALIENTE" and pressure >= 25 and rhythm >= 13:
+            ai_score = max(ai_score, 70.0)
+
+        if data_quality == "LOW" and context_state not in {"CALIENTE", "MUY_CALIENTE"}:
+            ai_score = min(ai_score, 58.0)
+
+        ai_score = self._clamp(ai_score, 0.0, 96.0)
+
+        goal_probability = (
+            12.0
+            + (pressure * 1.12)
+            + (rhythm * 0.78)
+            + (goal_window * 0.44)
+            + (over_window * 0.28)
+        )
+
+        goal_probability += {
+            "LOW": -7.0,
+            "MEDIUM": 2.0,
+            "HIGH": 6.0,
+        }.get(data_quality, 0.0)
+
+        goal_probability += {
+            "LOW": -5.0,
+            "MEDIUM": 2.0,
+            "HIGH": 5.0,
+        }.get(game_quality, 0.0)
+
+        goal_probability += {
+            "MUERTO": -12.0,
+            "FRIO": -6.0,
+            "CONTROLADO": 0.0,
+            "TIBIO": 5.0,
+            "CALIENTE": 12.0,
+            "MUY_CALIENTE": 17.0,
+        }.get(context_state, 0.0)
+
+        if red_alert:
+            goal_probability += 7.0
+
+        if max_side_pressure >= 16:
+            goal_probability += 3.0
+
+        if max_side_pressure >= 22 and context_state in {"CALIENTE", "MUY_CALIENTE"}:
+            goal_probability += 2.0
+
+        goal_probability += self._goal_minute_adjustment(minute)
+
+        if data_quality in {"MEDIUM", "HIGH"} and (pressure >= 10 or rhythm >= 10):
+            goal_probability = max(goal_probability, 40.0)
+
+        if context_state in {"CALIENTE", "MUY_CALIENTE"} and pressure >= 16:
+            goal_probability = max(goal_probability, 60.0)
+
+        if context_state == "MUY_CALIENTE" and pressure >= 25 and rhythm >= 13:
+            goal_probability = max(goal_probability, 72.0)
+
+        if data_quality == "LOW" and context_state not in {"CALIENTE", "MUY_CALIENTE"}:
+            goal_probability = min(goal_probability, 58.0)
+
+        goal_probability = self._clamp(goal_probability, 0.0, 96.0)
+
+        over_probability = (
+            (ai_score * 0.53)
+            + (goal_probability * 0.47)
+        )
+
+        over_probability += {
+            "LOW": -7.0,
+            "MEDIUM": 1.0,
+            "HIGH": 6.0,
+        }.get(data_quality, 0.0)
+
+        over_probability += {
+            "LOW": -5.0,
+            "MEDIUM": 1.0,
+            "HIGH": 5.0,
+        }.get(game_quality, 0.0)
+
+        over_probability += {
+            "MUERTO": -15.0,
+            "FRIO": -9.0,
+            "CONTROLADO": -2.0,
+            "TIBIO": 5.0,
+            "CALIENTE": 12.0,
+            "MUY_CALIENTE": 18.0,
+        }.get(context_state, 0.0)
+
+        if red_alert:
+            over_probability += 5.0
+
+        if pressure >= 16 and rhythm >= 10:
+            over_probability += 3.0
+
+        if pressure >= 22 and rhythm >= 14:
+            over_probability += 4.0
+
+        if max_side_pressure >= 18:
+            over_probability += 2.0
+
+        if minute >= 25:
+            over_probability += 2.0
+        if minute >= 60:
+            over_probability += 2.0
+
+        if context_state == "TIBIO" and data_quality in {"MEDIUM", "HIGH"} and pressure >= 12:
+            over_probability = max(over_probability, 52.0)
+
+        if context_state == "CALIENTE" and pressure >= 16:
+            over_probability = max(over_probability, 64.0)
+
+        if context_state == "MUY_CALIENTE" and pressure >= 24:
+            over_probability = max(over_probability, 74.0)
+
+        if data_quality == "LOW" and context_state not in {"CALIENTE", "MUY_CALIENTE"}:
+            over_probability = min(over_probability, 58.0)
+
+        over_probability = self._clamp(over_probability, 0.0, 95.0)
+
+        under_probability = 100.0 - over_probability
+
+        if context_state in {"MUERTO", "FRIO"}:
+            under_probability += 4.0
+
+        if context_state in {"CALIENTE", "MUY_CALIENTE"}:
+            under_probability -= 5.0
+
+        if minute >= 65 and context_state in {"CONTROLADO", "FRIO", "MUERTO"}:
+            under_probability += 6.0
+
+        if minute < 55 and context_state in {"MUERTO", "FRIO"}:
+            under_probability += 2.0
+
+        under_probability = self._clamp(under_probability, 0.0, 95.0)
+
+        risk_score = self._calculate_risk_score(
+            data_quality=data_quality,
+            context_state=context_state,
+            pressure=pressure,
+            rhythm=rhythm,
             minute=minute,
-            total_shots_on_target=total_shots_on_target,
-            total_dangerous=total_dangerous,
-            total_xg=total_xg,
-            total_goals=total_goals
+            red_alert=red_alert,
+            ai_score=ai_score,
         )
 
-        match_state, match_state_reason = AIMatchEngine._detect_match_state(
+        risk_level = self._risk_level_from_score(risk_score)
+
+        momentum_label = self._momentum_label(
+            pressure=pressure,
+            rhythm=rhythm,
+            context_state=context_state,
+            red_alert=red_alert,
+        )
+
+        result_prediction = self._result_prediction(
+            over_probability=over_probability,
+            under_probability=under_probability,
+            goal_probability=goal_probability,
             minute=minute,
-            total_goals=total_goals,
-            total_shots_on_target=total_shots_on_target,
-            total_dangerous=total_dangerous,
-            total_xg=total_xg,
-            total_red=total_red,
-            momentum_label=momentum_label
         )
 
-        goal_probability = AIMatchEngine._goal_probability(
-            minute=minute,
-            pressure_score=pressure_score,
-            total_goals=total_goals,
-            total_shots_on_target=total_shots_on_target,
-            total_dangerous=total_dangerous,
-            total_xg=total_xg
-        )
-
-        over_probability = AIMatchEngine._over_probability(
-            minute=minute,
-            total_goals=total_goals,
-            pressure_score=pressure_score,
-            total_xg=total_xg
-        )
-
-        result_prediction = AIMatchEngine._predict_result(
-            home_score=home_score,
-            away_score=away_score,
-            home_xg=home_xg,
-            away_xg=away_xg,
-            home_dangerous=home_dangerous,
-            away_dangerous=away_dangerous
-        )
-
-        winner_prediction = AIMatchEngine._predict_winner(
-            home_score=home_score,
-            away_score=away_score,
+        winner_prediction = self._winner_prediction(
             dominance=dominance,
-            home_xg=home_xg,
-            away_xg=away_xg
-        )
-
-        risk_level = AIMatchEngine._risk_level(
-            minute=minute,
-            total_shots_on_target=total_shots_on_target,
-            total_dangerous=total_dangerous,
-            total_xg=total_xg,
-            total_red=total_red,
-            match_state=match_state
-        )
-
-        ai_score = AIMatchEngine._ai_score(
-            minute=minute,
-            total_goals=total_goals,
-            total_shots_on_target=total_shots_on_target,
-            total_dangerous=total_dangerous,
-            total_xg=total_xg,
-            momentum_label=momentum_label,
-            match_state=match_state,
-            total_red=total_red
+            attack_side=attack_side,
+            ai_score=ai_score,
+            context_state=context_state,
         )
 
         return {
-            "match_state": match_state,
-            "match_state_reason": match_state_reason,
+            "ai_score": round(ai_score, 2),
+            "goal_probability": round(goal_probability, 2),
+            "over_probability": round(over_probability, 2),
+            "under_probability": round(under_probability, 2),
+            "risk_score": round(risk_score, 2),
+            "risk_level": risk_level,
             "momentum_label": momentum_label,
-            "dominance": dominance,
-            "goal_probability": goal_probability,
-            "over_probability": over_probability,
             "result_prediction": result_prediction,
             "winner_prediction": winner_prediction,
-            "risk_level": risk_level,
-            "ai_score": ai_score,
-            "pressure_score": round(pressure_score, 2),
-            "rhythm_score": round(rhythm_score, 2),
-            "totals": {
-                "goals": total_goals,
-                "shots": total_shots,
-                "shots_on_target": total_shots_on_target,
-                "corners": total_corners,
-                "dangerous_attacks": total_dangerous,
-                "xg": total_xg,
-                "red_cards": total_red,
-            }
         }
 
-    @staticmethod
-    def _parse_score(score: str):
-        try:
-            clean = str(score).replace(" ", "").replace(":", "-")
-            home, away = clean.split("-")
-            return int(home), int(away)
-        except Exception:
-            return 0, 0
+    def _calculate_risk_score(
+        self,
+        data_quality: str,
+        context_state: str,
+        pressure: float,
+        rhythm: float,
+        minute: int,
+        red_alert: bool,
+        ai_score: float,
+    ) -> float:
+        risk = 3.0
 
-    @staticmethod
-    def _safe_int(value):
-        try:
-            return int(float(value or 0))
-        except Exception:
-            return 0
+        if data_quality == "LOW":
+            risk += 3.4
+        elif data_quality == "MEDIUM":
+            risk += 1.3
+        elif data_quality == "HIGH":
+            risk -= 0.4
 
-    @staticmethod
-    def _safe_float(value):
+        if context_state == "MUERTO":
+            risk += 2.0
+        elif context_state == "FRIO":
+            risk += 1.0
+        elif context_state == "MUY_CALIENTE":
+            risk += 1.2
+
+        if pressure >= 34 and rhythm >= 18:
+            risk += 1.0
+
+        if minute >= 80:
+            risk += 1.4
+        elif minute <= 12:
+            risk += 1.0
+
+        if red_alert:
+            risk += 0.5
+
+        if ai_score >= 78:
+            risk -= 1.0
+        elif ai_score >= 68:
+            risk -= 0.6
+
+        if context_state in {"CALIENTE", "MUY_CALIENTE"} and data_quality in {"MEDIUM", "HIGH"}:
+            risk -= 0.3
+
+        return self._clamp(risk, 0.0, 10.0)
+
+    def _risk_level_from_score(self, risk_score: float) -> str:
+        if risk_score <= 3.5:
+            return "BAJO"
+        if risk_score <= 6.5:
+            return "MEDIO"
+        return "ALTO"
+
+    def _momentum_label(
+        self,
+        pressure: float,
+        rhythm: float,
+        context_state: str,
+        red_alert: bool,
+    ) -> str:
+        if red_alert:
+            return "EXPLOSIVO"
+
+        if context_state == "MUY_CALIENTE" and pressure >= 26:
+            return "MUY_ALTO"
+
+        if context_state == "CALIENTE":
+            return "ALTO"
+
+        if context_state == "TIBIO":
+            return "MEDIO"
+
+        if context_state in {"CONTROLADO", "FRIO"}:
+            return "BAJO"
+
+        return "ESTABLE"
+
+    def _result_prediction(
+        self,
+        over_probability: float,
+        under_probability: float,
+        goal_probability: float,
+        minute: int,
+    ) -> str:
+        if over_probability >= 72 and goal_probability >= 68:
+            return "OVER_LEAN"
+
+        if minute >= 60 and under_probability >= 68:
+            return "UNDER_LEAN"
+
+        return "NO_EDGE"
+
+    def _winner_prediction(
+        self,
+        dominance: str,
+        attack_side: str,
+        ai_score: float,
+        context_state: str,
+    ) -> str:
+        if ai_score < 56:
+            return "DRAW_LEAN"
+
+        if dominance == "HOME" and attack_side == "HOME":
+            return "HOME_LEAN"
+
+        if dominance == "AWAY" and attack_side == "AWAY":
+            return "AWAY_LEAN"
+
+        if dominance == "HOME":
+            return "HOME_LEAN"
+
+        if dominance == "AWAY":
+            return "AWAY_LEAN"
+
+        if context_state in {"MUERTO", "FRIO", "CONTROLADO"}:
+            return "DRAW_LEAN"
+
+        return "NO_EDGE"
+
+    def _minute_bonus(self, minute: int) -> float:
+        if 25 <= minute <= 45:
+            return 8.0
+        if 60 <= minute <= 75:
+            return 10.0
+        if 15 <= minute <= 24:
+            return 4.0
+        if 76 <= minute <= 85:
+            return 4.0
+        if minute < 10:
+            return -4.0
+        if minute > 85:
+            return -3.0
+        return 0.0
+
+    def _goal_minute_adjustment(self, minute: int) -> float:
+        if 25 <= minute <= 45:
+            return 6.0
+        if 60 <= minute <= 75:
+            return 8.0
+        if 76 <= minute <= 85:
+            return 4.0
+        if minute < 12:
+            return -5.0
+        return 0.0
+
+    def _safe_float(self, value: Any) -> float:
         try:
-            return round(float(value or 0), 2)
-        except Exception:
+            return float(value or 0)
+        except (TypeError, ValueError):
             return 0.0
 
-    @staticmethod
-    def _detect_dominance(home_possession, away_possession, home_sot, away_sot, home_dang, away_dang, home_xg, away_xg):
-        home_power = home_possession * 0.2 + home_sot * 3 + home_dang * 0.8 + home_xg * 10
-        away_power = away_possession * 0.2 + away_sot * 3 + away_dang * 0.8 + away_xg * 10
+    def _safe_int(self, value: Any) -> int:
+        try:
+            return int(float(value or 0))
+        except (TypeError, ValueError):
+            return 0
 
-        if abs(home_power - away_power) < 4:
-            return "EQUILIBRADO"
-        return "LOCAL" if home_power > away_power else "VISITANTE"
-
-    @staticmethod
-    def _detect_momentum(minute, total_shots_on_target, total_dangerous, total_xg, total_goals):
-        score = (
-            total_shots_on_target * 3
-            + total_dangerous * 0.7
-            + total_xg * 10
-            + total_goals * 2
-        )
-
-        if minute < 10 and score < 8:
-            return "BAJO"
-        if score >= 28:
-            return "EXPLOSIVO"
-        if score >= 20:
-            return "ALTO"
-        if score >= 12:
-            return "ESTABLE"
-        if score >= 7:
-            return "BAJO"
-        return "APAGADO"
-
-    @staticmethod
-    def _detect_match_state(minute, total_goals, total_shots_on_target, total_dangerous, total_xg, total_red, momentum_label):
-        if total_red > 0 and minute < 75:
-            return "INESTABLE", "Hay tarjeta roja y el partido puede romperse de forma impredecible"
-
-        if minute >= 70 and total_goals >= 3 and total_shots_on_target >= 7:
-            return "ABIERTO", "Marcador abierto con suficiente producción ofensiva"
-
-        if total_xg >= 1.6 and total_dangerous >= 24:
-            return "CALIENTE", "Hay presión ofensiva real y peligro constante"
-
-        if momentum_label in ["EXPLOSIVO", "ALTO"]:
-            return "ACTIVO", "El ritmo ofensivo es favorable"
-
-        if total_shots_on_target <= 2 and total_dangerous <= 10 and minute >= 25:
-            return "APAGADO", "Falta profundidad y ritmo"
-
-        return "ESTABLE", "Partido relativamente controlado"
-
-    @staticmethod
-    def _goal_probability(minute, pressure_score, total_goals, total_shots_on_target, total_dangerous, total_xg):
-        raw = (
-            pressure_score
-            + total_shots_on_target * 2
-            + total_dangerous * 0.4
-            + total_xg * 8
-            + total_goals
-        )
-
-        if 20 <= minute <= 35:
-            raw += 4
-        if 55 <= minute <= 78:
-            raw += 6
-        if minute > 80:
-            raw += 3
-
-        return AIMatchEngine._clamp_percentage(raw)
-
-    @staticmethod
-    def _over_probability(minute, total_goals, pressure_score, total_xg):
-        raw = total_goals * 18 + pressure_score * 0.9 + total_xg * 10
-
-        if minute >= 55:
-            raw += 8
-        if minute >= 70:
-            raw += 6
-
-        return AIMatchEngine._clamp_percentage(raw)
-
-    @staticmethod
-    def _predict_result(home_score, away_score, home_xg, away_xg, home_dangerous, away_dangerous):
-        predicted_home = home_score
-        predicted_away = away_score
-
-        if home_xg > away_xg + 0.35 or home_dangerous > away_dangerous + 6:
-            predicted_home += 1
-
-        if away_xg > home_xg + 0.35 or away_dangerous > home_dangerous + 6:
-            predicted_away += 1
-
-        return f"{predicted_home}-{predicted_away}"
-
-    @staticmethod
-    def _predict_winner(home_score, away_score, dominance, home_xg, away_xg):
-        if home_score > away_score:
-            if dominance == "VISITANTE" and abs(home_xg - away_xg) < 0.25:
-                return "LOCAL AJUSTADO"
-            return "LOCAL"
-
-        if away_score > home_score:
-            if dominance == "LOCAL" and abs(home_xg - away_xg) < 0.25:
-                return "VISITANTE AJUSTADO"
-            return "VISITANTE"
-
-        if dominance == "LOCAL" and home_xg >= away_xg:
-            return "LOCAL"
-        if dominance == "VISITANTE" and away_xg >= home_xg:
-            return "VISITANTE"
-        return "EMPATE"
-
-    @staticmethod
-    def _risk_level(minute, total_shots_on_target, total_dangerous, total_xg, total_red, match_state):
-        risk = 0
-
-        if total_shots_on_target <= 2:
-            risk += 3
-        if total_dangerous <= 10:
-            risk += 2
-        if total_xg < 0.8:
-            risk += 2
-        if total_red > 0:
-            risk += 2
-        if minute < 15:
-            risk += 1
-        if match_state in ["APAGADO", "INESTABLE"]:
-            risk += 2
-
-        if risk >= 7:
-            return "ALTO"
-        if risk >= 4:
-            return "MEDIO"
-        return "BAJO"
-
-    @staticmethod
-    def _ai_score(minute, total_goals, total_shots_on_target, total_dangerous, total_xg, momentum_label, match_state, total_red):
-        score = 40
-
-        score += min(total_shots_on_target * 3, 18)
-        score += min(int(total_dangerous * 0.4), 16)
-        score += min(int(total_xg * 12), 14)
-        score += min(total_goals * 3, 9)
-
-        if 20 <= minute <= 35:
-            score += 4
-        if 55 <= minute <= 75:
-            score += 6
-
-        if momentum_label == "EXPLOSIVO":
-            score += 10
-        elif momentum_label == "ALTO":
-            score += 6
-        elif momentum_label == "ESTABLE":
-            score += 2
-        elif momentum_label == "APAGADO":
-            score -= 8
-
-        if match_state == "CALIENTE":
-            score += 8
-        elif match_state == "ACTIVO":
-            score += 5
-        elif match_state == "APAGADO":
-            score -= 7
-        elif match_state == "INESTABLE":
-            score -= 10
-
-        if total_red > 0:
-            score -= 5
-
-        return max(0, min(100, score))
-
-    @staticmethod
-    def _clamp_percentage(value):
-        return max(1, min(99, int(round(value))))
+    def _clamp(self, value: float, min_value: float, max_value: float) -> float:
+        return max(min_value, min(value, max_value))
