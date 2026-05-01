@@ -2,22 +2,18 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List
+import json
 
 
 class HistoryService:
     """
-    Historial de señales.
-
-    Corrección aplicada:
-    - signal_key estable: match_id:market
-    - no usa match_name como fallback para evitar duplicados
-    - update_result devuelve True/False
-    - no permite que extra cambie la signal_key
-    - mantiene logos/banderas
+    Historial persistente de señales.
     """
 
     MAX_HISTORY_ITEMS = 300
+    HISTORY_FILE = Path("data/history.json")
 
     TEAM_LOGOS = {
         "Toluca": "https://media.api-sports.io/football/teams/2289.png",
@@ -76,6 +72,7 @@ class HistoryService:
     def __init__(self) -> None:
         self._history: List[Dict[str, Any]] = []
         self._published_count: int = 0
+        self._load_from_disk()
 
     def register_published_signal(self, signal: Dict[str, Any]) -> bool:
         if not isinstance(signal, dict):
@@ -102,6 +99,7 @@ class HistoryService:
         self._history.insert(0, record)
         self._published_count += 1
         self._trim_history()
+        self._save_to_disk()
         return True
 
     def update_result(
@@ -134,6 +132,7 @@ class HistoryService:
                 item["history_status"] = "CLOSED"
                 item["closed_at"] = datetime.now().isoformat(timespec="seconds")
 
+                self._save_to_disk()
                 return True
 
         return False
@@ -180,6 +179,7 @@ class HistoryService:
 
         self._history.insert(0, record)
         self._trim_history()
+        self._save_to_disk()
         return True
 
     def get_history(self) -> List[Dict[str, Any]]:
@@ -194,8 +194,10 @@ class HistoryService:
         wins = sum(1 for x in self._history if str(x.get("resultado")).upper() == "WIN")
         losses = sum(1 for x in self._history if str(x.get("resultado")).upper() == "LOSS")
         pending = sum(
-            1 for x in self._history if str(x.get("resultado")).upper() == "PENDIENTE"
+            1 for x in self._history
+            if str(x.get("resultado")).upper() in {"PENDIENTE", "ACTIVE", "PUBLISHED"}
         )
+        voids = sum(1 for x in self._history if str(x.get("resultado")).upper() == "VOID")
 
         settled = wins + losses
         winrate = (wins / settled * 100) if settled > 0 else 0.0
@@ -206,13 +208,13 @@ class HistoryService:
             "wins": wins,
             "losses": losses,
             "pending": pending,
+            "voids": voids,
             "settled": settled,
             "winrate": round(winrate, 2),
         }
 
     def _get_signal_key(self, signal: Dict[str, Any]) -> str:
-        # Si ya viene con key, la respetamos solo si tiene formato estable.
-        raw_key = signal.get("signal_key")
+        raw_key = signal.get("signal_key") or signal.get("signal_id")
 
         if raw_key:
             text = str(raw_key).strip().upper()
@@ -234,6 +236,49 @@ class HistoryService:
     def _trim_history(self) -> None:
         if len(self._history) > self.MAX_HISTORY_ITEMS:
             self._history = self._history[: self.MAX_HISTORY_ITEMS]
+
+    def _load_from_disk(self) -> None:
+        try:
+            if not self.HISTORY_FILE.exists():
+                return
+
+            with self.HISTORY_FILE.open("r", encoding="utf-8") as file:
+                payload = json.load(file)
+
+            if isinstance(payload, dict):
+                history = payload.get("history", [])
+                published_count = payload.get("published_count", 0)
+            else:
+                history = payload
+                published_count = 0
+
+            if isinstance(history, list):
+                self._history = [
+                    item for item in history
+                    if isinstance(item, dict)
+                ][: self.MAX_HISTORY_ITEMS]
+
+            self._published_count = int(published_count or len(self._history))
+
+        except Exception:
+            self._history = []
+            self._published_count = 0
+
+    def _save_to_disk(self) -> None:
+        try:
+            self.HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+            payload = {
+                "published_count": self._published_count,
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+                "history": self._history[: self.MAX_HISTORY_ITEMS],
+            }
+
+            with self.HISTORY_FILE.open("w", encoding="utf-8") as file:
+                json.dump(payload, file, ensure_ascii=False, indent=2)
+
+        except Exception:
+            pass
 
     def _enrich_visual_assets(self, item: Dict[str, Any]) -> Dict[str, Any]:
         data = deepcopy(item)
