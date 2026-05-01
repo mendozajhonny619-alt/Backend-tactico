@@ -1,55 +1,148 @@
+from __future__ import annotations
+
+from typing import Any, Dict
+
+
 class TacticalEngine:
-    @staticmethod
-    def analizar_momentum(stats):
-        ataques_p = stats.get("dangerous_attacks", 0)
-        remates_total = stats.get("shots", 0)
-        remates_arco = stats.get("shots_on_target", 0)
-        minuto = stats.get("minute", 0)
+    """
+    Motor táctico del partido.
 
-        ppm = ataques_p / minuto if minuto and minuto > 0 else 0
+    Clasifica el estado del juego en:
 
-        estado = "CONTROLADO"
-        razon = "Ritmo estándar de juego"
+    - EXPLOSIVO
+    - CALIENTE
+    - CONTROLADO
+    - FRIO
+    - MUERTO
 
-        if ppm > 1.2 and remates_arco >= 3:
-            estado = "EXPLOSIVO"
-            razon = "Alta frecuencia de ataques peligrosos con puntería"
-        elif ppm > 0.8 and remates_arco >= 1:
-            estado = "CALIENTE"
-            razon = "Presión constante en área rival"
-        elif ppm < 0.3 and minuto > 20:
-            estado = "MUERTO"
-            razon = "Falta de profundidad y ritmo"
+    Y además:
+    - tempo_label
+    - tactical_bias (OVER / UNDER / NEUTRAL)
+    - market_alignment
+    """
 
-        if ataques_p > 40 and remates_arco == 0:
-            estado = "CAOS PELIGROSO"
-            razon = "Ataques estériles, riesgo de contraataque"
+    def evaluate(
+        self,
+        context: Dict[str, Any],
+        window: Dict[str, Any],
+    ) -> Dict[str, Any]:
+
+        context = context or {}
+        window = window or {}
+
+        pressure = self._safe_float(context.get("pressure_index"))
+        rhythm = self._safe_float(context.get("rhythm_index"))
+        goal_prob = self._safe_float(
+            context.get("goal_probability")
+            or context.get("goal_window_score")
+        )
+        minute = self._safe_float(context.get("minute"))
+
+        dominance = str(context.get("dominance") or "BALANCED").upper()
+        context_state = str(context.get("context_state") or "MUERTO").upper()
+
+        # ---------------------------------------------------
+        # 🔥 CLASIFICACIÓN TÁCTICA PRINCIPAL
+        # ---------------------------------------------------
+
+        if pressure >= 25 and rhythm >= 18:
+            tactical_state = "EXPLOSIVO"
+
+        elif pressure >= 18 and rhythm >= 14:
+            tactical_state = "CALIENTE"
+
+        elif pressure >= 12 and rhythm >= 10:
+            tactical_state = "CONTROLADO"
+
+        elif pressure >= 7 and rhythm >= 7:
+            tactical_state = "FRIO"
+
+        else:
+            tactical_state = "MUERTO"
+
+        # ---------------------------------------------------
+        # ⚡ TEMPO
+        # ---------------------------------------------------
+
+        if rhythm >= 18:
+            tempo_label = "ALTISIMO"
+        elif rhythm >= 14:
+            tempo_label = "ALTO"
+        elif rhythm >= 10:
+            tempo_label = "MEDIO"
+        elif rhythm >= 7:
+            tempo_label = "BAJO"
+        else:
+            tempo_label = "MUY_BAJO"
+
+        # ---------------------------------------------------
+        # 🎯 BIAS DE MERCADO (OVER / UNDER)
+        # ---------------------------------------------------
+
+        if tactical_state in {"EXPLOSIVO", "CALIENTE"} and goal_prob >= 60:
+            tactical_bias = "OVER"
+
+        elif tactical_state in {"CONTROLADO", "FRIO", "MUERTO"} and goal_prob <= 52:
+            tactical_bias = "UNDER"
+
+        else:
+            tactical_bias = "NEUTRAL"
+
+        # ---------------------------------------------------
+        # 🧠 ALINEACIÓN CON MERCADO (SIMULADA)
+        # ---------------------------------------------------
+
+        market_alignment = self._calculate_alignment(
+            tactical_state,
+            tactical_bias,
+            context_state,
+        )
 
         return {
-            "match_state": estado,
-            "match_state_reason": razon,
-            "intensity_score": round(ppm * 10, 2),
-            "shots": remates_total,
-            "shots_on_target": remates_arco,
-            "dangerous_attacks": ataques_p
+            "tactical_state": tactical_state,
+            "tempo_label": tempo_label,
+            "tactical_bias": tactical_bias,
+            "market_alignment": market_alignment,
         }
 
-    @staticmethod
-    def predictor_gol_inminente(stats):
-        momentum = TacticalEngine.analizar_momentum(stats)
+    # ---------------------------------------------------
+    # 🔍 ALIGNMENT
+    # ---------------------------------------------------
 
-        es_inminente = False
-        confianza_gol = 0
+    def _calculate_alignment(
+        self,
+        tactical_state: str,
+        tactical_bias: str,
+        context_state: str,
+    ) -> str:
 
-        if momentum["match_state"] == "EXPLOSIVO":
-            es_inminente = True
-            confianza_gol = 85
-        elif momentum["match_state"] == "CALIENTE":
-            es_inminente = True
-            confianza_gol = 70
+        if tactical_bias == "OVER":
+            if tactical_state in {"EXPLOSIVO", "CALIENTE"} and context_state in {
+                "CALIENTE",
+                "MUY_CALIENTE",
+                "TIBIO",
+            }:
+                return "ALTA"
+            return "MEDIA"
 
-        return {
-            "gol_inminente": es_inminente,
-            "confianza_ventana": confianza_gol,
-            "ventana_minutos": 10 if es_inminente else 0
-        }
+        if tactical_bias == "UNDER":
+            if tactical_state in {"CONTROLADO", "FRIO", "MUERTO"} and context_state in {
+                "FRIO",
+                "MUERTO",
+                "CONTROLADO",
+                "TIBIO",
+            }:
+                return "ALTA"
+            return "MEDIA"
+
+        return "BAJA"
+
+    # ---------------------------------------------------
+    # Helpers
+    # ---------------------------------------------------
+
+    def _safe_float(self, value: Any) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
