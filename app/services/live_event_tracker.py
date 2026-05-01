@@ -77,7 +77,7 @@ class LiveEventTracker:
         events = self._events_by_fixture.get(str(fixture_id), [])
 
         for event in events:
-            if event["type"] == "GOAL" and event["minute"] >= minute:
+            if event["type"] == "GOAL" and event["minute"] > minute:
                 return True
 
         return False
