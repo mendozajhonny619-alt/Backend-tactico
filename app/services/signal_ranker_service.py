@@ -1,416 +1,294 @@
+from __future__ import annotations
+
+from copy import deepcopy
 from typing import Any, Dict, List
 
 
 class SignalRankerService:
     """
-    Rankea candidatas y oportunidades para decidir cuáles son
-    las mejores señales del momento.
-
-    Filosofía:
-    - no depender de un solo filtro
-    - combinar score + probabilidad + contexto + gate + riesgo
-    - priorizar calidad y claridad
+    Ordena, reclasifica y prioriza señales finales.
     """
 
-    MAX_ACTIVE_SIGNALS = 6
+    RANK_PRIORITY = {
+        "PREMIUM": 6,
+        "FUERTE": 5,
+        "BUENA": 4,
+        "OPERABLE": 3,
+        "OBSERVACION": 2,
+        "NO_BET": 0,
+    }
 
-    @staticmethod
-    def build_top_signals(
-        candidates: List[Dict[str, Any]],
-        opportunities_payload: Dict[str, Any] | None = None,
-    ) -> List[Dict[str, Any]]:
-        ranked: List[Dict[str, Any]] = []
+    HARD_PUBLISH_RANKS = {"PREMIUM", "FUERTE"}
+    MEDIUM_PUBLISH_RANKS = {"BUENA"}
+    SOFT_PUBLISH_RANKS = {"OPERABLE"}
 
-        # =========================
-        # 1. CANDIDATAS DIRECTAS DEL SCAN
-        # =========================
-        for item in candidates or []:
+    MAX_PUBLISHED = 6
+    MAX_MEDIUM_PUBLISHED = 3
+    MAX_SOFT_PUBLISHED = 2
+
+    def rank(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not candidates:
+            return []
+
+        normalized = self._extract_and_normalize(candidates)
+        reclassified = [self._reclassify_signal(signal) for signal in normalized]
+        deduped = self._deduplicate(reclassified)
+        sorted_candidates = self._sort_candidates(deduped)
+
+        premium_strong = [
+            signal for signal in sorted_candidates
+            if signal.get("rank") in self.HARD_PUBLISH_RANKS
+        ]
+
+        medium = [
+            signal for signal in sorted_candidates
+            if signal.get("rank") in self.MEDIUM_PUBLISH_RANKS
+        ]
+
+        soft = [
+            signal for signal in sorted_candidates
+            if signal.get("rank") in self.SOFT_PUBLISH_RANKS
+        ]
+
+        published: List[Dict[str, Any]] = []
+
+        published.extend(premium_strong[: self.MAX_PUBLISHED])
+
+        remaining_slots = self.MAX_PUBLISHED - len(published)
+        if remaining_slots > 0:
+            published.extend(medium[: min(self.MAX_MEDIUM_PUBLISHED, remaining_slots)])
+
+        remaining_slots = self.MAX_PUBLISHED - len(published)
+        if remaining_slots > 0:
+            published.extend(soft[: min(self.MAX_SOFT_PUBLISHED, remaining_slots)])
+
+        return self._sort_candidates(published)[: self.MAX_PUBLISHED]
+
+    def _extract_and_normalize(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+
+        for item in candidates:
             if not isinstance(item, dict):
                 continue
 
-            match = item.get("match", {}) or {}
-            motores = item.get("motores", {}) or {}
-
-            if not isinstance(match, dict):
+            signal = item.get("signal") if "signal" in item else item
+            if not isinstance(signal, dict):
                 continue
 
-            ranked_row = SignalRankerService._rank_candidate(match, motores)
-            if ranked_row:
-                ranked.append(ranked_row)
+            match_id = signal.get("match_id")
+            market = signal.get("market")
 
-        # =========================
-        # 2. OPORTUNIDADES SECUNDARIAS
-        # =========================
-        if isinstance(opportunities_payload, dict):
-            sections = opportunities_payload.get("sections", {}) or {}
+            if match_id is None or not market:
+                continue
 
-            for row in sections.get("over_candidates", []) or []:
-                built = SignalRankerService._rank_opportunity(row, forced_market="OVER_MATCH_DYNAMIC")
-                if built:
-                    ranked.append(built)
+            signal = deepcopy(signal)
+            signal["signal_key"] = signal.get("signal_key") or self._build_signal_key(match_id, market)
 
-            for row in sections.get("under_candidates", []) or []:
-                built = SignalRankerService._rank_opportunity(row, forced_market="UNDER_MATCH_DYNAMIC")
-                if built:
-                    ranked.append(built)
+            signal["rank"] = str(signal.get("rank") or "NO_BET").upper()
+            signal["market"] = str(signal.get("market") or "").upper()
 
-        # =========================
-        # 3. DEDUP POR PARTIDO + MERCADO
-        # =========================
-        ranked = SignalRankerService._deduplicate(ranked)
+            signal["signal_score"] = self._safe_float(signal.get("signal_score"))
+            signal["ai_score"] = self._safe_float(signal.get("ai_score"))
+            signal["goal_probability"] = self._safe_float(signal.get("goal_probability"))
+            signal["over_probability"] = self._safe_float(signal.get("over_probability"))
+            signal["under_probability"] = self._safe_float(signal.get("under_probability"))
+            signal["risk_score"] = self._safe_float(signal.get("risk_score"))
+            signal["value_edge"] = self._safe_float(signal.get("value_edge"))
+            signal["odds"] = self._safe_float(signal.get("odds"))
+            signal["minute"] = self._safe_int(signal.get("minute"))
 
-        # =========================
-        # 4. ORDEN FINAL
-        # =========================
-        ranked.sort(
+            signal["risk_level"] = str(signal.get("risk_level") or "").upper()
+            signal["context_state"] = str(
+                signal.get("context_state")
+                or signal.get("match_state")
+                or ""
+            ).upper()
+            signal["data_quality"] = str(signal.get("data_quality") or "").upper()
+            signal["game_quality"] = str(signal.get("game_quality") or "").upper()
+
+            normalized.append(signal)
+
+        return normalized
+
+    def _reclassify_signal(self, signal: Dict[str, Any]) -> Dict[str, Any]:
+        signal = deepcopy(signal)
+
+        market = str(signal.get("market") or "").upper()
+        ai_score = self._safe_float(signal.get("ai_score"))
+        signal_score = self._safe_float(signal.get("signal_score"))
+        goal_probability = self._safe_float(signal.get("goal_probability"))
+        over_probability = self._safe_float(signal.get("over_probability"))
+        under_probability = self._safe_float(signal.get("under_probability"))
+        risk_score = self._safe_float(signal.get("risk_score"))
+        risk_level = str(signal.get("risk_level") or "").upper()
+        context_state = str(signal.get("context_state") or "").upper()
+        data_quality = str(signal.get("data_quality") or "").upper()
+        game_quality = str(signal.get("game_quality") or "").upper()
+        minute = self._safe_int(signal.get("minute"))
+
+        is_over = self._is_over_market(market)
+        market_probability = over_probability if is_over else under_probability
+
+        if risk_level == "ALTO" and risk_score >= 7.8:
+            signal["rank"] = "OBSERVACION"
+            signal["rank_reason"] = "RISK_TOO_HIGH_FOR_SIGNAL"
+            return signal
+
+        if ai_score < 50 or signal_score < 50:
+            signal["rank"] = "OBSERVACION"
+            signal["rank_reason"] = "LOW_INTERNAL_SCORE"
+            return signal
+
+        playable_context = context_state in {
+            "TIBIO",
+            "CALIENTE",
+            "MUY_CALIENTE",
+            "CONTROLADO",
+        }
+
+        strong_context = context_state in {
+            "CALIENTE",
+            "MUY_CALIENTE",
+            "TIBIO",
+        }
+
+        good_quality = data_quality in {"MEDIUM", "HIGH"} or game_quality in {"MEDIUM", "HIGH"}
+
+        if (
+            ai_score >= 76
+            and signal_score >= 76
+            and goal_probability >= 82
+            and market_probability >= 82
+            and risk_score <= 7.0
+            and strong_context
+        ):
+            signal["rank"] = "PREMIUM"
+            signal["rank_reason"] = "ELITE_SIGNAL_ALIGNMENT"
+            return signal
+
+        if (
+            ai_score >= 68
+            and signal_score >= 68
+            and goal_probability >= 76
+            and market_probability >= 76
+            and risk_score <= 7.2
+            and playable_context
+        ):
+            signal["rank"] = "FUERTE"
+            signal["rank_reason"] = "STRONG_SIGNAL_ALIGNMENT"
+            return signal
+
+        if (
+            ai_score >= 62
+            and signal_score >= 62
+            and goal_probability >= 68
+            and market_probability >= 66
+            and risk_score <= 7.4
+            and playable_context
+        ):
+            signal["rank"] = "BUENA"
+            signal["rank_reason"] = "GOOD_SIGNAL_ALIGNMENT"
+            return signal
+
+        if (
+            ai_score >= 56
+            and signal_score >= 56
+            and goal_probability >= 60
+            and market_probability >= 58
+            and 15 <= minute <= 88
+        ):
+            signal["rank"] = "OPERABLE"
+            signal["rank_reason"] = "OPERABLE_BUT_NOT_STRONG"
+            return signal
+
+        signal["rank"] = "OBSERVACION"
+        signal["rank_reason"] = "NOT_ENOUGH_FOR_ACTIVE_SIGNAL"
+        return signal
+
+    def _deduplicate(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        best_by_key: Dict[str, Dict[str, Any]] = {}
+
+        for signal in candidates:
+            key = signal["signal_key"]
+            current_best = best_by_key.get(key)
+
+            if current_best is None:
+                best_by_key[key] = signal
+                continue
+
+            if self._is_better(signal, current_best):
+                best_by_key[key] = signal
+
+        return list(best_by_key.values())
+
+    def _sort_candidates(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return sorted(
+            candidates,
             key=lambda x: (
-                float(x.get("publication_score", 0) or 0),
-                float(x.get("gate_score", 0) or 0),
-                float(x.get("signal_score", 0) or 0),
-                float(x.get("ai_score", 0) or 0),
-                float(x.get("goal_probability", 0) or 0),
-                float(x.get("over_probability", 0) or 0),
+                self.RANK_PRIORITY.get(x.get("rank", "NO_BET"), 0),
+                self._final_power_score(x),
+                x.get("signal_score", 0.0),
+                x.get("ai_score", 0.0),
+                x.get("goal_probability", 0.0),
+                -x.get("risk_score", 999.0),
             ),
             reverse=True,
         )
 
-        # =========================
-        # 5. CLASIFICACIÓN FINAL
-        # =========================
-        final_rows: List[Dict[str, Any]] = []
+    def _is_better(self, candidate: Dict[str, Any], current: Dict[str, Any]) -> bool:
+        candidate_rank = self.RANK_PRIORITY.get(candidate.get("rank", "NO_BET"), 0)
+        current_rank = self.RANK_PRIORITY.get(current.get("rank", "NO_BET"), 0)
 
-        for row in ranked[: SignalRankerService.MAX_ACTIVE_SIGNALS]:
-            publication_score = float(row.get("publication_score", 0) or 0)
+        if candidate_rank != current_rank:
+            return candidate_rank > current_rank
 
-            if publication_score >= 78:
-                row["publish_tier"] = "PREMIUM"
-                row["publish_ready"] = True
-            elif publication_score >= 66:
-                row["publish_tier"] = "FUERTE"
-                row["publish_ready"] = True
-            elif publication_score >= 56:
-                row["publish_tier"] = "BUENA"
-                row["publish_ready"] = True
-            elif publication_score >= 46:
-                row["publish_tier"] = "OBSERVE_PRO"
-                row["publish_ready"] = False
-            else:
-                row["publish_tier"] = "OBSERVE"
-                row["publish_ready"] = False
+        return self._final_power_score(candidate) > self._final_power_score(current)
 
-            final_rows.append(row)
+    def _final_power_score(self, signal: Dict[str, Any]) -> float:
+        market = str(signal.get("market") or "").upper()
 
-        return final_rows
+        ai_score = self._safe_float(signal.get("ai_score"))
+        signal_score = self._safe_float(signal.get("signal_score"))
+        goal_probability = self._safe_float(signal.get("goal_probability"))
+        over_probability = self._safe_float(signal.get("over_probability"))
+        under_probability = self._safe_float(signal.get("under_probability"))
+        risk_score = self._safe_float(signal.get("risk_score"))
+        value_edge = self._safe_float(signal.get("value_edge"))
 
-    # =========================
-    # RANKING DE CANDIDATA REAL
-    # =========================
-    @staticmethod
-    def _rank_candidate(match: Dict[str, Any], motores: Dict[str, Any]) -> Dict[str, Any]:
-        market = str(match.get("market", "N/A") or "N/A").upper()
-        minute = SignalRankerService._safe_int(match.get("minute"), 0)
+        is_over = self._is_over_market(market)
+        market_probability = over_probability if is_over else under_probability
 
-        ai_score = SignalRankerService._safe_float(match.get("ai_score"), 0.0)
-        signal_score = SignalRankerService._safe_float(match.get("signal_score"), 0.0)
-        gate_score = SignalRankerService._safe_float(match.get("gate_score"), 0.0)
-        goal_probability = SignalRankerService._safe_float(match.get("goal_probability"), 0.0)
-        over_probability = SignalRankerService._safe_float(match.get("over_probability"), 0.0)
-        risk_score = SignalRankerService._safe_float(match.get("risk_score"), 0.0)
-
-        match_state = str(match.get("match_state", "CONTROLADO") or "CONTROLADO").upper()
-        signal_rank = str(match.get("signal_rank", "ACEPTABLE") or "ACEPTABLE").upper()
-        data_quality = str(match.get("data_quality", "LOW") or "LOW").upper()
-        window_phase = str(match.get("window_phase", "GENERAL") or "GENERAL").upper()
-
-        predictor = motores.get("predictor", {}) or {}
-        tactica = motores.get("tactica", {}) or {}
-        gate = motores.get("gate", {}) or {}
-
-        gol_inminente = bool(predictor.get("gol_inminente", False))
-        confianza_ventana = SignalRankerService._safe_float(
-            predictor.get("confianza_ventana"), 0.0
-        )
-        intensity_score = SignalRankerService._safe_float(
-            tactica.get("intensity_score"), 0.0
+        score = (
+            signal_score * 0.35
+            + ai_score * 0.25
+            + goal_probability * 0.18
+            + market_probability * 0.17
+            + min(value_edge * 100, 15) * 0.05
+            - risk_score * 2.0
         )
 
-        publication_score = 0.0
+        return round(max(0.0, min(score, 100.0)), 2)
 
-        # Base principal
-        publication_score += min(signal_score * 0.42, 42)
-        publication_score += min(gate_score * 0.22, 22)
-        publication_score += min(ai_score * 0.18, 18)
-
-        # Probabilidades según mercado
-        if "UNDER" in market:
-            under_probability = max(100.0 - over_probability, 0.0)
-            publication_score += min(under_probability * 0.10, 10)
-            publication_score += min((100.0 - goal_probability) * 0.06, 6)
-        else:
-            publication_score += min(goal_probability * 0.10, 10)
-            publication_score += min(over_probability * 0.08, 8)
-
-        # Bonus por ventana y contexto
-        if window_phase in [
-            "OVER_PREMIUM_WINDOW",
-            "LATE_CONTROL_WINDOW",
-            "ULTRA_LATE",
-            "HALFTIME_CAUTION",
-            "EARLY_OBSERVE",
-        ]:
-            publication_score += 4
-
-        if match_state == "EXPLOSIVO":
-            publication_score += 8
-        elif match_state == "CALIENTE":
-            publication_score += 6
-        elif match_state == "ACTIVO":
-            publication_score += 4
-        elif match_state == "ABIERTO":
-            publication_score += 4
-        elif match_state == "MUERTO" and "UNDER" in market:
-            publication_score += 7
-        elif match_state == "MUERTO" and "UNDER" not in market:
-            publication_score -= 8
-
-        if gol_inminente and "UNDER" not in market:
-            publication_score += 6
-
-        if confianza_ventana >= 70 and "UNDER" not in market:
-            publication_score += 4
-
-        if intensity_score >= 30 and "UNDER" not in market:
-            publication_score += 3
-
-        # Calidad de datos
-        if data_quality == "HIGH":
-            publication_score += 6
-        elif data_quality == "MEDIUM":
-            publication_score += 2
-        else:
-            if "UNDER" in market and minute >= 60:
-                publication_score -= 2
-            else:
-                publication_score -= 7
-
-        # Riesgo
-        publication_score -= min(risk_score * 1.7, 14)
-
-        # Bonus por rank ya asignado
-        if signal_rank == "PREMIUM":
-            publication_score += 7
-        elif signal_rank == "FUERTE":
-            publication_score += 5
-        elif signal_rank == "BUENA":
-            publication_score += 3
-
-        # Bonus si gate ya venía favorable
-        if gate.get("publish", False):
-            publication_score += 4
-
-        publication_score = round(max(publication_score, 0), 2)
-
-        row = dict(match)
-        row["publication_score"] = publication_score
-        row["ranking_source"] = "candidate"
-        row["ranking_reason"] = SignalRankerService._build_reason(
-            market=market,
-            publication_score=publication_score,
-            signal_score=signal_score,
-            gate_score=gate_score,
-            ai_score=ai_score,
-            goal_probability=goal_probability,
-            over_probability=over_probability,
-            risk_score=risk_score,
-            data_quality=data_quality,
-            match_state=match_state,
-        )
-        return row
-
-    # =========================
-    # RANKING DE OPORTUNIDAD
-    # =========================
-    @staticmethod
-    def _rank_opportunity(row: Dict[str, Any], forced_market: str) -> Dict[str, Any]:
-        minute = SignalRankerService._safe_int(row.get("minute"), 0)
-
-        ai_score = SignalRankerService._safe_float(row.get("ai_score"), 0.0)
-        goal_probability = SignalRankerService._safe_float(row.get("goal_probability"), 0.0)
-        over_probability = SignalRankerService._safe_float(row.get("over_probability"), 0.0)
-        risk_score = SignalRankerService._safe_float(row.get("risk_score"), 0.0)
-        strength = SignalRankerService._safe_float(row.get("opportunity_strength"), 0.0)
-
-        market = str(forced_market or row.get("market") or "N/A").upper()
-        data_quality = str(row.get("data_quality", "LOW") or "LOW").upper()
-        match_state = str(row.get("match_state", "CONTROLADO") or "CONTROLADO").upper()
-        side = str(row.get("opportunity_side", "NONE") or "NONE").upper()
-
-        publication_score = 0.0
-
-        publication_score += min(strength * 0.85, 38)
-        publication_score += min(ai_score * 0.20, 20)
-
-        if "UNDER" in market:
-            under_probability = max(100.0 - over_probability, 0.0)
-            publication_score += min(under_probability * 0.18, 18)
-            publication_score += min((100.0 - goal_probability) * 0.10, 10)
-
-            if minute >= 60:
-                publication_score += 8
-            if match_state in ["MUERTO", "CONTROLADO", "TIBIO"]:
-                publication_score += 6
-        else:
-            publication_score += min(goal_probability * 0.18, 18)
-            publication_score += min(over_probability * 0.14, 14)
-
-            if minute >= 25:
-                publication_score += 4
-            if match_state in ["ACTIVO", "ABIERTO", "CALIENTE", "EXPLOSIVO"]:
-                publication_score += 6
-
-        # calidad
-        if data_quality == "HIGH":
-            publication_score += 5
-        elif data_quality == "MEDIUM":
-            publication_score += 2
-        else:
-            if "UNDER" in market and minute >= 60:
-                publication_score -= 1
-            else:
-                publication_score -= 6
-
-        publication_score -= min(risk_score * 1.6, 14)
-
-        if side == "UNDER" and "UNDER" in market:
-            publication_score += 3
-        if side == "OVER" and "UNDER" not in market:
-            publication_score += 3
-
-        publication_score = round(max(publication_score, 0), 2)
-
-        built = {
-            "match_id": row.get("match_id"),
-            "partido": row.get("partido"),
-            "home": row.get("home"),
-            "away": row.get("away"),
-            "league": row.get("league"),
-            "country": row.get("country"),
-            "minute": minute,
-            "score": row.get("score", "0-0"),
-            "market": market,
-            "selection": "Under" if "UNDER" in market else "Over",
-            "line": row.get("line", "Auto"),
-            "ai_score": ai_score,
-            "goal_probability": goal_probability,
-            "over_probability": over_probability,
-            "risk_score": risk_score,
-            "signal_score": strength,
-            "gate_score": strength,
-            "signal_rank": SignalRankerService._classify_rank(publication_score),
-            "match_state": match_state,
-            "window_phase": row.get("window_phase", "OPPORTUNITY"),
-            "window_reason": row.get("window_reason", "Oportunidad detectada por radar"),
-            "momentum_label": row.get("momentum_label", "ESTABLE"),
-            "dominance": row.get("dominance", "EQUILIBRADO"),
-            "risk_level": row.get("risk_level", "MEDIO"),
-            "shots": row.get("shots", 0),
-            "shots_on_target": row.get("shots_on_target", 0),
-            "corners": row.get("corners", 0),
-            "dangerous_attacks": row.get("dangerous_attacks", 0),
-            "xG": row.get("xG", 0),
-            "data_quality": data_quality,
-            "publication_score": publication_score,
-            "ranking_source": "opportunity",
-            "ranking_reason": ", ".join(row.get("opportunity_reasons", []) or []),
-            "publish_ready": False,
-            "recomendacion_final": SignalRankerService._classify_rank(publication_score),
-        }
-        return built
-
-    # =========================
-    # DEDUPLICACIÓN
-    # =========================
-    @staticmethod
-    def _deduplicate(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        best_map: Dict[str, Dict[str, Any]] = {}
-
-        for row in rows:
-            match_id = str(row.get("match_id") or "")
-            market = str(row.get("market") or "N/A").upper()
-
-            if not match_id:
-                home = str(row.get("home") or "")
-                away = str(row.get("away") or "")
-                league = str(row.get("league") or "")
-                match_id = f"{home}|{away}|{league}"
-
-            key = f"{match_id}|{market}"
-
-            if key not in best_map:
-                best_map[key] = row
-                continue
-
-            current_score = SignalRankerService._safe_float(
-                best_map[key].get("publication_score"), 0.0
-            )
-            incoming_score = SignalRankerService._safe_float(
-                row.get("publication_score"), 0.0
-            )
-
-            if incoming_score > current_score:
-                best_map[key] = row
-
-        return list(best_map.values())
-
-    # =========================
-    # HELPERS
-    # =========================
-    @staticmethod
-    def _classify_rank(publication_score: float) -> str:
-        if publication_score >= 82:
-            return "PREMIUM"
-        if publication_score >= 68:
-            return "FUERTE"
-        if publication_score >= 56:
-            return "BUENA"
-        return "ACEPTABLE"
-
-    @staticmethod
-    def _build_reason(
-        market: str,
-        publication_score: float,
-        signal_score: float,
-        gate_score: float,
-        ai_score: float,
-        goal_probability: float,
-        over_probability: float,
-        risk_score: float,
-        data_quality: str,
-        match_state: str,
-    ) -> str:
-        if "UNDER" in market:
-            return (
-                f"UNDER | pub={publication_score} | signal={signal_score} | gate={gate_score} | "
-                f"IA={ai_score} | gol={goal_probability}% | over={over_probability}% | "
-                f"riesgo={risk_score} | quality={data_quality} | state={match_state}"
-            )
-
+    def _is_over_market(self, market: str) -> bool:
+        text = str(market or "").upper()
         return (
-            f"OVER | pub={publication_score} | signal={signal_score} | gate={gate_score} | "
-            f"IA={ai_score} | gol={goal_probability}% | over={over_probability}% | "
-            f"riesgo={risk_score} | quality={data_quality} | state={match_state}"
+            "OVER" in text
+            or "ENCIMA" in text
+            or "MAS" in text
+            or "MÁS" in text
         )
 
-    @staticmethod
-    def _safe_int(value: Any, default: int = 0) -> int:
-        try:
-            return int(float(value))
-        except Exception:
-            return default
+    def _build_signal_key(self, match_id: Any, market: str) -> str:
+        return f"{str(match_id).strip()}:{str(market).strip().upper()}"
 
-    @staticmethod
-    def _safe_float(value: Any, default: float = 0.0) -> float:
+    def _safe_float(self, value: Any) -> float:
         try:
-            return float(value)
-        except Exception:
-            return default
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _safe_int(self, value: Any) -> int:
+        try:
+            return int(float(value or 0))
+        except (TypeError, ValueError):
+            return 0
