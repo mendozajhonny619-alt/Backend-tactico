@@ -138,6 +138,41 @@ def _signal_key(item: Dict[str, Any]) -> str:
     return _text(item.get("signal_key") or item.get("signal_id") or item.get("opportunity_id"), "")
 
 
+def _ensure_signal_identity(signal: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Garantiza una identidad estable para que la señal no se pierda entre ciclos.
+
+    Prioridad:
+    1. signal_key existente
+    2. signal_id existente
+    3. match_id:market
+    4. match_name:market como último fallback
+    """
+    if not isinstance(signal, dict):
+        return signal
+
+    raw_key = (
+        signal.get("signal_key")
+        or signal.get("signal_id")
+        or signal.get("opportunity_id")
+    )
+
+    if raw_key:
+        key = str(raw_key).strip().upper()
+    else:
+        match_id = signal.get("match_id") or signal.get("id")
+        market = _market(signal).upper()
+
+        if match_id is not None and market != "N/A":
+            key = f"{str(match_id).strip()}:{market}"
+        else:
+            key = f"{_match_name(signal).strip().upper()}:{market}"
+
+    signal["signal_key"] = key
+    signal["signal_id"] = signal.get("signal_id") or key
+    return signal
+
+
 def _log_live_matches_preview(live_matches: List[Dict[str, Any]]) -> None:
     preview = live_matches[:8]
 
@@ -167,8 +202,9 @@ def _log_published_signals(signals: List[Dict[str, Any]]) -> None:
 
     for signal in signals:
         logger.warning(
-            "SEÑAL | %s | market=%s | min=%s | score=%s | rank=%s | ai=%.2f | goal=%.2f | over=%.2f | under=%.2f | risk=%s(%.2f) | odds=%.2f | line=%s | reason=%s",
+            "SEÑAL | %s | key=%s | market=%s | min=%s | score=%s | rank=%s | ai=%.2f | goal=%.2f | over=%.2f | under=%.2f | risk=%s(%.2f) | odds=%.2f | line=%s | reason=%s",
             _match_name(signal),
+            _signal_key(signal),
             _market(signal),
             _minute(signal),
             _score(signal),
@@ -288,24 +324,14 @@ def _register_closed_signals_in_history(
     history_service: Any,
     closed_signals: List[Dict[str, Any]],
 ) -> int:
-    """
-    Manda señales cerradas al historial.
-
-    Primero intenta actualizar la señal si ya existía.
-    Si no existía, la registra y luego la actualiza.
-    """
     saved = 0
 
     for closed in closed_signals:
         if not isinstance(closed, dict):
             continue
 
-        signal_key = (
-            closed.get("signal_key")
-            or closed.get("signal_id")
-            or closed.get("opportunity_id")
-        )
-
+        closed = _ensure_signal_identity(closed)
+        signal_key = closed.get("signal_key")
         result = str(closed.get("resultado") or closed.get("status") or "").upper()
 
         if not signal_key:
@@ -315,44 +341,30 @@ def _register_closed_signals_in_history(
             continue
 
         try:
-            history_service.update_result(
+            updated = history_service.update_result(
                 signal_key=str(signal_key),
                 result=result,
                 extra=closed,
             )
-            saved += 1
-        except Exception:
-            try:
-                history_service.register_published_signal(closed)
-                history_service.update_result(
-                    signal_key=str(signal_key),
-                    result=result,
-                    extra=closed,
-                )
+
+            if updated:
                 saved += 1
-            except Exception as exc:
-                logger.warning(
-                    "WORKER: no se pudo guardar señal cerrada en historial | key=%s | error=%s",
-                    signal_key,
-                    exc,
-                )
+                continue
+
+            history_service.register_closed_signal(closed, result=result)
+            saved += 1
+
+        except Exception as exc:
+            logger.warning(
+                "WORKER: no se pudo guardar señal cerrada en historial | key=%s | error=%s",
+                signal_key,
+                exc,
+            )
 
     return saved
 
 
 def run_worker() -> None:
-    """
-    Ciclo vivo del sistema.
-
-    Flujo:
-    1. Obtiene partidos live.
-    2. Escanea señales.
-    3. Registra señales publicadas en historial.
-    4. Sincroniza señales activas.
-    5. Cierra señales cumplidas.
-    6. Guarda señales cerradas en resultados.
-    7. Actualiza estado del panel.
-    """
     runtime_state = app_container.runtime_state
     fetcher = app_container.live_fetcher
     scan_service = app_container.scan_service
@@ -381,6 +393,12 @@ def run_worker() -> None:
             blocked = scan_result.get("blocked", []) or []
             scan_stats = scan_result.get("stats", {}) or {}
 
+            published_signals = [
+                _ensure_signal_identity(signal)
+                for signal in published_signals
+                if isinstance(signal, dict)
+            ]
+
             logger.warning("📌 CANDIDATAS PUBLICADAS: %s", len(published_signals))
             logger.warning("👁️ OPORTUNIDADES: %s", len(opportunities))
             logger.warning("⛔ BLOQUEADOS: %s", len(blocked))
@@ -390,7 +408,14 @@ def run_worker() -> None:
             _log_blocked(blocked)
 
             for signal in published_signals:
-                history_service.register_published_signal(signal)
+                try:
+                    history_service.register_published_signal(signal)
+                except Exception as exc:
+                    logger.warning(
+                        "WORKER: no se pudo registrar señal publicada en historial | key=%s | error=%s",
+                        _signal_key(signal),
+                        exc,
+                    )
 
             sync_stats = live_signal_manager.sync(
                 published_signals=published_signals
@@ -403,6 +428,12 @@ def run_worker() -> None:
             closed_signals = []
             if hasattr(live_signal_manager, "pop_recently_closed"):
                 closed_signals = live_signal_manager.pop_recently_closed() or []
+
+            closed_signals = [
+                _ensure_signal_identity(signal)
+                for signal in closed_signals
+                if isinstance(signal, dict)
+            ]
 
             _log_closed_signals(closed_signals)
 
@@ -471,9 +502,6 @@ def run_worker() -> None:
 
 
 def iniciar_worker() -> None:
-    """
-    Alias compatible con main.py
-    """
     run_worker()
 
 
