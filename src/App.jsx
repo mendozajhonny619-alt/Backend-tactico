@@ -481,10 +481,15 @@ function SignalCard({ item, onOpen }) {
         Confianza: {confidence.label}
       </div>
 
+      <DecisionMini item={item} />
+
       <div className="card-metrics-pro">
         <MiniMetric label="IA" value={formatNum(item?.ai_score)} />
         <MiniMetric label="Gol %" value={`${formatNum(item?.goal_probability)}%`} />
-        <MiniMetric label="Over %" value={`${formatNum(item?.over_probability)}%`} />
+        <MiniMetric
+          label={typeClass === "under" ? "Under %" : "Over %"}
+          value={`${formatNum(typeClass === "under" ? item?.under_probability : item?.over_probability)}%`}
+        />
         <MiniMetric label="Señal" value={formatNum(item?.signal_score)} />
       </div>
 
@@ -527,6 +532,8 @@ function FeaturedSignal({ item }) {
           Confianza: {confidence.label}
         </div>
 
+        <DecisionMini item={item} big />
+
         <p>
           {safeText(item?.rank || item?.signal_rank || "N/A")} ·{" "}
           {safeText(item?.window_reason || item?.reason || item?.window_phase || "N/A")}
@@ -539,9 +546,12 @@ function FeaturedSignal({ item }) {
         <div className="featured-metrics-grid">
           <MiniMetric label="IA" value={formatNum(item?.ai_score)} />
           <MiniMetric label="Gol %" value={`${formatNum(item?.goal_probability)}%`} />
-          <MiniMetric label="Over %" value={`${formatNum(item?.over_probability)}%`} />
+          <MiniMetric
+            label={typeClass === "under" ? "Under %" : "Over %"}
+            value={`${formatNum(typeClass === "under" ? item?.under_probability : item?.over_probability)}%`}
+          />
           <MiniMetric label="Señal" value={formatNum(item?.signal_score)} />
-          <MiniMetric label="Gate" value={formatNum(item?.gate_score)} />
+          <MiniMetric label="Decisión" value={formatNum(item?.decision_score)} />
           <MiniMetric label="Rango" value={safeText(item?.rank || "N/A")} strong />
         </div>
       </div>
@@ -593,8 +603,10 @@ function DetailView({ item }) {
               typeClass === "under" ? item?.under_probability : item?.over_probability
             )}%`}
           />
-          <MiniMetric label="Riesgo" value={safeText(item?.risk_level || "N/A")} strong />
+          <MiniMetric label="Decisión" value={formatNum(item?.decision_score)} strong />
         </div>
+
+        <DecisionPanel item={item} />
       </section>
 
       <section className="premium-grid">
@@ -602,7 +614,7 @@ function DetailView({ item }) {
           <h2>Lectura final PRO</h2>
 
           <div className="premium-final-title">
-            {getTypeLabel(item)} - {safeText(item?.rank || "OPERABLE")}
+            {safeText(recommendation.label)}
           </div>
 
           <ul>
@@ -668,6 +680,60 @@ function DetailView({ item }) {
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function DecisionMini({ item, big = false }) {
+  const decision = getDecision(item);
+
+  return (
+    <div className={`decision-mini ${decision.class} ${big ? "big" : ""}`}>
+      <b>{decision.label}</b>
+      <span>{decision.advice}</span>
+    </div>
+  );
+}
+
+function DecisionPanel({ item }) {
+  const decision = getDecision(item);
+  const warnings = Array.isArray(item?.decision_warnings)
+    ? item.decision_warnings
+    : [];
+  const reWarnings = Array.isArray(item?.revalidation_warnings)
+    ? item.revalidation_warnings
+    : [];
+
+  return (
+    <div className={`decision-panel ${decision.class}`}>
+      <h2>Decisión del sistema</h2>
+
+      <div className="decision-main">
+        <strong>{decision.label}</strong>
+        <span>Score decisión: {formatNum(item?.decision_score)}</span>
+      </div>
+
+      <p>{decision.advice}</p>
+
+      <div className="decision-grid">
+        <InfoRow label="Estado decisión" value={item?.decision_status} />
+        <InfoRow label="Revalidación" value={item?.revalidation_status} />
+        <InfoRow label="Edad señal" value={item?.signal_age_label} />
+        <InfoRow
+          label="Minutos activa"
+          value={item?.active_minutes ?? item?.decision_active_minutes}
+        />
+        <InfoRow label="Goles necesarios" value={item?.decision_needed_goals ?? "N/A"} />
+        <InfoRow label="Aviso riesgo" value={item?.risk_reducer_status} />
+      </div>
+
+      {[...warnings, ...reWarnings].length > 0 ? (
+        <ul className="decision-warnings">
+          {[...warnings, ...reWarnings].slice(0, 5).map((warning, index) => (
+            <li key={index}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }
@@ -951,12 +1017,42 @@ function dedupeItems(list) {
 
 function getStrength(item) {
   return (
+    Number(item?.decision_score || 0) * 1.8 +
+    Number(item?.revalidation_score || 0) * 1.2 +
     Number(item?.strength_score || 0) +
     Number(item?.confidence_score || 0) +
     Number(item?.signal_score || 0) +
     Number(item?.ai_score || 0) +
     Number(item?.goal_probability || 0) * 0.2
   );
+}
+
+function getDecision(item) {
+  const status = String(item?.decision_status || "").toUpperCase();
+  const label = item?.decision_label || "SIN DECISIÓN";
+  const advice =
+    item?.decision_advice ||
+    item?.revalidation_advice ||
+    "Lectura pendiente.";
+  const reason =
+    item?.decision_reason ||
+    item?.revalidation_reason ||
+    advice;
+
+  let className = "neutral";
+
+  if (status === "ENTER_OK") className = "good";
+  else if (status === "WAIT_CONFIRMATION") className = "warning";
+  else if (status === "NO_REENTRY") className = "danger";
+  else if (status === "AVOID") className = "danger";
+
+  return {
+    status,
+    label,
+    advice,
+    reason,
+    class: className,
+  };
 }
 
 function getConfidence(item) {
@@ -995,6 +1091,16 @@ function getConfidence(item) {
 }
 
 function getFinalRecommendation(item, confidence) {
+  const decision = getDecision(item);
+
+  if (item?.decision_label || item?.decision_status) {
+    return {
+      label: decision.label,
+      reason: decision.reason || decision.advice,
+      class: decision.class,
+    };
+  }
+
   const minute = Number(item?.minute || 0);
   const score = String(item?.score || "0-0");
   const signal = Number(item?.signal_score || 0);
@@ -1038,18 +1144,10 @@ function getFinalRecommendation(item, confidence) {
     };
   }
 
-  if (confidence.label.includes("MEDIA") || signal >= 58) {
-    return {
-      label: "ESPERAR / MONITOREAR",
-      reason: "La señal existe, pero todavía no tiene fuerza suficiente.",
-      class: "neutral",
-    };
-  }
-
   return {
-    label: "NO ENTRAR TODAVÍA",
-    reason: "Lectura débil o insuficiente para tomar acción.",
-    class: "danger",
+    label: "ESPERAR / MONITOREAR",
+    reason: "La señal existe, pero todavía necesita confirmación.",
+    class: "neutral",
   };
 }
 
@@ -1235,4 +1333,4 @@ function countryToEmoji(country) {
   if (c.includes("venezuela")) return "🇻🇪";
 
   return "🏳️";
-}
+                                 }
