@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 from app.services.live_event_tracker import LiveEventTracker
 from app.services.signal_lifecycle_service import SignalLifecycleService
+from app.services.signal_risk_reducer import SignalRiskReducer
 
 
 class LiveSignalManager:
@@ -24,6 +25,7 @@ class LiveSignalManager:
 
         self._event_tracker = LiveEventTracker()
         self._lifecycle = SignalLifecycleService()
+        self._risk_reducer = SignalRiskReducer()
 
         # Tracking interno de rendimiento
         self._tracking_history: List[Dict[str, Any]] = []
@@ -57,6 +59,7 @@ class LiveSignalManager:
 
             if key in current_by_key:
                 merged = self._merge_signal(current_by_key[key], incoming)
+                merged.update(self._risk_reducer.evaluate(merged))
                 current_by_key[key] = self._lifecycle.update_signal(merged)
                 updated += 1
             else:
@@ -69,6 +72,7 @@ class LiveSignalManager:
                 new_signal["current_score"] = new_signal["entry_score"]
                 new_signal["current_minute"] = new_signal["entry_minute"]
                 new_signal["activated_at"] = datetime.now().isoformat(timespec="seconds")
+                new_signal.update(self._risk_reducer.evaluate(new_signal))
 
                 current_by_key[key] = self._lifecycle.register_signal(new_signal)
                 created += 1
@@ -174,6 +178,7 @@ class LiveSignalManager:
             self._refresh_live_fields(updated_signal, live_match)
 
             updated_signal["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
+            updated_signal.update(self._risk_reducer.evaluate(updated_signal))
 
             updated_signal = self._lifecycle.update_signal(updated_signal)
             kept.append(updated_signal)
@@ -289,6 +294,10 @@ class LiveSignalManager:
             "context_state": closed_signal.get("context_state"),
             "data_quality": closed_signal.get("data_quality"),
             "game_quality": closed_signal.get("game_quality"),
+            "risk_reducer_status": closed_signal.get("risk_reducer_status"),
+            "risk_reducer_reason": closed_signal.get("risk_reducer_reason"),
+            "live_advice": closed_signal.get("live_advice"),
+            "active_minutes": closed_signal.get("active_minutes"),
             "closed_at": closed_signal.get("closed_at") or datetime.now().isoformat(timespec="seconds"),
         }
 
@@ -462,6 +471,7 @@ class LiveSignalManager:
         )
 
         self._refresh_live_fields(closed, live_match)
+        closed.update(self._risk_reducer.evaluate(closed))
 
         closed["live_status"] = "CLOSED"
         closed["status"] = result
