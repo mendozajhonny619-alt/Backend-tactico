@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "./styles.css";
 
-const API = "https://backend-tactico-lqok.onrender.com";
+const API = "https://jhonny-elite-v16-web.onrender.com";
 
 export default function App() {
   const [stats, setStats] = useState(null);
