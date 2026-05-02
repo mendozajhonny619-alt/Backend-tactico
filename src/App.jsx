@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "./styles.css";
 
-const API = "https://jhonny-elite-v16-web.onrender.com";
+const API = "http://127.0.0.1:8000";
 
 export default function App() {
   const [stats, setStats] = useState(null);
