@@ -19,6 +19,7 @@ from app.engines.tactical_engine import TacticalEngine
 from app.engines.match_analyst_engine import MatchAnalystEngine
 from app.services.match_scan_enhancer import MatchScanEnhancer
 
+
 class ScanService:
     """
     Corazón operativo del sistema.
@@ -79,11 +80,11 @@ class ScanService:
         }
 
     def _process_match(self, match: Dict[str, Any]) -> Dict[str, Any]:
-    match = self.scan_enhancer.enhance(match)
+        match = self.scan_enhancer.enhance(match)
 
-    match_id = match.get("match_id")
-    if match_id is None:
-        return self._block(match, "BLOCK_MATCH_ID_MISSING")
+        match_id = match.get("match_id")
+        if match_id is None:
+            return self._block(match, "BLOCK_MATCH_ID_MISSING")
 
         window = self.window_engine.evaluate(match)
         if not window.get("allowed", False):
