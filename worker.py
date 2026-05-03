@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from app.services.app_container import app_container
-from app.services.odds_fetcher import OddsFetcher
+from app.fetchers.odds_fetcher import OddsFetcher
 from app.services.match_odds_mapper import MatchOddsMapper
 
 logger = logging.getLogger("JHONNY_ELITE_V16")
