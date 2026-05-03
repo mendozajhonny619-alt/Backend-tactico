@@ -17,7 +17,7 @@ from app.engines.value_engine import ValueEngine
 from app.engines.risk_engine import RiskEngine
 from app.engines.tactical_engine import TacticalEngine
 from app.engines.match_analyst_engine import MatchAnalystEngine
-
+from app.services.match_scan_enhancer import MatchScanEnhancer
 
 class ScanService:
     """
@@ -46,7 +46,7 @@ class ScanService:
         self.value_engine = ValueEngine()
         self.ranker = SignalRankerService()
         self.elite_analyst_filter = EliteAnalystFilter()
-
+        self.scan_enhancer = MatchScanEnhancer()
     def scan(self, live_matches: List[Dict[str, Any]]) -> Dict[str, Any]:
         candidates: List[Dict[str, Any]] = []
         opportunities: List[Dict[str, Any]] = []
@@ -79,9 +79,11 @@ class ScanService:
         }
 
     def _process_match(self, match: Dict[str, Any]) -> Dict[str, Any]:
-        match_id = match.get("match_id")
-        if match_id is None:
-            return self._block(match, "BLOCK_MATCH_ID_MISSING")
+    match = self.scan_enhancer.enhance(match)
+
+    match_id = match.get("match_id")
+    if match_id is None:
+        return self._block(match, "BLOCK_MATCH_ID_MISSING")
 
         window = self.window_engine.evaluate(match)
         if not window.get("allowed", False):
