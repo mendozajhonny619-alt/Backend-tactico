@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from app.services.app_container import app_container
+from app.services.odds_fetcher import OddsFetcher
+from app.services.match_odds_mapper import MatchOddsMapper
 
 logger = logging.getLogger("JHONNY_ELITE_V16")
 
@@ -141,12 +143,6 @@ def _signal_key(item: Dict[str, Any]) -> str:
 def _ensure_signal_identity(signal: Dict[str, Any]) -> Dict[str, Any]:
     """
     Garantiza una identidad estable para que la señal no se pierda entre ciclos.
-
-    Prioridad:
-    1. signal_key existente
-    2. signal_id existente
-    3. match_id:market
-    4. match_name:market como último fallback
     """
     if not isinstance(signal, dict):
         return signal
@@ -178,7 +174,7 @@ def _log_live_matches_preview(live_matches: List[Dict[str, Any]]) -> None:
 
     for match in preview:
         logger.warning(
-            "LIVE | %s | min=%s | score=%s | dq=%s | shots=%s | sot=%s | corners=%s | xg=%s | scannable=%s | source=%s",
+            "LIVE | %s | min=%s | score=%s | dq=%s | shots=%s | sot=%s | corners=%s | xg=%s | scannable=%s | source=%s | odds=%s",
             _match_name(match),
             _minute(match),
             _score(match),
@@ -189,6 +185,7 @@ def _log_live_matches_preview(live_matches: List[Dict[str, Any]]) -> None:
             _safe_float(match.get("xg") or match.get("xG")),
             _text(match.get("is_scannable") or match.get("es_escaneable")),
             _text(match.get("stats_source") or match.get("fuente_estadísticas")),
+            _text(match.get("odds_attached")),
         )
 
     remaining = max(len(live_matches) - len(preview), 0)
@@ -307,9 +304,14 @@ def _log_cycle_snapshot(
         elif "UNDER" in market:
             under_count += 1
 
+    odds_attached_count = sum(
+        1 for match in live_matches if isinstance(match, dict) and match.get("odds_attached") is True
+    )
+
     logger.warning(
-        "SNAPSHOT | live=%s | published=%s | over=%s | under=%s | observe=%s | blocked=%s | active=%s | closed=%s",
+        "SNAPSHOT | live=%s | odds_attached=%s | published=%s | over=%s | under=%s | observe=%s | blocked=%s | active=%s | closed=%s",
         len(live_matches),
+        odds_attached_count,
         len(published_signals),
         over_count,
         under_count,
@@ -371,6 +373,9 @@ def run_worker() -> None:
     live_signal_manager = app_container.live_signal_manager
     history_service = app_container.history_service
 
+    odds_fetcher = OddsFetcher()
+    odds_mapper = MatchOddsMapper()
+
     logger.warning(
         "WORKER JHONNY_ELITE_V16 iniciado | intervalo=%ss",
         SCAN_INTERVAL_SECONDS,
@@ -381,6 +386,18 @@ def run_worker() -> None:
             logger.warning("🔄 NUEVO CICLO DE ESCANEO")
 
             live_matches = fetcher.get_live_matches() or []
+
+            try:
+                odds_events = odds_fetcher.get_live_odds() or []
+                live_matches = odds_mapper.attach_odds(live_matches, odds_events)
+                logger.warning(
+                    "💰 ODDS | eventos=%s | partidos_con_cuotas=%s",
+                    len(odds_events),
+                    sum(1 for x in live_matches if isinstance(x, dict) and x.get("odds_attached") is True),
+                )
+            except Exception as odds_exc:
+                logger.warning("ODDS: no se pudieron adjuntar cuotas reales | error=%s", odds_exc)
+
             logger.warning("⚽ PARTIDOS EN VIVO: %s", len(live_matches))
 
             if live_matches:
@@ -462,6 +479,9 @@ def run_worker() -> None:
                     "closed_signals_saved": closed_saved,
                     "live_matches_count": len(live_matches),
                     "active_signals_count": len(active_signals),
+                    "odds_attached_count": sum(
+                        1 for x in live_matches if isinstance(x, dict) and x.get("odds_attached") is True
+                    ),
                     "updated_at": utc_now_iso(),
                     "scan_interval_seconds": SCAN_INTERVAL_SECONDS,
                 }
