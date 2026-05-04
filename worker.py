@@ -12,6 +12,7 @@ from app.services.match_odds_mapper import MatchOddsMapper
 logger = logging.getLogger("JHONNY_ELITE_V16")
 
 SCAN_INTERVAL_SECONDS = 15
+ODDS_COOLDOWN_SECONDS = 60 * 60 * 6  # 6 horas si Odds API se queda sin crédito
 
 
 def utc_now_iso() -> str:
@@ -167,6 +168,31 @@ def _ensure_signal_identity(signal: Dict[str, Any]) -> Dict[str, Any]:
     signal["signal_key"] = key
     signal["signal_id"] = signal.get("signal_id") or key
     return signal
+
+
+def _is_odds_limit_error(error_text: str) -> bool:
+    text = str(error_text or "").upper()
+    return (
+        "OUT_OF_USAGE_CREDITS" in text
+        or "INVALID_KEY" in text
+        or "MISSING_KEY" in text
+        or "401" in text
+        or "429" in text
+        or "USAGE" in text
+        or "CREDITS" in text
+    )
+
+
+def _mark_internal_only_matches(
+    live_matches: List[Dict[str, Any]],
+    reason: str,
+) -> List[Dict[str, Any]]:
+    for match in live_matches or []:
+        if isinstance(match, dict):
+            match["odds_attached"] = False
+            match["market_status"] = "INTERNAL_ONLY"
+            match["odds_disabled_reason"] = reason
+    return live_matches
 
 
 def _log_live_matches_preview(live_matches: List[Dict[str, Any]]) -> None:
@@ -376,6 +402,9 @@ def run_worker() -> None:
     odds_fetcher = OddsFetcher()
     odds_mapper = MatchOddsMapper()
 
+    odds_disabled_until = 0.0
+    odds_disabled_reason = ""
+
     logger.warning(
         "WORKER JHONNY_ELITE_V16 iniciado | intervalo=%ss",
         SCAN_INTERVAL_SECONDS,
@@ -387,16 +416,73 @@ def run_worker() -> None:
 
             live_matches = fetcher.get_live_matches() or []
 
+            now = time.time()
+            odds_events = []
+            odds_attached_count = 0
+
             try:
-                odds_events = odds_fetcher.get_live_odds() or []
-                live_matches = odds_mapper.attach_odds(live_matches, odds_events)
-                logger.warning(
-                    "💰 ODDS | eventos=%s | partidos_con_cuotas=%s",
-                    len(odds_events),
-                    sum(1 for x in live_matches if isinstance(x, dict) and x.get("odds_attached") is True),
-                )
+                if not live_matches:
+                    logger.warning("💰 ODDS | omitido porque no hay partidos live")
+
+                elif now < odds_disabled_until:
+                    remaining = int(odds_disabled_until - now)
+                    live_matches = _mark_internal_only_matches(
+                        live_matches,
+                        odds_disabled_reason or "ODDS_TEMPORARILY_DISABLED",
+                    )
+                    logger.warning(
+                        "💰 ODDS | desactivado temporalmente %ss | modo INTERNAL_ONLY | reason=%s",
+                        remaining,
+                        odds_disabled_reason or "ODDS_TEMPORARILY_DISABLED",
+                    )
+
+                else:
+                    odds_events = odds_fetcher.get_live_odds() or []
+
+                    if odds_events:
+                        live_matches = odds_mapper.attach_odds(live_matches, odds_events)
+
+                    odds_attached_count = sum(
+                        1
+                        for x in live_matches
+                        if isinstance(x, dict) and x.get("odds_attached") is True
+                    )
+
+                    if not odds_events:
+                        live_matches = _mark_internal_only_matches(
+                            live_matches,
+                            "ODDS_EMPTY_OR_UNAVAILABLE",
+                        )
+
+                    logger.warning(
+                        "💰 ODDS | eventos=%s | partidos_con_cuotas=%s",
+                        len(odds_events),
+                        odds_attached_count,
+                    )
+
             except Exception as odds_exc:
-                logger.warning("ODDS: no se pudieron adjuntar cuotas reales | error=%s", odds_exc)
+                odds_error_text = str(odds_exc)
+
+                if _is_odds_limit_error(odds_error_text):
+                    odds_disabled_until = time.time() + ODDS_COOLDOWN_SECONDS
+                    odds_disabled_reason = odds_error_text
+
+                    logger.warning(
+                        "💰 ODDS | desactivado por límite/error API durante %ss | reason=%s",
+                        ODDS_COOLDOWN_SECONDS,
+                        odds_error_text,
+                    )
+
+                else:
+                    logger.warning(
+                        "ODDS: no se pudieron adjuntar cuotas reales | modo INTERNAL_ONLY | error=%s",
+                        odds_exc,
+                    )
+
+                live_matches = _mark_internal_only_matches(
+                    live_matches,
+                    odds_error_text or "ODDS_ERROR_INTERNAL_ONLY",
+                )
 
             logger.warning("⚽ PARTIDOS EN VIVO: %s", len(live_matches))
 
@@ -482,6 +568,8 @@ def run_worker() -> None:
                     "odds_attached_count": sum(
                         1 for x in live_matches if isinstance(x, dict) and x.get("odds_attached") is True
                     ),
+                    "odds_disabled": time.time() < odds_disabled_until,
+                    "odds_disabled_reason": odds_disabled_reason,
                     "updated_at": utc_now_iso(),
                     "scan_interval_seconds": SCAN_INTERVAL_SECONDS,
                 }
