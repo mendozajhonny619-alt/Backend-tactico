@@ -21,6 +21,8 @@ class LiveSignalManager:
         "FT", "AET", "PEN", "PST", "CANC", "ABD", "AWD", "WO"
     }
 
+    AUTO_RESCAN_MINUTES = 3
+
     def __init__(self) -> None:
         self._active_signals: List[Dict[str, Any]] = []
         self._recently_closed: List[Dict[str, Any]] = []
@@ -78,6 +80,10 @@ class LiveSignalManager:
                 new_signal["current_score"] = new_signal["entry_score"]
                 new_signal["current_minute"] = new_signal["entry_minute"]
                 new_signal["activated_at"] = datetime.now().isoformat(timespec="seconds")
+
+                new_signal["last_rescan_minute"] = new_signal["entry_minute"]
+                new_signal["rescan_count"] = 0
+                new_signal["auto_rescan_status"] = "NEW"
 
                 self._apply_signal_advisors(new_signal)
 
@@ -188,6 +194,7 @@ class LiveSignalManager:
 
             updated_signal["last_seen_at"] = datetime.now().isoformat(timespec="seconds")
 
+            self._apply_auto_rescan(updated_signal)
             self._apply_signal_advisors(updated_signal)
 
             updated_signal = self._lifecycle.update_signal(updated_signal)
@@ -209,6 +216,37 @@ class LiveSignalManager:
 
     def get_tracking_summary(self) -> Dict[str, Any]:
         return self._build_tracking_summary(self._tracking_history)
+
+    def _apply_auto_rescan(self, signal: Dict[str, Any]) -> None:
+        """
+        Marca reescaneo automático cada AUTO_RESCAN_MINUTES.
+        No bloquea ni cierra señales.
+        Solo agrega metadata para que los asesores/panel sepan si fue revalidada.
+        """
+        if not isinstance(signal, dict):
+            return
+
+        current_minute = self._minute(signal)
+        last_rescan_minute = self._safe_int(signal.get("last_rescan_minute"))
+
+        if last_rescan_minute <= 0:
+            signal["last_rescan_minute"] = current_minute
+            signal["rescan_count"] = self._safe_int(signal.get("rescan_count"))
+            signal["auto_rescan_status"] = "INIT"
+            signal["auto_rescan_minutes_passed"] = 0
+            return
+
+        minutes_passed = current_minute - last_rescan_minute
+
+        if minutes_passed >= self.AUTO_RESCAN_MINUTES:
+            signal["last_rescan_minute"] = current_minute
+            signal["rescan_count"] = self._safe_int(signal.get("rescan_count")) + 1
+            signal["last_rescan_at"] = datetime.now().isoformat(timespec="seconds")
+            signal["auto_rescan_status"] = "REVALIDATED"
+            signal["auto_rescan_minutes_passed"] = minutes_passed
+        else:
+            signal["auto_rescan_status"] = "WAITING"
+            signal["auto_rescan_minutes_passed"] = minutes_passed
 
     def _apply_signal_advisors(self, signal: Dict[str, Any]) -> None:
         """
@@ -356,6 +394,12 @@ class LiveSignalManager:
             "signal_decay_status": closed_signal.get("signal_decay_status"),
             "signal_decay_advice": closed_signal.get("signal_decay_advice"),
             "signal_decay_score": closed_signal.get("signal_decay_score"),
+
+            "auto_rescan_status": closed_signal.get("auto_rescan_status"),
+            "auto_rescan_minutes_passed": closed_signal.get("auto_rescan_minutes_passed"),
+            "rescan_count": closed_signal.get("rescan_count"),
+            "last_rescan_minute": closed_signal.get("last_rescan_minute"),
+            "last_rescan_at": closed_signal.get("last_rescan_at"),
 
             "closed_at": closed_signal.get("closed_at") or datetime.now().isoformat(timespec="seconds"),
         }
