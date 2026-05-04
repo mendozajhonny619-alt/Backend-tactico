@@ -10,20 +10,10 @@ class ValueEngine:
     - prob_real del modelo
     - prob_implicita de la cuota
 
-    Devuelve:
-    - edge
-    - prob_real
-    - prob_implicita
-    - is_value
-    - status
-    - value_category
-
-    Reglas:
-    - edge <= 0 => no value
-    - edge débil => no value
-    - edge mínimo:
-        OVER  -> 0.03
-        UNDER -> 0.04
+    Si no hay cuota real:
+    - usa value interno/simulado
+    - no bloquea
+    - no inventa cuota real
     """
 
     MIN_EDGE_OVER = 0.03
@@ -41,20 +31,31 @@ class ValueEngine:
         if not isinstance(market, dict):
             return self._reject("VALUE_MARKET_INVALID")
 
-        if not market.get("is_valid"):
-            return self._reject(market.get("reason") or "VALUE_MARKET_NOT_VALID")
-
-        odds = self._safe_float(market.get("odds"))
         resolved_market_type = self._resolve_market_type(
             market_type=market_type,
             market_market_type=market.get("market_type"),
         )
 
-        if odds <= 1.0:
-            return self._reject("VALUE_ODDS_INVALID")
-
         if resolved_market_type not in {"OVER", "UNDER"}:
             return self._reject("VALUE_MARKET_TYPE_UNKNOWN")
+
+        if not market.get("is_valid"):
+            return self._reject(market.get("reason") or "VALUE_MARKET_NOT_VALID")
+
+        odds = self._safe_float(market.get("odds"))
+        market_status = str(market.get("market_status") or "").upper()
+        line = str(market.get("line") or "").upper()
+
+        if (
+            odds <= 1.0
+            or market_status in {"PENDING", "INTERNAL_ONLY"}
+            or line == "AUTO"
+        ):
+            return self._evaluate_internal_value(
+                ai=ai,
+                market=market,
+                market_type=resolved_market_type,
+            )
 
         prob_real = self._resolve_real_probability(ai=ai, market_type=resolved_market_type)
         if prob_real is None:
@@ -81,7 +82,110 @@ class ValueEngine:
             "prob_implicita": round(prob_implicita, 4),
             "edge": round(edge, 4),
             "min_required_edge": round(min_required, 4),
+            "value_mode": "REAL_MARKET",
         }
+
+    def _evaluate_internal_value(
+        self,
+        ai: Dict[str, Any],
+        market: Dict[str, Any],
+        market_type: str,
+    ) -> Dict[str, Any]:
+        prob_real = self._resolve_real_probability(ai=ai, market_type=market_type)
+        if prob_real is None:
+            return self._reject("VALUE_REAL_PROBABILITY_MISSING")
+
+        prob_real = self._normalize_probability(prob_real)
+
+        ai_score = self._normalize_probability(self._safe_float(ai.get("ai_score")))
+        goal_probability = self._normalize_probability(self._safe_float(ai.get("goal_probability")))
+        risk_score = self._safe_float(ai.get("risk_score"))
+        risk_level = str(ai.get("risk_level") or "").upper()
+
+        if market_type == "UNDER":
+            synthetic_market_prob = self._simulate_under_market_probability(
+                prob_real=prob_real,
+                ai_score=ai_score,
+                goal_probability=goal_probability,
+                risk_score=risk_score,
+                risk_level=risk_level,
+            )
+        else:
+            synthetic_market_prob = self._simulate_over_market_probability(
+                prob_real=prob_real,
+                ai_score=ai_score,
+                goal_probability=goal_probability,
+                risk_score=risk_score,
+                risk_level=risk_level,
+            )
+
+        edge = prob_real - synthetic_market_prob
+
+        min_required = (
+            self.MIN_EDGE_OVER if market_type == "OVER" else self.MIN_EDGE_UNDER
+        )
+
+        is_value = edge >= min_required
+        value_category = self._categorize_edge(edge=edge, min_required=min_required)
+
+        return {
+            "is_value": is_value,
+            "status": "INTERNAL_VALUE_OK" if is_value else "INTERNAL_VALUE_TOO_WEAK",
+            "value_category": value_category,
+            "market_type": market_type,
+            "odds": None,
+            "prob_real": round(prob_real, 4),
+            "prob_implicita": round(synthetic_market_prob, 4),
+            "edge": round(edge, 4),
+            "min_required_edge": round(min_required, 4),
+            "value_mode": "INTERNAL_SIMULATED",
+            "market_status": market.get("market_status") or "INTERNAL_ONLY",
+            "reason": "VALUE_INTERNAL_SIMULATED_NO_REAL_ODDS",
+        }
+
+    def _simulate_over_market_probability(
+        self,
+        prob_real: float,
+        ai_score: float,
+        goal_probability: float,
+        risk_score: float,
+        risk_level: str,
+    ) -> float:
+        simulated = (
+            prob_real * 0.55
+            + goal_probability * 0.25
+            + ai_score * 0.20
+        )
+
+        if risk_level == "ALTO" or risk_score >= 7.0:
+            simulated += 0.08
+        elif risk_level == "MEDIO" or risk_score >= 4.5:
+            simulated += 0.04
+
+        return max(0.05, min(simulated, 0.95))
+
+    def _simulate_under_market_probability(
+        self,
+        prob_real: float,
+        ai_score: float,
+        goal_probability: float,
+        risk_score: float,
+        risk_level: str,
+    ) -> float:
+        inverse_goal = max(0.0, 1.0 - goal_probability)
+
+        simulated = (
+            prob_real * 0.60
+            + inverse_goal * 0.25
+            + ai_score * 0.15
+        )
+
+        if risk_level == "ALTO" or risk_score >= 7.0:
+            simulated += 0.07
+        elif risk_level == "MEDIO" or risk_score >= 4.5:
+            simulated += 0.03
+
+        return max(0.05, min(simulated, 0.95))
 
     def _resolve_real_probability(self, ai: Dict[str, Any], market_type: str) -> Optional[float]:
         if market_type == "OVER":
