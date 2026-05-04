@@ -9,6 +9,7 @@ from app.services.signal_lifecycle_service import SignalLifecycleService
 from app.services.signal_risk_reducer import SignalRiskReducer
 from app.services.signal_revalidator_service import SignalRevalidatorService
 from app.services.signal_decision_advisor import SignalDecisionAdvisor
+from app.services.signal_decay_service import SignalDecayService
 
 
 class LiveSignalManager:
@@ -30,6 +31,7 @@ class LiveSignalManager:
         self._risk_reducer = SignalRiskReducer()
         self._revalidator = SignalRevalidatorService()
         self._decision_advisor = SignalDecisionAdvisor()
+        self._signal_decay = SignalDecayService()
 
         # Tracking interno de rendimiento
         self._tracking_history: List[Dict[str, Any]] = []
@@ -216,13 +218,21 @@ class LiveSignalManager:
         - risk_reducer_*
         - revalidation_*
         - decision_*
+        - signal_decay_*
         """
         if not isinstance(signal, dict):
             return
 
+        if signal.get("entry_signal_score") is None:
+            signal["entry_signal_score"] = signal.get("signal_score")
+
+        if signal.get("entry_decision_score") is None:
+            signal["entry_decision_score"] = signal.get("decision_score")
+
         signal.update(self._risk_reducer.evaluate(signal))
         signal.update(self._revalidator.evaluate(signal))
         signal.update(self._decision_advisor.evaluate(signal))
+        signal.update(self._signal_decay.evaluate(signal))
 
     def _refresh_live_fields(
         self,
@@ -340,6 +350,13 @@ class LiveSignalManager:
             "decision_warnings": closed_signal.get("decision_warnings"),
 
             "active_minutes": closed_signal.get("active_minutes"),
+            "entry_signal_score": closed_signal.get("entry_signal_score"),
+            "entry_decision_score": closed_signal.get("entry_decision_score"),
+            "signal_trend": closed_signal.get("signal_trend"),
+            "signal_decay_status": closed_signal.get("signal_decay_status"),
+            "signal_decay_advice": closed_signal.get("signal_decay_advice"),
+            "signal_decay_score": closed_signal.get("signal_decay_score"),
+
             "closed_at": closed_signal.get("closed_at") or datetime.now().isoformat(timespec="seconds"),
         }
 
@@ -533,6 +550,8 @@ class LiveSignalManager:
         entry_total = merged.get("entry_total_goals")
         entry_minute = merged.get("entry_minute")
         activated_at = merged.get("activated_at")
+        entry_signal_score = merged.get("entry_signal_score")
+        entry_decision_score = merged.get("entry_decision_score")
 
         merged.update(deepcopy(incoming))
 
@@ -547,6 +566,12 @@ class LiveSignalManager:
             entry_minute if entry_minute is not None else self._minute(incoming)
         )
         merged["activated_at"] = activated_at or datetime.now().isoformat(timespec="seconds")
+        merged["entry_signal_score"] = (
+            entry_signal_score if entry_signal_score is not None else incoming.get("signal_score")
+        )
+        merged["entry_decision_score"] = (
+            entry_decision_score if entry_decision_score is not None else incoming.get("decision_score")
+        )
         merged["current_score"] = self._score_text(incoming)
         merged["current_minute"] = self._minute(incoming)
         merged["score"] = self._score_text(incoming)
