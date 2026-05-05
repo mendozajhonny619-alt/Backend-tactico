@@ -43,6 +43,11 @@ class MatchReadingEnhancer:
         dangerous_attacks = self._safe_float(data.get("dangerous_attacks"))
         xg = self._safe_float(data.get("xg") or data.get("xG"))
 
+        context_state = str(data.get("context_state") or "").upper()
+        cooling_detected = bool(data.get("cooling_detected", False))
+        under_transition_score = self._safe_float(data.get("under_transition_score"))
+        live_decay_factor = self._safe_float(data.get("live_decay_factor") or 1.0)
+
         pressure_score = (
             shots * 1.2
             + shots_on_target * 3.0
@@ -61,6 +66,9 @@ class MatchReadingEnhancer:
             pressure_score=pressure_score,
             minute=minute,
             total_goals=total_goals,
+            context_state=context_state,
+            cooling_detected=cooling_detected,
+            under_transition_score=under_transition_score,
         )
 
         late_game_risk = minute >= 70
@@ -77,9 +85,33 @@ class MatchReadingEnhancer:
         if xg <= 0 and shots_on_target <= 2 and minute >= 55:
             penalty += 10.0
 
+        if context_state in {"MUERTO", "FRIO"}:
+            penalty += 22.0
+        elif context_state == "CONTROLADO":
+            penalty += 14.0
+
+        if cooling_detected:
+            penalty += 18.0
+
+        if under_transition_score >= 70:
+            penalty += 22.0
+        elif under_transition_score >= 55:
+            penalty += 12.0
+
+        if live_decay_factor <= 0.70:
+            penalty += 12.0
+
         reading_strength = max(0.0, min(100.0, pressure_score - penalty))
 
-        if resolved_match_risk:
+        if under_transition_score >= 70:
+            reading_label = "UNDER_TRANSITION"
+            reading_advice = "El partido muestra transición clara hacia UNDER. Evitar OVER salvo reactivación ofensiva real."
+            momentum_warning = "UNDER_ACTIVO"
+        elif cooling_detected:
+            reading_label = "COOLING_MATCH"
+            reading_advice = "El partido se está enfriando. No forzar OVER sin nueva presión real."
+            momentum_warning = "ENFRIAMIENTO"
+        elif resolved_match_risk:
             reading_label = "MATCH_RESOLVED"
             reading_advice = "Partido posiblemente resuelto. Evitar entrada tardía salvo presión nueva muy fuerte."
             momentum_warning = "RIESGO_DE_PARTIDO_MUERTO"
@@ -123,7 +155,28 @@ class MatchReadingEnhancer:
             return "COMPETITIVE"
         return "CONTROLLED"
 
-    def _temperature(self, pressure_score: float, minute: int, total_goals: int) -> str:
+    def _temperature(
+        self,
+        pressure_score: float,
+        minute: int,
+        total_goals: int,
+        context_state: str = "",
+        cooling_detected: bool = False,
+        under_transition_score: float = 0.0,
+    ) -> str:
+        context_state = str(context_state or "").upper()
+
+        if under_transition_score >= 70:
+            return "UNDER"
+        if cooling_detected:
+            return "COOLING"
+        if context_state == "MUERTO":
+            return "COLD"
+        if context_state == "FRIO":
+            return "LOW"
+        if context_state == "CONTROLADO" and minute >= 60:
+            return "CONTROLLED"
+
         if minute >= 70 and total_goals >= 4:
             return "SATURATED"
         if pressure_score >= 75:
