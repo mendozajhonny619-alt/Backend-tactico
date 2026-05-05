@@ -10,7 +10,7 @@ from app.services.signal_risk_reducer import SignalRiskReducer
 from app.services.signal_revalidator_service import SignalRevalidatorService
 from app.services.signal_decision_advisor import SignalDecisionAdvisor
 from app.services.signal_decay_service import SignalDecayService
-
+from app.services.signal_performance_analyzer import SignalPerformanceAnalyzer
 
 class LiveSignalManager:
     """
@@ -34,7 +34,7 @@ class LiveSignalManager:
         self._revalidator = SignalRevalidatorService()
         self._decision_advisor = SignalDecisionAdvisor()
         self._signal_decay = SignalDecayService()
-
+        self._performance_analyzer = SignalPerformanceAnalyzer()
         # Tracking interno de rendimiento
         self._tracking_history: List[Dict[str, Any]] = []
         self._tracked_closed_keys: set[str] = set()
@@ -216,6 +216,24 @@ class LiveSignalManager:
 
     def get_tracking_summary(self) -> Dict[str, Any]:
         return self._build_tracking_summary(self._tracking_history)
+   
+    def get_performance_analysis(self) -> Dict[str, Any]:
+        """
+        Analiza rendimiento real de señales cerradas.
+
+        No modifica señales.
+        No bloquea señales.
+        Solo devuelve lectura estadística.
+        """
+        return self._performance_analyzer.analyze(self._tracking_history)
+
+    def get_best_patterns(self) -> List[Dict[str, Any]]:
+        analysis = self.get_performance_analysis()
+        return analysis.get("best_patterns", []) or []
+
+    def get_danger_patterns(self) -> List[Dict[str, Any]]:
+        analysis = self.get_performance_analysis()
+        return analysis.get("danger_patterns", []) or []
 
     def _apply_auto_rescan(self, signal: Dict[str, Any]) -> None:
         """
