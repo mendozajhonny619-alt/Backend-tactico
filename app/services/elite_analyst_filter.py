@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+from app.services.elite_context_guard import EliteContextGuard
 
 
 class EliteAnalystFilter:
@@ -14,6 +15,9 @@ class EliteAnalystFilter:
     - Evitar OVER tardíos.
     - Permitir UNDER cuando el partido realmente está cerrado.
     """
+
+    def __init__(self) -> None:
+        self._context_guard = EliteContextGuard()
 
     def validate(
         self,
@@ -49,6 +53,20 @@ class EliteAnalystFilter:
         game_quality = str(context.get("game_quality") or signal.get("game_quality") or "LOW").upper()
         context_state = str(context.get("context_state") or signal.get("context_state") or "").upper()
 
+        # 🔍 CONTEXT GUARD (nuevo)
+        guard = self._context_guard.evaluate(
+            signal=signal,
+            context=context,
+            ai=ai,
+            risk=risk,
+        )
+
+        guard_status = guard.get("context_guard_status")
+        guard_score = self._safe_float(guard.get("context_guard_score"))
+
+        # Agregar info sin romper nada
+        signal.update(guard)
+
         if rank not in {"PREMIUM", "FUERTE", "BUENA", "OPERABLE"}:
             return self._reject("ANALYST_INVALID_RANK")
 
@@ -60,6 +78,16 @@ class EliteAnalystFilter:
 
         if minute < 12:
             return self._reject("ANALYST_TOO_EARLY")
+
+        # 🔴 CONTEXTO PELIGROSO
+        if guard_status == "DANGER":
+            return self._downgrade("OBSERVACION", "CONTEXT_GUARD_DANGER")
+
+        # 🟠 CONTEXTO DELICADO
+        if guard_status == "WARNING":
+            if rank in {"PREMIUM", "FUERTE"}:
+                return self._downgrade("BUENA", "CONTEXT_GUARD_WARNING")
+            return self._downgrade("OBSERVACION", "CONTEXT_GUARD_WARNING")
 
         if "OVER" in market:
             return self._validate_over(
@@ -93,6 +121,8 @@ class EliteAnalystFilter:
             )
 
         return self._reject("ANALYST_UNKNOWN_MARKET")
+
+    # 🔽 TODO LO DEMÁS QUEDA EXACTAMENTE IGUAL
 
     def _validate_over(
         self,
