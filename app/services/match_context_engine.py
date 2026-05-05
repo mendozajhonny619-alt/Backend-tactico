@@ -63,20 +63,6 @@ class MatchContextEngine:
             corners=total_corners,
         )
 
-        # Ayuda a detectar partidos cargados, pero sin inflar señales muy tarde.
-        recent_pressure_boost = 0.0
-
-        if total_sot >= 4 and 25 <= minute <= 72:
-            recent_pressure_boost += 2.5
-
-        if total_danger >= 25 and 25 <= minute <= 72:
-            recent_pressure_boost += 2.0
-
-        if total_xg >= 1.2 and minute <= 72:
-            recent_pressure_boost += 2.5
-
-        pressure_index += recent_pressure_boost
-
         dominance = self._calculate_dominance(
             possession_diff=possession_diff,
             home_danger=home_danger,
@@ -130,8 +116,24 @@ class MatchContextEngine:
             corners=total_corners,
         )
 
-        goal_window_score += recent_pressure_boost * 1.2
-        over_window_score += recent_pressure_boost
+        live_decay_factor = self._calculate_live_decay_factor(
+            minute=minute,
+            pressure=pressure_index,
+            rhythm=rhythm_index,
+            goal_window=goal_window_score,
+            score_diff=score_diff,
+        )
+
+        pressure_index *= live_decay_factor
+        rhythm_index *= live_decay_factor
+        goal_window_score *= live_decay_factor
+        over_window_score *= live_decay_factor
+
+        context_state = self._calculate_context_state(
+            pressure=pressure_index,
+            rhythm=rhythm_index,
+            quality=game_quality,
+        )
 
         red_alert = self._calculate_red_alert(
             data_quality=data_quality,
@@ -142,6 +144,26 @@ class MatchContextEngine:
             shots_on_target=total_sot,
         )
 
+        live_correction = self._apply_live_context_corrections(
+            minute=minute,
+            score_diff=score_diff,
+            pressure=pressure_index,
+            rhythm=rhythm_index,
+            goal_window=goal_window_score,
+            over_window=over_window_score,
+            context_state=context_state,
+            red_alert=red_alert,
+        )
+
+        pressure_index = live_correction["pressure_index"]
+        rhythm_index = live_correction["rhythm_index"]
+        goal_window_score = live_correction["goal_window_score"]
+        over_window_score = live_correction["over_window_score"]
+        context_state = live_correction["context_state"]
+        red_alert = live_correction["red_alert"]
+        cooling_detected = live_correction["cooling_detected"]
+        under_transition_score = live_correction["under_transition_score"]
+
         return {
             "pressure_index": round(pressure_index, 2),
             "rhythm_index": round(rhythm_index, 2),
@@ -151,6 +173,9 @@ class MatchContextEngine:
             "context_state": context_state,
             "goal_window_score": round(goal_window_score, 2),
             "over_window_score": round(over_window_score, 2),
+            "under_transition_score": round(under_transition_score, 2),
+            "live_decay_factor": round(live_decay_factor, 2),
+            "cooling_detected": cooling_detected,
             "data_quality": data_quality,
             "red_alert": red_alert,
 
@@ -180,6 +205,135 @@ class MatchContextEngine:
 
             "minute": minute,
         }
+
+    def _calculate_live_decay_factor(
+        self,
+        minute: int,
+        pressure: float,
+        rhythm: float,
+        goal_window: float,
+        score_diff: int,
+    ) -> float:
+        decay = 1.0
+
+        if minute >= 60:
+            decay -= 0.08
+        if minute >= 70:
+            decay -= 0.12
+        if minute >= 80:
+            decay -= 0.18
+
+        if pressure < 18:
+            decay -= 0.18
+        elif pressure < 25:
+            decay -= 0.10
+
+        if rhythm < 14:
+            decay -= 0.18
+        elif rhythm < 20:
+            decay -= 0.10
+
+        if goal_window < 25:
+            decay -= 0.12
+
+        if minute >= 65 and abs(score_diff) >= 1 and pressure < 25 and rhythm < 18:
+            decay -= 0.18
+
+        return max(0.42, min(1.0, decay))
+
+    def _apply_live_context_corrections(
+        self,
+        minute: int,
+        score_diff: int,
+        pressure: float,
+        rhythm: float,
+        goal_window: float,
+        over_window: float,
+        context_state: str,
+        red_alert: bool,
+    ) -> Dict[str, Any]:
+        cooling_detected = False
+
+        if pressure < 14 and rhythm < 12:
+            context_state = "MUERTO"
+            goal_window = min(goal_window, 30)
+            over_window = min(over_window, 25)
+            red_alert = False
+            cooling_detected = True
+
+        elif pressure < 20 and rhythm < 16:
+            context_state = "FRIO"
+            goal_window = min(goal_window, 40)
+            over_window = min(over_window, 34)
+            red_alert = False
+            cooling_detected = True
+
+        elif minute >= 65 and pressure < 26 and rhythm < 20:
+            context_state = "CONTROLADO"
+            goal_window = min(goal_window, 44)
+            over_window = min(over_window, 38)
+            red_alert = False
+            cooling_detected = True
+
+        if minute >= 70 and abs(score_diff) >= 1 and pressure < 30 and rhythm < 22:
+            context_state = "CONTROLADO"
+            goal_window = min(goal_window, 42)
+            over_window = min(over_window, 35)
+            red_alert = False
+            cooling_detected = True
+
+        under_transition_score = self._calculate_under_transition_score(
+            minute=minute,
+            pressure=pressure,
+            rhythm=rhythm,
+            context_state=context_state,
+            score_diff=score_diff,
+        )
+
+        return {
+            "pressure_index": pressure,
+            "rhythm_index": rhythm,
+            "goal_window_score": goal_window,
+            "over_window_score": over_window,
+            "context_state": context_state,
+            "red_alert": red_alert,
+            "cooling_detected": cooling_detected,
+            "under_transition_score": under_transition_score,
+        }
+
+    def _calculate_under_transition_score(
+        self,
+        minute: int,
+        pressure: float,
+        rhythm: float,
+        context_state: str,
+        score_diff: int,
+    ) -> float:
+        score = 0.0
+
+        if context_state in ["FRIO", "MUERTO", "CONTROLADO"]:
+            score += 35
+
+        if pressure < 20:
+            score += 25
+        elif pressure < 28:
+            score += 15
+
+        if rhythm < 16:
+            score += 25
+        elif rhythm < 22:
+            score += 15
+
+        if minute >= 65:
+            score += 10
+
+        if minute >= 75:
+            score += 10
+
+        if abs(score_diff) >= 1 and minute >= 65:
+            score += 10
+
+        return min(100.0, score)
 
     def _calculate_pressure_index(
         self,
