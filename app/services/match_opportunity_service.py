@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
+from app.services.opportunity_context_validator import OpportunityContextValidator
+
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +13,9 @@ class MatchOpportunityService:
     """
     Motor operativo de oportunidades.
     """
+
+    def __init__(self) -> None:
+        self._context_validator = OpportunityContextValidator()
 
     def evaluate(
         self,
@@ -84,12 +89,32 @@ class MatchOpportunityService:
             )
 
             if over_check["approved"]:
-                return self._response(
+                validation = self._context_validator.validate(match, context, ai, "OVER")
+
+                if validation.get("opportunity_context_status") == "DANGER":
+                    response = self._response(
+                        "OBSERVE",
+                        "OBSERVACION",
+                        None,
+                        "OVER_BLOCKED_BY_CONTEXT_VALIDATOR",
+                    )
+                    response.update(validation)
+                    return response
+
+                rank = over_check["rank"]
+                if validation.get("opportunity_context_status") == "WARNING":
+                    rank = "OPERABLE"
+                elif validation.get("opportunity_context_status") == "CAUTION" and rank in {"PREMIUM", "FUERTE"}:
+                    rank = "BUENA"
+
+                response = self._response(
                     type_="OVER_CANDIDATE",
-                    rank=over_check["rank"],
+                    rank=rank,
                     market="OVER",
                     reason=over_check["reason"],
                 )
+                response.update(validation)
+                return response
 
         if window.get("allow_under", False):
             under_check = self._evaluate_under_candidate(
@@ -110,12 +135,32 @@ class MatchOpportunityService:
             )
 
             if under_check["approved"]:
-                return self._response(
+                validation = self._context_validator.validate(match, context, ai, "UNDER")
+
+                if validation.get("opportunity_context_status") == "DANGER":
+                    response = self._response(
+                        "OBSERVE",
+                        "OBSERVACION",
+                        None,
+                        "UNDER_BLOCKED_BY_CONTEXT_VALIDATOR",
+                    )
+                    response.update(validation)
+                    return response
+
+                rank = under_check["rank"]
+                if validation.get("opportunity_context_status") == "WARNING":
+                    rank = "OPERABLE"
+                elif validation.get("opportunity_context_status") == "CAUTION" and rank in {"PREMIUM", "FUERTE"}:
+                    rank = "BUENA"
+
+                response = self._response(
                     type_="UNDER_CANDIDATE",
-                    rank=under_check["rank"],
+                    rank=rank,
                     market="UNDER",
                     reason=under_check["reason"],
                 )
+                response.update(validation)
+                return response
 
         observe_check = self._evaluate_observation(
             minute=minute,
