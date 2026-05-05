@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import "./styles.css";
+import EliteSidebar from "./components/EliteSidebar";
+import EliteMetricCard from "./components/EliteMetricCard";
+import MatchProPanel from "./components/MatchProPanel";
 
-const API = "https://jhonny-elite-v16-web.onrender.com";
+const API = "http://127.0.0.1:8000";
 
 export default function App() {
   const [stats, setStats] = useState(null);
@@ -164,9 +167,13 @@ export default function App() {
 
   if (selectedMatch) {
     return (
-      <div className="app">
-        <div className="overlay">
-          <div className="container">
+  <div className="app elite-layout">
+
+    <EliteSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+
+    <div className="elite-main">
+      <div className="overlay">
+        <div className="container">
             <div className="detail-topbar">
               <button className="back-btn" onClick={() => setSelectedMatch(null)}>
                 ← Volver al panel
@@ -179,9 +186,11 @@ export default function App() {
 
             <DetailView item={selectedLiveMatch || selectedMatch} />
           </div>
-        </div>
       </div>
-    );
+    </div>
+
+  </div>
+);
   }
 
   return (
@@ -189,6 +198,43 @@ export default function App() {
       <div className="overlay">
         <div className="container">
           <Header stats={headerStats} />
+
+<div className="elite-metrics-row">
+  <EliteMetricCard
+    title="Señales activas"
+    value={uniqueSignals.length}
+    sub="+ últimas 24h"
+    tone="cyan"
+  />
+
+  <EliteMetricCard
+    title="Premium"
+    value={uniqueSignals.filter((x) => String(x?.rank || "").toUpperCase() === "PREMIUM").length}
+    sub="+ rango alto"
+    tone="green"
+  />
+
+  <EliteMetricCard
+    title="ROI hoy"
+    value={`${historySummary.roi >= 0 ? "+" : ""}${historySummary.roi.toFixed(1)}%`}
+    sub="según historial"
+    tone="green"
+  />
+
+  <EliteMetricCard
+    title="Win Rate"
+    value={`${historySummary.precision.toFixed(1)}%`}
+    sub="aciertos reales"
+    tone="blue"
+  />
+
+  <EliteMetricCard
+    title="Sistema"
+    value="ACTIVO"
+    sub="Modo balanceado"
+    tone="green"
+  />
+</div>
 
           <nav className="pro-nav">
             <NavButton id="signals" activeTab={activeTab} setActiveTab={setActiveTab} icon="⚡">
@@ -216,8 +262,7 @@ export default function App() {
 
           {activeTab === "signals" && (
             <>
-              {featured && <FeaturedSignal item={featured} />}
-
+              {featured && <MatchProPanel item={featured} />}
               <Section
                 title="🔥 SEÑALES ACTIVAS"
                 items={uniqueSignals}
