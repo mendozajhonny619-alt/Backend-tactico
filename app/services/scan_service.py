@@ -11,13 +11,14 @@ from app.services.elite_signal_gate import EliteSignalGate
 from app.services.under_signal_gate import UnderSignalGate
 from app.services.signal_ranker_service import SignalRankerService
 from app.services.elite_analyst_filter import EliteAnalystFilter
+from app.services.match_scan_enhancer import MatchScanEnhancer
+from app.services.match_reading_enhancer import MatchReadingEnhancer
 
 from app.engines.market_engine import MarketEngine
 from app.engines.value_engine import ValueEngine
 from app.engines.risk_engine import RiskEngine
 from app.engines.tactical_engine import TacticalEngine
 from app.engines.match_analyst_engine import MatchAnalystEngine
-from app.services.match_scan_enhancer import MatchScanEnhancer
 
 
 class ScanService:
@@ -31,6 +32,7 @@ class ScanService:
     - Riesgo alto no publica; manda a observación.
     - Evita señales internas débiles.
     - Filtro final tipo analista élite antes de publicar.
+    - Mejora lectura del partido con MatchReadingEnhancer sin bloquear señales.
     """
 
     def __init__(self) -> None:
@@ -48,6 +50,8 @@ class ScanService:
         self.ranker = SignalRankerService()
         self.elite_analyst_filter = EliteAnalystFilter()
         self.scan_enhancer = MatchScanEnhancer()
+        self.reading_enhancer = MatchReadingEnhancer()
+
     def scan(self, live_matches: List[Dict[str, Any]]) -> Dict[str, Any]:
         candidates: List[Dict[str, Any]] = []
         opportunities: List[Dict[str, Any]] = []
@@ -81,6 +85,7 @@ class ScanService:
 
     def _process_match(self, match: Dict[str, Any]) -> Dict[str, Any]:
         match = self.scan_enhancer.enhance(match)
+        match = self.reading_enhancer.enhance(match)
 
         match_id = match.get("match_id")
         if match_id is None:
@@ -872,6 +877,19 @@ class ScanService:
 
         return False
 
+    def _reading_fields(self, match: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "reading_strength": match.get("reading_strength"),
+            "reading_label": match.get("reading_label"),
+            "match_temperature": match.get("match_temperature"),
+            "score_context": match.get("score_context"),
+            "late_game_risk": match.get("late_game_risk"),
+            "resolved_match_risk": match.get("resolved_match_risk"),
+            "overextended_risk": match.get("overextended_risk"),
+            "momentum_warning": match.get("momentum_warning"),
+            "reading_advice": match.get("reading_advice"),
+        }
+
     def _build_signal(
         self,
         match: Dict[str, Any],
@@ -897,7 +915,7 @@ class ScanService:
             market_type=market_type,
         )
 
-        return {
+        signal = {
             "signal_id": signal_key,
             "signal_key": signal_key,
             "match_id": match_id,
@@ -965,6 +983,9 @@ class ScanService:
             "flag": match.get("flag") or match.get("country_flag"),
         }
 
+        signal.update(self._reading_fields(match))
+        return signal
+
     def _build_opportunity_payload(
         self,
         match: Dict[str, Any],
@@ -981,7 +1002,7 @@ class ScanService:
         market_type = opportunity.get("market")
         match_id = match.get("match_id")
 
-        return {
+        payload = {
             "opportunity_id": self._build_signal_key(match_id, market_type or "OBSERVE"),
             "match_id": match_id,
             "match_name": match.get("match_name") or self._build_match_name(match),
@@ -1042,6 +1063,9 @@ class ScanService:
             "league_flag": match.get("league_flag") or match.get("country_flag"),
             "flag": match.get("flag") or match.get("country_flag"),
         }
+
+        payload.update(self._reading_fields(match))
+        return payload
 
     def _block(
         self,
