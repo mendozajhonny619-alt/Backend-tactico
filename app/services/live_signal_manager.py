@@ -533,57 +533,51 @@ class LiveSignalManager:
 
         closed = deepcopy(signal)
         closed["signal_key"] = key or closed.get("signal_key")
-        closed["final_score"] = (
+
+        final_score = (
             closed.get("current_score")
+            or closed.get("score")
             or closed.get("entry_score")
             or self._score_text(closed)
         )
-        closed["final_minute"] = closed.get("current_minute") or closed.get("minute")
-        closed["live_status"] = "CLOSED"
-        closed["status"] = "VOID"
-        closed["resultado"] = "VOID"
-        closed["close_reason"] = reason
-        closed["closed_at"] = datetime.now().isoformat(timespec="seconds")
 
-        self._apply_signal_advisors(closed)
-
-        return closed
-
-    def _close_signal(
-        self,
-        signal: Dict[str, Any],
-        result: str,
-        reason: str,
-        live_match: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        key = self._signal_key(signal)
-        if key:
-            self._closed_keys.add(key)
-
-        closed = deepcopy(signal)
-        closed["signal_key"] = key or closed.get("signal_key")
-
-        closed["final_score"] = self._score_text(live_match)
-        closed["final_minute"] = self._minute(live_match)
-        closed["home_score"] = self._safe_int(
-            live_match.get("home_score")
-            or live_match.get("local_score")
-            or live_match.get("marcador_local")
-        )
-        closed["away_score"] = self._safe_int(
-            live_match.get("away_score")
-            or live_match.get("visitante_score")
-            or live_match.get("marcador_visitante")
+        closed["final_score"] = final_score
+        closed["final_minute"] = (
+            closed.get("current_minute")
+            or closed.get("minute")
+            or closed.get("entry_minute")
         )
 
-        self._refresh_live_fields(closed, live_match)
-        self._apply_signal_advisors(closed)
+        market = str(closed.get("market") or "").upper()
+        entry_total = self._safe_float(closed.get("entry_total_goals"))
+        final_total = self._total_goals(closed)
+
+        result = "VOID"
+        close_reason = reason
+
+        if "OVER" in market:
+            if final_total > entry_total:
+                result = "WIN"
+                close_reason = "OVER_GOAL_CONFIRMED_AFTER_MATCH_LEFT_LIVE"
+            else:
+                result = "LOSS"
+                close_reason = "OVER_MATCH_LEFT_LIVE_WITHOUT_GOAL"
+
+        elif "UNDER" in market:
+            if final_total > entry_total:
+                result = "LOSS"
+                close_reason = "UNDER_GOAL_AGAINST_AFTER_MATCH_LEFT_LIVE"
+            else:
+                result = "WIN"
+                close_reason = "UNDER_MATCH_LEFT_LIVE_WITHOUT_GOAL"
 
         closed["live_status"] = "CLOSED"
         closed["status"] = result
         closed["resultado"] = result
-        closed["close_reason"] = reason
+        closed["close_reason"] = close_reason
         closed["closed_at"] = datetime.now().isoformat(timespec="seconds")
+
+        self._apply_signal_advisors(closed)
 
         return closed
 
