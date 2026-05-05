@@ -27,6 +27,10 @@ class AIMatchEngine:
         red_alert = bool(context.get("red_alert", False))
         minute = self._safe_int(context.get("minute"))
 
+        live_decay_factor = self._safe_float(context.get("live_decay_factor") or 1.0)
+        cooling_detected = bool(context.get("cooling_detected", False))
+        under_transition_score = self._safe_float(context.get("under_transition_score"))
+
         home_pressure = self._safe_float(context.get("home_pressure"))
         away_pressure = self._safe_float(context.get("away_pressure"))
 
@@ -258,6 +262,25 @@ class AIMatchEngine:
 
         under_probability = self._clamp(under_probability, 0.0, 95.0)
 
+        live_adjusted = self._apply_live_state_correction(
+            ai_score=ai_score,
+            goal_probability=goal_probability,
+            over_probability=over_probability,
+            under_probability=under_probability,
+            context_state=context_state,
+            pressure=pressure,
+            rhythm=rhythm,
+            minute=minute,
+            live_decay_factor=live_decay_factor,
+            cooling_detected=cooling_detected,
+            under_transition_score=under_transition_score,
+        )
+
+        ai_score = live_adjusted["ai_score"]
+        goal_probability = live_adjusted["goal_probability"]
+        over_probability = live_adjusted["over_probability"]
+        under_probability = live_adjusted["under_probability"]
+
         risk_score = self._calculate_risk_score(
             data_quality=data_quality,
             context_state=context_state,
@@ -266,6 +289,8 @@ class AIMatchEngine:
             minute=minute,
             red_alert=red_alert,
             ai_score=ai_score,
+            cooling_detected=cooling_detected,
+            under_transition_score=under_transition_score,
         )
 
         risk_level = self._risk_level_from_score(risk_score)
@@ -275,6 +300,8 @@ class AIMatchEngine:
             rhythm=rhythm,
             context_state=context_state,
             red_alert=red_alert,
+            cooling_detected=cooling_detected,
+            under_transition_score=under_transition_score,
         )
 
         result_prediction = self._result_prediction(
@@ -305,6 +332,87 @@ class AIMatchEngine:
 
         return self._confidence_helper.adjust(result, context)
 
+    def _apply_live_state_correction(
+        self,
+        ai_score: float,
+        goal_probability: float,
+        over_probability: float,
+        under_probability: float,
+        context_state: str,
+        pressure: float,
+        rhythm: float,
+        minute: int,
+        live_decay_factor: float,
+        cooling_detected: bool,
+        under_transition_score: float,
+    ) -> Dict[str, float]:
+        if context_state == "MUERTO":
+            ai_score = min(ai_score, 38.0)
+            goal_probability = min(goal_probability, 34.0)
+            over_probability = min(over_probability, 28.0)
+            under_probability = max(under_probability, 72.0)
+
+        elif context_state == "FRIO":
+            ai_score = min(ai_score, 46.0)
+            goal_probability = min(goal_probability, 42.0)
+            over_probability = min(over_probability, 36.0)
+            under_probability = max(under_probability, 66.0)
+
+        elif context_state == "CONTROLADO":
+            ai_score = min(ai_score, 54.0)
+            goal_probability = min(goal_probability, 50.0)
+            over_probability = min(over_probability, 44.0)
+            under_probability = max(under_probability, 58.0)
+
+        if cooling_detected:
+            ai_score = min(ai_score, 48.0)
+            goal_probability = min(goal_probability, 44.0)
+            over_probability = min(over_probability, 38.0)
+            under_probability = max(under_probability, 64.0)
+
+        if pressure < 18 and rhythm < 14:
+            ai_score = min(ai_score, 42.0)
+            goal_probability = min(goal_probability, 38.0)
+            over_probability = min(over_probability, 32.0)
+            under_probability = max(under_probability, 68.0)
+
+        if pressure < 14 and rhythm < 12:
+            ai_score = min(ai_score, 34.0)
+            goal_probability = min(goal_probability, 30.0)
+            over_probability = min(over_probability, 25.0)
+            under_probability = max(under_probability, 75.0)
+
+        if minute >= 70 and context_state in {"CONTROLADO", "FRIO", "MUERTO"}:
+            ai_score = min(ai_score, 46.0)
+            goal_probability = min(goal_probability, 42.0)
+            over_probability = min(over_probability, 35.0)
+            under_probability = max(under_probability, 68.0)
+
+        if live_decay_factor <= 0.70:
+            ai_score = min(ai_score, 50.0)
+            goal_probability = min(goal_probability, 46.0)
+            over_probability = min(over_probability, 40.0)
+            under_probability = max(under_probability, 62.0)
+
+        if under_transition_score >= 70:
+            ai_score = min(ai_score, 45.0)
+            goal_probability = min(goal_probability, 40.0)
+            over_probability = min(over_probability, 34.0)
+            under_probability = max(under_probability, 70.0)
+
+        elif under_transition_score >= 55:
+            ai_score = min(ai_score, 52.0)
+            goal_probability = min(goal_probability, 48.0)
+            over_probability = min(over_probability, 42.0)
+            under_probability = max(under_probability, 62.0)
+
+        return {
+            "ai_score": self._clamp(ai_score, 0.0, 96.0),
+            "goal_probability": self._clamp(goal_probability, 0.0, 96.0),
+            "over_probability": self._clamp(over_probability, 0.0, 95.0),
+            "under_probability": self._clamp(under_probability, 0.0, 95.0),
+        }
+
     def _calculate_risk_score(
         self,
         data_quality: str,
@@ -314,6 +422,8 @@ class AIMatchEngine:
         minute: int,
         red_alert: bool,
         ai_score: float,
+        cooling_detected: bool,
+        under_transition_score: float,
     ) -> float:
         risk = 3.0
 
@@ -342,6 +452,14 @@ class AIMatchEngine:
         if red_alert:
             risk += 0.5
 
+        if cooling_detected:
+            risk += 1.0
+
+        if under_transition_score >= 70:
+            risk += 0.8
+        elif under_transition_score >= 55:
+            risk += 0.4
+
         if ai_score >= 78:
             risk -= 1.0
         elif ai_score >= 68:
@@ -365,7 +483,15 @@ class AIMatchEngine:
         rhythm: float,
         context_state: str,
         red_alert: bool,
+        cooling_detected: bool,
+        under_transition_score: float,
     ) -> str:
+        if under_transition_score >= 70:
+            return "UNDER_TRANSITION"
+
+        if cooling_detected:
+            return "ENFRIANDO"
+
         if red_alert:
             return "EXPLOSIVO"
 
