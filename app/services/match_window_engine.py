@@ -31,6 +31,12 @@ class MatchWindowEngine:
     def evaluate(self, match: Dict[str, Any]) -> Dict[str, Any]:
         minute = self._extract_minute(match)
 
+        context_state = str(match.get("context_state") or "").upper()
+        cooling_detected = bool(match.get("cooling_detected", False))
+        under_transition_score = self._safe_float(match.get("under_transition_score"))
+        pressure = self._safe_float(match.get("pressure_index"))
+        rhythm = self._safe_float(match.get("rhythm_index"))
+
         if minute <= 0:
             return self._build_response(
                 minute=minute,
@@ -41,6 +47,24 @@ class MatchWindowEngine:
                 bias="NONE",
                 gate_min_score=999,
                 reason="WINDOW_INVALID_MINUTE",
+            )
+
+        if self._is_dead_live_context(
+            context_state=context_state,
+            cooling_detected=cooling_detected,
+            under_transition_score=under_transition_score,
+            pressure=pressure,
+            rhythm=rhythm,
+        ):
+            return self._build_response(
+                minute=minute,
+                phase=self.PHASE_RESTRICTED,
+                allowed=True,
+                allow_over=False,
+                allow_under=True,
+                bias="UNDER",
+                gate_min_score=76,
+                reason="WINDOW_LIVE_CONTEXT_UNDER_ONLY",
             )
 
         # 1–14 bloqueado
@@ -145,6 +169,28 @@ class MatchWindowEngine:
             reason="WINDOW_TOO_LATE",
         )
 
+    def _is_dead_live_context(
+        self,
+        context_state: str,
+        cooling_detected: bool,
+        under_transition_score: float,
+        pressure: float,
+        rhythm: float,
+    ) -> bool:
+        if context_state in {"MUERTO", "FRIO"}:
+            return True
+
+        if cooling_detected and context_state in {"CONTROLADO", "FRIO", "MUERTO"}:
+            return True
+
+        if under_transition_score >= 70:
+            return True
+
+        if context_state == "CONTROLADO" and pressure > 0 and rhythm > 0 and pressure < 26 and rhythm < 20:
+            return True
+
+        return False
+
     def _extract_minute(self, match: Dict[str, Any]) -> int:
         raw = (
             match.get("minute")
@@ -156,6 +202,12 @@ class MatchWindowEngine:
             return int(raw)
         except (TypeError, ValueError):
             return 0
+
+    def _safe_float(self, value: Any) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
 
     def _build_response(
         self,
