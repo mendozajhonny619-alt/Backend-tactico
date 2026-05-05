@@ -38,6 +38,9 @@ class MatchStateGuard:
         rhythm = self._safe_float(context.get("rhythm_index"))
         goal_window = self._safe_float(context.get("goal_window_score"))
         over_window = self._safe_float(context.get("over_window_score"))
+        cooling_detected = bool(context.get("cooling_detected", False))
+        under_transition_score = self._safe_float(context.get("under_transition_score"))
+        live_decay_factor = self._safe_float(context.get("live_decay_factor") or 1.0)
 
         context_state = str(context.get("context_state") or "").upper()
         data_quality = str(context.get("data_quality") or "LOW").upper()
@@ -53,6 +56,8 @@ class MatchStateGuard:
         is_low_rhythm = rhythm <= 7
         is_low_pressure = pressure <= 10
         is_weak_window = goal_window <= 12 and over_window <= 12
+        is_under_transition = under_transition_score >= 70
+        is_live_cooling = cooling_detected or live_decay_factor <= 0.70
         is_score_retention = (
             minute >= 60
             and total_goals <= 2
@@ -99,11 +104,31 @@ class MatchStateGuard:
             suggested_market = "UNDER"
             entry_quality = "NO_OVER"
 
+        if is_under_transition or is_live_cooling:
+            status = "LIVE_COOLING"
+            reason = "MATCH_STATE_LIVE_COOLING_UNDER_TRANSITION"
+            suggested_market = "UNDER"
+            entry_quality = "UNDER_LEAN"
+
         # =========================
         # BLOQUEO DE OVER TARDÍO
         # =========================
         if "OVER" in market:
-            if is_very_late and not self._has_extreme_pressure(
+            if is_under_transition:
+                force_action = "OBSERVE"
+                downgraded_rank = "OBSERVACION"
+                reason = "MATCH_STATE_OVER_BLOCKED_UNDER_TRANSITION"
+                suggested_market = "UNDER"
+                entry_quality = "NO_REENTRY"
+
+            elif is_live_cooling:
+                force_action = "OBSERVE"
+                downgraded_rank = "OBSERVACION"
+                reason = "MATCH_STATE_OVER_BLOCKED_LIVE_COOLING"
+                suggested_market = "UNDER"
+                entry_quality = "NO_REENTRY"
+
+            elif is_very_late and not self._has_extreme_pressure(
                 pressure=pressure,
                 rhythm=rhythm,
                 goal_window=goal_window,
@@ -164,6 +189,18 @@ class MatchStateGuard:
                 downgraded_rank = "NO_BET"
                 reason = "MATCH_STATE_UNDER_BLOCKED_HOT_CONTEXT"
 
+            elif is_under_transition and context_state in {"CONTROLADO", "FRIO", "MUERTO"}:
+                status = "UNDER_VALID_CONTEXT"
+                reason = "MATCH_STATE_UNDER_VALID_TRANSITION"
+                suggested_market = "UNDER"
+                entry_quality = "VALID"
+
+            elif is_live_cooling and minute >= 60:
+                status = "UNDER_VALID_CONTEXT"
+                reason = "MATCH_STATE_UNDER_VALID_LIVE_COOLING"
+                suggested_market = "UNDER"
+                entry_quality = "VALID"
+
             elif hold_probability >= 72 and pressure <= 16 and rhythm <= 12:
                 status = "UNDER_VALID_CONTEXT"
                 reason = "MATCH_STATE_UNDER_VALID_SCORE_RETENTION"
@@ -194,6 +231,9 @@ class MatchStateGuard:
                 "goal_probability": goal_probability,
                 "over_probability": over_probability,
                 "under_probability": under_probability,
+                "cooling_detected": cooling_detected,
+                "under_transition_score": under_transition_score,
+                "live_decay_factor": live_decay_factor,
                 "rank": rank,
                 "market": market,
             },
