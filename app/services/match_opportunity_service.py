@@ -47,6 +47,8 @@ class MatchOpportunityService:
         rhythm_index = self._safe_float(context.get("rhythm_index"))
         over_window_score = self._safe_float(context.get("over_window_score"))
         goal_window_score = self._safe_float(context.get("goal_window_score"))
+        cooling_detected = bool(context.get("cooling_detected", False))
+        under_transition_score = self._safe_float(context.get("under_transition_score"))
 
         logger.info(
             "OPPORTUNITY_EVAL | %s | min=%s ai=%.2f goal=%.2f over=%.2f under=%.2f "
@@ -88,6 +90,8 @@ class MatchOpportunityService:
                 risk_level=risk_level,
                 risk_score=risk_score,
                 window=window,
+                cooling_detected=cooling_detected,
+                under_transition_score=under_transition_score,
             )
 
             if over_check["approved"]:
@@ -168,6 +172,8 @@ class MatchOpportunityService:
                 risk_level=risk_level,
                 risk_score=risk_score,
                 window=window,
+                cooling_detected=cooling_detected,
+                under_transition_score=under_transition_score,
             )
 
             if under_check["approved"]:
@@ -265,6 +271,8 @@ class MatchOpportunityService:
         risk_level: str,
         risk_score: float,
         window: Dict[str, Any],
+        cooling_detected: bool,
+        under_transition_score: float,
     ) -> Dict[str, Any]:
         gate_min_score = self._safe_float(window.get("gate_min_score") or 60)
 
@@ -282,6 +290,12 @@ class MatchOpportunityService:
             critical_failed.append("OVER_PROB_CRITICAL_LOW")
         if context_state in {"MUERTO", "FRIO"}:
             critical_failed.append("OVER_CONTEXT_DEAD")
+        if context_state == "CONTROLADO" and minute >= 65:
+            critical_failed.append("OVER_CONTROLLED_LATE_CONTEXT")
+        if cooling_detected:
+            critical_failed.append("OVER_COOLING_DETECTED")
+        if under_transition_score >= 70:
+            critical_failed.append("OVER_UNDER_TRANSITION_ACTIVE")
         if risk_level == "ALTO" and risk_score >= 7.8:
             critical_failed.append("OVER_RISK_TOO_HIGH")
 
@@ -351,6 +365,8 @@ class MatchOpportunityService:
         risk_level: str,
         risk_score: float,
         window: Dict[str, Any],
+        cooling_detected: bool,
+        under_transition_score: float,
     ) -> Dict[str, Any]:
         gate_min_score = self._safe_float(window.get("gate_min_score") or 60)
 
@@ -358,7 +374,7 @@ class MatchOpportunityService:
 
         if minute < 58:
             critical_failed.append("UNDER_TOO_EARLY")
-        if ai_score < 55:
+        if ai_score < 55 and under_transition_score < 70 and not cooling_detected:
             critical_failed.append("UNDER_AI_CRITICAL_LOW")
         if under_probability < 60:
             critical_failed.append("UNDER_PROB_CRITICAL_LOW")
@@ -396,6 +412,8 @@ class MatchOpportunityService:
             "RHYTHM_STRONG": rhythm_index <= 11,
             "GOAL_THREAT_OK": over_window_score <= 20 and goal_window_score <= 20,
             "GOAL_THREAT_STRONG": over_window_score <= 15 and goal_window_score <= 15,
+            "UNDER_TRANSITION_OK": under_transition_score >= 70,
+            "COOLING_CONFIRMED": cooling_detected,
             "DATA_GOOD": data_quality in {"MEDIUM", "HIGH"},
             "GAME_NOT_HIGH": game_quality in {"LOW", "MEDIUM"},
         }
