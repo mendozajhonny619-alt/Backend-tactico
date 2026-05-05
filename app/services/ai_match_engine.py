@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from app.services.ai_confidence_helper import AIConfidenceHelper
+
 
 class AIMatchEngine:
     """
     Convierte contexto + datos del partido en lectura IA operativa.
     """
+
+    def __init__(self) -> None:
+        self._confidence_helper = AIConfidenceHelper()
 
     def evaluate(self, context: Dict[str, Any]) -> Dict[str, Any]:
         pressure = self._safe_float(context.get("pressure_index"))
@@ -37,7 +42,7 @@ class AIMatchEngine:
         )
 
         if is_dead_empty:
-            return {
+            result = {
                 "ai_score": 0.0,
                 "goal_probability": 0.0,
                 "over_probability": 0.0,
@@ -48,6 +53,7 @@ class AIMatchEngine:
                 "result_prediction": "NO_EDGE",
                 "winner_prediction": "DRAW_LEAN",
             }
+            return self._confidence_helper.adjust(result, context)
 
         base_activity = (
             (pressure * 0.37)
@@ -285,7 +291,7 @@ class AIMatchEngine:
             context_state=context_state,
         )
 
-        return {
+        result = {
             "ai_score": round(ai_score, 2),
             "goal_probability": round(goal_probability, 2),
             "over_probability": round(over_probability, 2),
@@ -296,6 +302,8 @@ class AIMatchEngine:
             "result_prediction": result_prediction,
             "winner_prediction": winner_prediction,
         }
+
+        return self._confidence_helper.adjust(result, context)
 
     def _calculate_risk_score(
         self,
