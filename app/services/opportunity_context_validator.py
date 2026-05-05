@@ -40,6 +40,8 @@ class OpportunityContextValidator:
         context_state = str(context.get("context_state") or "MUERTO").upper()
         pressure = self._safe_float(context.get("pressure_index"))
         rhythm = self._safe_float(context.get("rhythm_index"))
+        cooling_detected = bool(context.get("cooling_detected", False))
+        under_transition_score = self._safe_float(context.get("under_transition_score"))
 
         market = str(market or "").upper()
 
@@ -76,6 +78,21 @@ class OpportunityContextValidator:
                 penalty += 12
                 warnings.append("OPP_OVER_COLD_CONTEXT")
 
+            if context_state == "CONTROLADO" and minute >= 65:
+                penalty += 10
+                warnings.append("OPP_OVER_CONTROLLED_CONTEXT")
+
+            if cooling_detected:
+                penalty += 14
+                warnings.append("OPP_OVER_COOLING_DETECTED")
+
+            if under_transition_score >= 70:
+                penalty += 18
+                warnings.append("OPP_OVER_UNDER_TRANSITION_ACTIVE")
+            elif under_transition_score >= 55:
+                penalty += 10
+                warnings.append("OPP_OVER_UNDER_TRANSITION_WARNING")
+
             if over_probability >= 62 and pressure < 9 and rhythm < 6:
                 penalty += 10
                 warnings.append("OPP_OVER_PROB_WITHOUT_PRESSURE")
@@ -96,6 +113,14 @@ class OpportunityContextValidator:
             if pressure >= 24 or rhythm >= 16:
                 penalty += 10
                 warnings.append("OPP_UNDER_TOO_MUCH_ACTIVITY")
+
+            if under_transition_score >= 70 and context_state in {"CONTROLADO", "FRIO", "MUERTO"}:
+                penalty = max(0.0, penalty - 8.0)
+                warnings.append("OPP_UNDER_TRANSITION_CONFIRMED")
+
+            if cooling_detected and minute >= 60:
+                penalty = max(0.0, penalty - 5.0)
+                warnings.append("OPP_UNDER_COOLING_CONFIRMED")
 
         score = max(0.0, min(100.0, 100.0 - penalty))
 
