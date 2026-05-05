@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict, List
 
 from app.services.opportunity_context_validator import OpportunityContextValidator
+from app.services.match_state_guard import MatchStateGuard
 
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,7 @@ class MatchOpportunityService:
 
     def __init__(self) -> None:
         self._context_validator = OpportunityContextValidator()
+        self._match_state_guard = MatchStateGuard()
 
     def evaluate(
         self,
@@ -89,6 +91,38 @@ class MatchOpportunityService:
             )
 
             if over_check["approved"]:
+                state_guard = self._match_state_guard.evaluate(
+                    match=match,
+                    context=context,
+                    ai=ai,
+                    opportunity={
+                        "type": "OVER_CANDIDATE",
+                        "rank": over_check["rank"],
+                        "market": "OVER",
+                        "reason": over_check["reason"],
+                    },
+                )
+
+                if state_guard.get("force_action") == "REJECT":
+                    response = self._response(
+                        "NO_BET",
+                        "NO_BET",
+                        None,
+                        state_guard.get("match_state_reason", "MATCH_STATE_REJECT"),
+                    )
+                    response.update(state_guard)
+                    return response
+
+                if state_guard.get("force_action") == "OBSERVE":
+                    response = self._response(
+                        "OBSERVE",
+                        "OBSERVACION",
+                        state_guard.get("suggested_market"),
+                        state_guard.get("match_state_reason", "MATCH_STATE_OBSERVE"),
+                    )
+                    response.update(state_guard)
+                    return response
+
                 validation = self._context_validator.validate(match, context, ai, "OVER")
 
                 if validation.get("opportunity_context_status") == "DANGER":
@@ -99,6 +133,7 @@ class MatchOpportunityService:
                         "OVER_BLOCKED_BY_CONTEXT_VALIDATOR",
                     )
                     response.update(validation)
+                    response.update(state_guard)
                     return response
 
                 rank = over_check["rank"]
@@ -114,6 +149,7 @@ class MatchOpportunityService:
                     reason=over_check["reason"],
                 )
                 response.update(validation)
+                response.update(state_guard)
                 return response
 
         if window.get("allow_under", False):
@@ -135,6 +171,38 @@ class MatchOpportunityService:
             )
 
             if under_check["approved"]:
+                state_guard = self._match_state_guard.evaluate(
+                    match=match,
+                    context=context,
+                    ai=ai,
+                    opportunity={
+                        "type": "UNDER_CANDIDATE",
+                        "rank": under_check["rank"],
+                        "market": "UNDER",
+                        "reason": under_check["reason"],
+                    },
+                )
+
+                if state_guard.get("force_action") == "REJECT":
+                    response = self._response(
+                        "NO_BET",
+                        "NO_BET",
+                        None,
+                        state_guard.get("match_state_reason", "MATCH_STATE_REJECT"),
+                    )
+                    response.update(state_guard)
+                    return response
+
+                if state_guard.get("force_action") == "OBSERVE":
+                    response = self._response(
+                        "OBSERVE",
+                        "OBSERVACION",
+                        state_guard.get("suggested_market"),
+                        state_guard.get("match_state_reason", "MATCH_STATE_OBSERVE"),
+                    )
+                    response.update(state_guard)
+                    return response
+
                 validation = self._context_validator.validate(match, context, ai, "UNDER")
 
                 if validation.get("opportunity_context_status") == "DANGER":
@@ -145,6 +213,7 @@ class MatchOpportunityService:
                         "UNDER_BLOCKED_BY_CONTEXT_VALIDATOR",
                     )
                     response.update(validation)
+                    response.update(state_guard)
                     return response
 
                 rank = under_check["rank"]
@@ -160,6 +229,7 @@ class MatchOpportunityService:
                     reason=under_check["reason"],
                 )
                 response.update(validation)
+                response.update(state_guard)
                 return response
 
         observe_check = self._evaluate_observation(
