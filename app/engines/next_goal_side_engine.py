@@ -41,6 +41,9 @@ class NextGoalSideEngine:
         attack_side = str(context.get("attack_side") or "BALANCED").upper()
         context_state = str(context.get("context_state") or "MUERTO").upper()
         data_quality = str(context.get("data_quality") or "LOW").upper()
+        cooling_detected = bool(context.get("cooling_detected", False))
+        under_transition_score = self._safe_float(context.get("under_transition_score"))
+        live_decay_factor = self._safe_float(context.get("live_decay_factor") or 1.0)
 
         home_score_pressure = home_pressure
         away_score_pressure = away_pressure
@@ -96,6 +99,17 @@ class NextGoalSideEngine:
         elif context_state == "MUY_CALIENTE":
             confidence += 10
 
+        if cooling_detected:
+            confidence -= 12
+
+        if under_transition_score >= 70:
+            confidence -= 16
+        elif under_transition_score >= 55:
+            confidence -= 8
+
+        if live_decay_factor <= 0.70:
+            confidence -= 8
+
         confidence = round(max(0.0, min(confidence, 95.0)), 2)
 
         score_hold_probability = self._score_hold_probability(
@@ -105,6 +119,9 @@ class NextGoalSideEngine:
             goal_probability=goal_probability,
             context_state=context_state,
             data_quality=data_quality,
+            cooling_detected=cooling_detected,
+            under_transition_score=under_transition_score,
+            live_decay_factor=live_decay_factor,
         )
 
         if score_hold_probability >= 70:
@@ -124,6 +141,8 @@ class NextGoalSideEngine:
             data_quality=data_quality,
             pressure=pressure,
             rhythm=rhythm,
+            cooling_detected=cooling_detected,
+            under_transition_score=under_transition_score,
         )
 
         return {
@@ -144,6 +163,9 @@ class NextGoalSideEngine:
         goal_probability: float,
         context_state: str,
         data_quality: str,
+        cooling_detected: bool,
+        under_transition_score: float,
+        live_decay_factor: float,
     ) -> float:
         hold = 45.0
 
@@ -174,6 +196,17 @@ class NextGoalSideEngine:
         elif context_state in {"CALIENTE", "MUY_CALIENTE"}:
             hold -= 16
 
+        if cooling_detected:
+            hold += 10
+
+        if under_transition_score >= 70:
+            hold += 14
+        elif under_transition_score >= 55:
+            hold += 8
+
+        if live_decay_factor <= 0.70:
+            hold += 6
+
         if data_quality == "LOW":
             hold += 6
 
@@ -188,9 +221,17 @@ class NextGoalSideEngine:
         data_quality: str,
         pressure: float,
         rhythm: float,
+        cooling_detected: bool,
+        under_transition_score: float,
     ) -> str:
         if data_quality == "LOW":
             return "LOW_DATA_SIDE_READING"
+
+        if under_transition_score >= 70:
+            return "UNDER_TRANSITION_SIDE_READING"
+
+        if cooling_detected:
+            return "COOLING_SIDE_READING"
 
         if score_hold_probability >= 70:
             return "RESULT_MAY_HOLD"
