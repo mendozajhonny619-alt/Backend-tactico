@@ -39,6 +39,9 @@ class RiskEngine:
         data_quality = str(context.get("data_quality") or "LOW").upper()
         game_quality = str(context.get("game_quality") or "LOW").upper()
         context_state = str(context.get("context_state") or "MUERTO").upper()
+        cooling_detected = bool(context.get("cooling_detected", False))
+        under_transition_score = self._safe_float(context.get("under_transition_score"))
+        live_decay_factor = self._safe_float(context.get("live_decay_factor") or 1.0)
 
         pressure_index = self._safe_float(context.get("pressure_index"))
         rhythm_index = self._safe_float(context.get("rhythm_index"))
@@ -88,6 +91,24 @@ class RiskEngine:
             risk_score += 0.5
         elif context_state in {"CALIENTE", "MUY_CALIENTE"}:
             risk_score -= 0.4
+
+        # ---------------------------------------------------
+        # LIVE COOLING / UNDER TRANSITION
+        # ---------------------------------------------------
+        if cooling_detected:
+            risk_score += 1.2
+            risk_flags.append("LIVE_COOLING_DETECTED")
+
+        if under_transition_score >= 70:
+            risk_score += 1.4
+            risk_flags.append("UNDER_TRANSITION_ACTIVE")
+        elif under_transition_score >= 55:
+            risk_score += 0.7
+            risk_flags.append("UNDER_TRANSITION_WARNING")
+
+        if live_decay_factor <= 0.70:
+            risk_score += 0.8
+            risk_flags.append("LIVE_DECAY_LOW")
 
         # ---------------------------------------------------
         # PRESSURE / RHYTHM
