@@ -120,7 +120,7 @@ class MatchScanEnhancer:
                 under_boost += 8
                 positives.append("Partido bajo en producción ofensiva")
 
-        if shots_on_target >= 4 or xg >= 1.4 or dangerous_attacks >= 30:
+        if shots_on_target >= 5 or xg >= 1.6 or dangerous_attacks >= 35:
             under_boost -= 12
             warnings.append("Amenaza ofensiva alta contra UNDER")
 
@@ -159,7 +159,7 @@ class MatchScanEnhancer:
         goal_diff: int,
         warnings: List[str],
     ) -> str:
-        warning_text = " ".join(warnings).upper()
+        warning_text = " ".join(str(w) for w in warnings if w).upper()
 
         if goal_diff >= 3 and minute >= 60:
             return "DEAD_GAME_RISK"
@@ -182,7 +182,7 @@ class MatchScanEnhancer:
         return "NEUTRAL"
 
     def _recommendation(self, scan_score: float, warnings: List[str]) -> str:
-        warning_text = " ".join(warnings).upper()
+        warning_text = " ".join(str(w) for w in warnings if w).upper()
 
         if "PARTIDO POSIBLEMENTE RESUELTO" in warning_text:
             return "CAUTION"
@@ -218,14 +218,24 @@ class MatchScanEnhancer:
 
     def _total_goals(self, score: str) -> int:
         try:
-            home, away = str(score).split("-", 1)
+            parts = str(score).replace(":", "-").split("-", 1)
+
+            if len(parts) != 2:
+                return 0
+
+            home, away = parts
             return int(float(home or 0)) + int(float(away or 0))
         except Exception:
             return 0
 
     def _goal_diff(self, score: str) -> int:
         try:
-            home, away = str(score).split("-", 1)
+            parts = str(score).replace(":", "-").split("-", 1)
+
+            if len(parts) != 2:
+                return 0
+
+            home, away = parts
             return abs(int(float(home or 0)) - int(float(away or 0)))
         except Exception:
             return 0
