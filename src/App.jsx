@@ -4,7 +4,7 @@ import EliteSidebar from "./components/EliteSidebar";
 import EliteMetricCard from "./components/EliteMetricCard";
 import MatchProPanel from "./components/MatchProPanel";
 
-const API = "https://jhonny-elite-api.onrender.com";
+const API = "https://jhonny-elite-api.onrender.com/api";
 
 export default function App() {
   const [stats, setStats] = useState(null);
