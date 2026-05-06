@@ -13,12 +13,14 @@ from app.services.signal_ranker_service import SignalRankerService
 from app.services.elite_analyst_filter import EliteAnalystFilter
 from app.services.match_scan_enhancer import MatchScanEnhancer
 from app.services.match_reading_enhancer import MatchReadingEnhancer
+from app.services.next_goal_context_helper import NextGoalContextHelper
 
 from app.engines.market_engine import MarketEngine
 from app.engines.value_engine import ValueEngine
 from app.engines.risk_engine import RiskEngine
 from app.engines.tactical_engine import TacticalEngine
 from app.engines.match_analyst_engine import MatchAnalystEngine
+from app.engines.next_goal_side_engine import NextGoalSideEngine
 
 
 class ScanService:
@@ -33,6 +35,7 @@ class ScanService:
     - Evita señales internas débiles.
     - Filtro final tipo analista élite antes de publicar.
     - Mejora lectura del partido con MatchReadingEnhancer sin bloquear señales.
+    - Agrega lectura auxiliar de próximo gol sin modificar decisiones.
     """
 
     def __init__(self) -> None:
@@ -51,6 +54,8 @@ class ScanService:
         self.elite_analyst_filter = EliteAnalystFilter()
         self.scan_enhancer = MatchScanEnhancer()
         self.reading_enhancer = MatchReadingEnhancer()
+        self.next_goal_engine = NextGoalSideEngine()
+        self.next_goal_helper = NextGoalContextHelper()
 
     def scan(self, live_matches: List[Dict[str, Any]]) -> Dict[str, Any]:
         candidates: List[Dict[str, Any]] = []
@@ -85,19 +90,40 @@ class ScanService:
 
     def _process_match(self, match: Dict[str, Any]) -> Dict[str, Any]:
         match = self.scan_enhancer.enhance(match)
-        match = self.reading_enhancer.enhance(match)
 
         match_id = match.get("match_id")
         if match_id is None:
             return self._block(match, "BLOCK_MATCH_ID_MISSING")
 
-        window = self.window_engine.evaluate(match)
+        context = self.context_engine.build(match)
+
+        match = self.reading_enhancer.enhance({
+            **match,
+            **context,
+        })
+
+        window = self.window_engine.evaluate({
+            **match,
+            **context,
+        })
+
         if not window.get("allowed", False):
-            return self._block(match, "BLOCK_INVALID_WINDOW", window=window)
+            return self._block(match, "BLOCK_INVALID_WINDOW", context=context, window=window)
 
         if match.get("is_scannable") is False:
-            context = self.context_engine.build(match)
             ai = self.ai_engine.evaluate(context)
+
+            next_goal = self.next_goal_engine.evaluate(
+                match=match,
+                context=context,
+                ai=ai,
+            )
+            next_goal_context = self.next_goal_helper.interpret(
+                next_goal=next_goal,
+                opportunity={},
+            )
+            match.update(next_goal)
+            match.update(next_goal_context)
 
             if not self._should_continue_despite_low_data(match, context, ai):
                 return self._observe(
@@ -109,8 +135,19 @@ class ScanService:
                 )
 
         if not self._has_minimal_stats(match):
-            context = self.context_engine.build(match)
             ai = self.ai_engine.evaluate(context)
+
+            next_goal = self.next_goal_engine.evaluate(
+                match=match,
+                context=context,
+                ai=ai,
+            )
+            next_goal_context = self.next_goal_helper.interpret(
+                next_goal=next_goal,
+                opportunity={},
+            )
+            match.update(next_goal)
+            match.update(next_goal_context)
 
             if not self._should_continue_despite_low_data(match, context, ai):
                 return self._observe(
@@ -121,9 +158,20 @@ class ScanService:
                     reason="LOW_STATS_OBSERVATION",
                 )
 
-        context = self.context_engine.build(match)
         ai = self.ai_engine.evaluate(context)
         ai_score = self._safe_float(ai.get("ai_score"))
+
+        next_goal = self.next_goal_engine.evaluate(
+            match=match,
+            context=context,
+            ai=ai,
+        )
+        next_goal_context = self.next_goal_helper.interpret(
+            next_goal=next_goal,
+            opportunity={},
+        )
+        match.update(next_goal)
+        match.update(next_goal_context)
 
         if str(context.get("data_quality") or "LOW").upper() == "LOW":
             if not self._should_continue_despite_low_data(match, context, ai):
@@ -184,6 +232,12 @@ class ScanService:
             window=window,
         )
 
+        next_goal_context = self.next_goal_helper.interpret(
+            next_goal=next_goal,
+            opportunity=opportunity,
+        )
+        match.update(next_goal_context)
+
         analyst_pre = self.analyst_engine.evaluate(
             match=match,
             context=context,
@@ -228,6 +282,12 @@ class ScanService:
                     "market": "OVER",
                     "reason": "OBSERVE_PROMOTED_BY_INTERNAL_CONSENSUS",
                 }
+
+                promoted_next_goal_context = self.next_goal_helper.interpret(
+                    next_goal=next_goal,
+                    opportunity=promoted_opportunity,
+                )
+                match.update(promoted_next_goal_context)
 
                 return self._emit_internal_signal(
                     match=match,
@@ -385,6 +445,7 @@ class ScanService:
                 value=value,
             )
             payload["block_reason"] = value.get("reason") or value.get("status", "BLOCK_NO_VALUE")
+
             return {
                 "status": "OPPORTUNITY",
                 "opportunity": payload,
@@ -890,6 +951,20 @@ class ScanService:
             "reading_advice": match.get("reading_advice"),
         }
 
+    def _next_goal_fields(self, match: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "next_goal_bias": match.get("next_goal_bias"),
+            "next_goal_confidence": match.get("next_goal_confidence"),
+            "score_hold_probability": match.get("score_hold_probability"),
+            "next_goal_status": match.get("next_goal_status"),
+            "next_goal_warning": match.get("next_goal_warning"),
+            "home_next_goal_pressure": match.get("home_next_goal_pressure"),
+            "away_next_goal_pressure": match.get("away_next_goal_pressure"),
+            "next_goal_support": match.get("next_goal_support"),
+            "next_goal_helper_advice": match.get("next_goal_helper_advice"),
+            "next_goal_helper_warning": match.get("next_goal_helper_warning"),
+        }
+
     def _build_signal(
         self,
         match: Dict[str, Any],
@@ -945,6 +1020,9 @@ class ScanService:
             "dominance": context.get("dominance"),
             "attack_side": context.get("attack_side"),
             "context_state": context.get("context_state"),
+            "live_decay_factor": context.get("live_decay_factor"),
+            "cooling_detected": context.get("cooling_detected"),
+            "under_transition_score": context.get("under_transition_score"),
             "momentum_label": ai.get("momentum_label"),
             "value_edge": value.get("edge"),
             "value_category": value.get("value_category"),
@@ -984,6 +1062,7 @@ class ScanService:
         }
 
         signal.update(self._reading_fields(match))
+        signal.update(self._next_goal_fields(match))
         return signal
 
     def _build_opportunity_payload(
@@ -1026,6 +1105,9 @@ class ScanService:
             "data_quality": context.get("data_quality"),
             "game_quality": context.get("game_quality"),
             "context_state": context.get("context_state"),
+            "live_decay_factor": context.get("live_decay_factor"),
+            "cooling_detected": context.get("cooling_detected"),
+            "under_transition_score": context.get("under_transition_score"),
             "dominance": context.get("dominance"),
             "attack_side": context.get("attack_side"),
             "odds": market.get("odds") if market else None,
@@ -1065,6 +1147,7 @@ class ScanService:
         }
 
         payload.update(self._reading_fields(match))
+        payload.update(self._next_goal_fields(match))
         return payload
 
     def _block(
