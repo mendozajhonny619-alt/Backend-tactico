@@ -18,15 +18,13 @@ class LiveMatchFetcher:
     API_FOOTBALL_EVENTS_URL = f"{API_BASE}/fixtures/events"
     FOOTBALL_DATA_URL = "https://api.football-data.org/v4/matches"
 
-    # Escaneo recomendado:
-    # - fixtures live cada 15s
-    # - stats/events profundos cada 15s
     LIVE_CACHE_TTL_SECONDS = 60
     STATS_CACHE_TTL_SECONDS = 15
     EVENTS_CACHE_TTL_SECONDS = 15
 
     MAX_DEEP_SCAN_MATCHES = 12
     MAX_OPERABLE_MINUTE = 87
+    MAX_TRACKING_MINUTE = 130
 
     API_429_COOLDOWN_SECONDS = 300
     BACKUP_TIMEOUT_SECONDS = 8
@@ -306,13 +304,16 @@ class LiveMatchFetcher:
                     logger.info("LIVE_FETCHER: fixture=%s descartado por status no vivo=%s", fixture_id, status_short)
                     continue
 
-                if minute <= 0 or minute > self.MAX_OPERABLE_MINUTE:
-                    logger.info("LIVE_FETCHER: fixture=%s descartado por minuto no operable=%s", fixture_id, minute)
+                if minute <= 0 or minute > self.MAX_TRACKING_MINUTE:
+                    logger.info("LIVE_FETCHER: fixture=%s descartado por minuto inválido=%s", fixture_id, minute)
                     continue
+
+                tracking_only = minute > self.MAX_OPERABLE_MINUTE
 
                 should_fetch_deep = (
                     deep_scan_used < self.MAX_DEEP_SCAN_MATCHES
                     and self._should_fetch_detailed_stats(item, minute)
+                    and not tracking_only
                 )
 
                 if should_fetch_deep:
@@ -331,7 +332,7 @@ class LiveMatchFetcher:
 
                 events = self._fetch_fixture_events(
                     fixture_id=fixture_id,
-                    should_fetch=should_fetch_deep,
+                    should_fetch=should_fetch_deep or tracking_only,
                 )
 
                 home_stats = self._extract_team_stats_api_football(statistics, 0)
@@ -444,6 +445,8 @@ class LiveMatchFetcher:
                     ),
 
                     "deep_scan_enabled": should_fetch_deep,
+                    "tracking_only": tracking_only,
+                    "operable": not tracking_only,
                     "confidence": self._estimate_confidence(data_quality, totals),
                     "prob_real": self._estimate_prob_real(data_quality, totals),
                     "source": "api_football",
@@ -572,8 +575,10 @@ class LiveMatchFetcher:
                 away_score = self._safe_int(full_time.get("away"))
                 minute = self._estimate_minute_from_status(item)
 
-                if minute <= 0 or minute > self.MAX_OPERABLE_MINUTE:
+                if minute <= 0 or minute > self.MAX_TRACKING_MINUTE:
                     continue
+
+                tracking_only = minute > self.MAX_OPERABLE_MINUTE
 
                 home_stats = {
                     "possession": 50.0,
@@ -653,6 +658,8 @@ class LiveMatchFetcher:
                         "has_live_stats": False,
                         "is_scannable": False,
                         "stats_source": "football_data_backup",
+                        "tracking_only": tracking_only,
+                        "operable": not tracking_only,
                         "confidence": 55.0,
                         "prob_real": 0.50,
                         "source": "football_data_backup",
