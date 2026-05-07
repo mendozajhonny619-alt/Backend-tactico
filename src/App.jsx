@@ -4,6 +4,7 @@ import EliteSidebar from "./components/EliteSidebar";
 import EliteMetricCard from "./components/EliteMetricCard";
 import MatchProPanel from "./components/MatchProPanel";
 import EliteAnalyticsPanel from "./components/EliteAnalyticsPanel";
+import MatchMomentumChart from "./components/MatchMomentumChart";
 
 const API = "https://jhonny-elite-v16-web.onrender.com";
 
@@ -891,7 +892,9 @@ function DetailView({ item }) {
             <li>Estado mercado: {safeText(item?.market_status || "N/A")}</li>
           </ul>
         </div>
-
+          <div className="premium-card full-span">
+  <MatchMomentumChart item={item} />
+</div>
         <div className="premium-card">
           <h2>Lectura IA</h2>
           <InfoRow label="Ventana" value={item?.window_phase} />
