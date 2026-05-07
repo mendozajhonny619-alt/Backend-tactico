@@ -3,6 +3,7 @@ import "./styles.css";
 import EliteSidebar from "./components/EliteSidebar";
 import EliteMetricCard from "./components/EliteMetricCard";
 import MatchProPanel from "./components/MatchProPanel";
+import EliteAnalyticsPanel from "./components/EliteAnalyticsPanel";
 
 const API = "https://jhonny-elite-v16-web.onrender.com";
 
@@ -329,13 +330,8 @@ export default function App() {
             )}
 
             {activeTab === "stats" && (
-              <StatsView
-                history={history}
-                signals={uniqueSignals}
-                opportunities={opportunitySections}
-                summary={historySummary}
-              />
-            )}
+  <EliteAnalyticsPanel history={history} signals={uniqueSignals} />
+)}
 
             {activeTab === "config" && <ConfigView />}
           </div>
