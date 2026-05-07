@@ -7,7 +7,7 @@ import EliteAnalyticsPanel from "./components/EliteAnalyticsPanel";
 import MatchMomentumChart from "./components/MatchMomentumChart";
 import XGChart from "./components/XGChart";
 
-const API = "https://backend-tactico-lqok.onrender.com";
+const API = "https://backend-tactico1.onrender.com";
 
 export default function App() {
   const [stats, setStats] = useState(null);
