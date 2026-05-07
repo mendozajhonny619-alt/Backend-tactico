@@ -2743,3 +2743,41 @@ body {
     grid-template-columns: 1fr;
   }
     }
+
+/* ===== MOMENTUM CHART ===== */
+
+.full-span {
+  grid-column: span 2;
+}
+
+.momentum-chart-box {
+  display: grid;
+  gap: 14px;
+}
+
+.momentum-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.momentum-head h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 1000;
+}
+
+.momentum-head span {
+  color: #00ffcc;
+  font-weight: 900;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+@media (max-width: 900px) {
+  .full-span {
+    grid-column: span 1;
+  }
+}
