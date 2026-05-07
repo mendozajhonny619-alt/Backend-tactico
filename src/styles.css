@@ -3119,3 +3119,57 @@ body {
     padding-right: 12px !important;
   }
 }
+
+/* =========================
+   MOBILE FIX
+========================= */
+
+@media (max-width: 768px) {
+
+  .elite-sidebar {
+    position: fixed;
+    left: -260px;
+    top: 0;
+    width: 240px;
+    height: 100vh;
+    z-index: 999;
+    transition: left 0.3s ease;
+  }
+
+  .elite-sidebar.open {
+    left: 0;
+  }
+
+  .elite-main {
+    width: 100%;
+    margin-left: 0 !important;
+    padding: 12px;
+  }
+
+  .dashboard-grid,
+  .premium-grid,
+  .stats-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .premium-card,
+  .metric-card {
+    width: 100%;
+  }
+
+  .elite-topbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .mobile-menu-btn {
+    display: flex;
+    background: #00ffae;
+    color: black;
+    border: none;
+    padding: 10px;
+    border-radius: 10px;
+    font-size: 18px;
+  }
+    }
