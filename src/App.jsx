@@ -22,7 +22,7 @@ export default function App() {
 
   const [lastUpdate, setLastUpdate] = useState("");
   const [selectedMatch, setSelectedMatch] = useState(null);
-  const [activeTab, setActiveTab] = useState("results");
+  const [activeTab, setActiveTab] = useState("signals");
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
@@ -44,6 +44,15 @@ export default function App() {
           fetch(`${API}/history`, { cache: "no-store" }),
           fetch(`${API}/opportunities`, { cache: "no-store" }),
         ]);
+
+      if (
+        !statsRes.ok ||
+        !signalsRes.ok ||
+        !historyRes.ok ||
+        !opportunitiesRes.ok
+      ) {
+        throw new Error("Backend no respondió correctamente.");
+      }
 
       const [statsData, signalsData, historyData, opportunitiesData] =
         await Promise.all([
@@ -95,6 +104,9 @@ export default function App() {
       observe: dedupeItems(opportunities.sections.observe).sort(
         (a, b) => getStrength(b) - getStrength(a)
       ),
+      rejected: dedupeItems(opportunities.sections.rejected || []).sort(
+        (a, b) => getStrength(b) - getStrength(a)
+      ),
     };
   }, [opportunities]);
 
@@ -115,6 +127,7 @@ export default function App() {
       ...opportunitySections.over,
       ...opportunitySections.under,
       ...opportunitySections.observe,
+      ...opportunitySections.rejected,
       ...history,
     ];
 
@@ -158,6 +171,7 @@ export default function App() {
       stats?.live_matches_count ??
         stats?.scanned_matches ??
         stats?.live_matches ??
+        opportunities?.summary?.total ??
         0
     ),
     accuracy: historySummary.precision,
@@ -167,142 +181,164 @@ export default function App() {
 
   if (selectedMatch) {
     return (
-  <div className="app elite-layout">
+      <div className="app elite-layout">
+        <EliteSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
 
-    <EliteSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+        <div className="elite-main">
+          <div className="overlay">
+            <div className="container">
+              <div className="detail-topbar">
+                <button className="back-btn" onClick={() => setSelectedMatch(null)}>
+                  ← Volver al panel
+                </button>
 
-    <div className="elite-main">
-      <div className="overlay">
-        <div className="container">
-            <div className="detail-topbar">
-              <button className="back-btn" onClick={() => setSelectedMatch(null)}>
-                ← Volver al panel
-              </button>
-
-              <div className="detail-update">
-                Última actualización: {lastUpdate || "--:--:--"}
+                <div className="detail-update">
+                  Última actualización: {lastUpdate || "--:--:--"}
+                </div>
               </div>
+
+              <DetailView item={selectedLiveMatch || selectedMatch} />
             </div>
-
-            <DetailView item={selectedLiveMatch || selectedMatch} />
           </div>
+        </div>
       </div>
-    </div>
-
-  </div>
-);
+    );
   }
 
   return (
-    <div className="app">
-      <div className="overlay">
-        <div className="container">
-          <Header stats={headerStats} />
+    <div className="app elite-layout">
+      <EliteSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
 
-<div className="elite-metrics-row">
-  <EliteMetricCard
-    title="Señales activas"
-    value={uniqueSignals.length}
-    sub="+ últimas 24h"
-    tone="cyan"
-  />
+      <div className="elite-main">
+        <div className="overlay">
+          <div className="container">
+            <Header stats={headerStats} />
 
-  <EliteMetricCard
-    title="Premium"
-    value={uniqueSignals.filter((x) => String(x?.rank || "").toUpperCase() === "PREMIUM").length}
-    sub="+ rango alto"
-    tone="green"
-  />
-
-  <EliteMetricCard
-    title="ROI hoy"
-    value={`${historySummary.roi >= 0 ? "+" : ""}${historySummary.roi.toFixed(1)}%`}
-    sub="según historial"
-    tone="green"
-  />
-
-  <EliteMetricCard
-    title="Win Rate"
-    value={`${historySummary.precision.toFixed(1)}%`}
-    sub="aciertos reales"
-    tone="blue"
-  />
-
-  <EliteMetricCard
-    title="Sistema"
-    value="ACTIVO"
-    sub="Modo balanceado"
-    tone="green"
-  />
-</div>
-
-          <nav className="pro-nav">
-            <NavButton id="signals" activeTab={activeTab} setActiveTab={setActiveTab} icon="⚡">
-              Señales
-            </NavButton>
-
-            <NavButton id="opportunities" activeTab={activeTab} setActiveTab={setActiveTab} icon="🛡️">
-              Oportunidades
-            </NavButton>
-
-            <NavButton id="results" activeTab={activeTab} setActiveTab={setActiveTab} icon="🏆">
-              Resultados
-            </NavButton>
-
-            <NavButton id="stats" activeTab={activeTab} setActiveTab={setActiveTab} icon="📊">
-              Estadísticas
-            </NavButton>
-
-            <NavButton id="config" activeTab={activeTab} setActiveTab={setActiveTab} icon="⚙️">
-              Configuración
-            </NavButton>
-          </nav>
-
-          {errorMsg ? <div className="empty-box">{errorMsg}</div> : null}
-
-          {activeTab === "signals" && (
-            <>
-              {featured && <MatchProPanel item={featured} />}
-              <Section
-                title="🔥 SEÑALES ACTIVAS"
-                items={uniqueSignals}
-                empty="No hay señales activas ahora mismo."
-                onOpen={setSelectedMatch}
-              />
-            </>
-          )}
-
-          {activeTab === "opportunities" && (
-            <>
-              <Section
-                title="🔥 OPORTUNIDADES OVER"
-                items={opportunitySections.over}
-                empty="No hay oportunidades OVER ahora mismo."
-                onOpen={setSelectedMatch}
+            <div className="elite-metrics-row">
+              <EliteMetricCard
+                title="Señales activas"
+                value={uniqueSignals.length}
+                sub="+ últimas 24h"
+                tone="cyan"
               />
 
-              <Section
-                title="❄️ POSIBLES UNDER"
-                items={opportunitySections.under}
-                empty="No hay oportunidades UNDER ahora mismo."
-                onOpen={setSelectedMatch}
+              <EliteMetricCard
+                title="Premium"
+                value={
+                  uniqueSignals.filter(
+                    (x) => String(x?.rank || "").toUpperCase() === "PREMIUM"
+                  ).length
+                }
+                sub="+ rango alto"
+                tone="green"
               />
 
-              <Section
-                title="👁 EN OBSERVACIÓN"
-                items={opportunitySections.observe}
-                empty="No hay partidos en observación."
-                onOpen={setSelectedMatch}
+              <EliteMetricCard
+                title="ROI hoy"
+                value={`${historySummary.roi >= 0 ? "+" : ""}${historySummary.roi.toFixed(1)}%`}
+                sub="según historial"
+                tone="green"
               />
-            </>
-          )}
 
-          {activeTab === "results" && (
-            <ResultsProView history={history} summary={historySummary} />
-          )}
+              <EliteMetricCard
+                title="Win Rate"
+                value={`${historySummary.precision.toFixed(1)}%`}
+                sub="aciertos reales"
+                tone="blue"
+              />
 
-          {activeTab === "stats" && <ComingSoon title="📊 Estadísticas" />}
-          {activeTab === "config" && <ComingSoon title="⚙️ Configuración" />}
+              <EliteMetricCard
+                title="Sistema"
+                value="ACTIVO"
+                sub="Modo balanceado"
+                tone="green"
+              />
+            </div>
+
+            <nav className="pro-nav">
+              <NavButton id="signals" activeTab={activeTab} setActiveTab={setActiveTab} icon="⚡">
+                Señales
+              </NavButton>
+
+              <NavButton id="opportunities" activeTab={activeTab} setActiveTab={setActiveTab} icon="🛡️">
+                Oportunidades
+              </NavButton>
+
+              <NavButton id="results" activeTab={activeTab} setActiveTab={setActiveTab} icon="🏆">
+                Resultados
+              </NavButton>
+
+              <NavButton id="stats" activeTab={activeTab} setActiveTab={setActiveTab} icon="📊">
+                Estadísticas
+              </NavButton>
+
+              <NavButton id="config" activeTab={activeTab} setActiveTab={setActiveTab} icon="⚙️">
+                Configuración
+              </NavButton>
+            </nav>
+
+            {errorMsg ? <div className="empty-box">{errorMsg}</div> : null}
+
+            {activeTab === "signals" && (
+              <>
+                {featured && <MatchProPanel item={featured} />}
+
+                <Section
+                  title="🔥 SEÑALES ACTIVAS"
+                  items={uniqueSignals}
+                  empty="No hay señales activas ahora mismo."
+                  onOpen={setSelectedMatch}
+                />
+              </>
+            )}
+
+            {activeTab === "opportunities" && (
+              <>
+                <Section
+                  title="🔥 OPORTUNIDADES OVER"
+                  items={opportunitySections.over}
+                  empty="No hay oportunidades OVER ahora mismo."
+                  onOpen={setSelectedMatch}
+                />
+
+                <Section
+                  title="❄️ POSIBLES UNDER"
+                  items={opportunitySections.under}
+                  empty="No hay oportunidades UNDER ahora mismo."
+                  onOpen={setSelectedMatch}
+                />
+
+                <Section
+                  title="👁 EN OBSERVACIÓN"
+                  items={opportunitySections.observe}
+                  empty="No hay partidos en observación."
+                  onOpen={setSelectedMatch}
+                />
+
+                <Section
+                  title="⛔ RECHAZADOS / EVITAR"
+                  items={opportunitySections.rejected}
+                  empty="No hay partidos rechazados actualmente."
+                  onOpen={setSelectedMatch}
+                />
+              </>
+            )}
+
+            {activeTab === "results" && (
+              <ResultsProView history={history} summary={historySummary} />
+            )}
+
+            {activeTab === "stats" && (
+              <StatsView
+                history={history}
+                signals={uniqueSignals}
+                opportunities={opportunitySections}
+                summary={historySummary}
+              />
+            )}
+
+            {activeTab === "config" && <ConfigView />}
+          </div>
         </div>
       </div>
     </div>
@@ -360,12 +396,53 @@ function ResultsProView({ history, summary }) {
       </div>
 
       <div className="performance-grid">
-        <PerformanceCard icon="✅" title="Aciertos" value={summary.wins} sub={`${summary.total ? ((summary.wins / summary.total) * 100).toFixed(1) : "0.0"}%`} tone="win" />
-        <PerformanceCard icon="❌" title="Fallos" value={summary.losses} sub={`${summary.total ? ((summary.losses / summary.total) * 100).toFixed(1) : "0.0"}%`} tone="loss" />
-        <PerformanceCard icon="⏳" title="Pendientes" value={summary.pending} sub={`${summary.total ? ((summary.pending / summary.total) * 100).toFixed(1) : "0.0"}%`} tone="pending" />
-        <PerformanceCard icon="🎯" title="Precisión" value={`${summary.precision.toFixed(1)}%`} sub={`(${summary.wins} / ${summary.wins + summary.losses})`} tone="precision" />
-        <PerformanceCard icon="📈" title="ROI" value={`${summary.roi >= 0 ? "+" : ""}${summary.roi.toFixed(2)}%`} sub="Beneficio" tone="roi" />
-        <PerformanceCard icon="🔥" title="Racha actual" value={summary.streak} sub="Acertadas" tone="streak" />
+        <PerformanceCard
+          icon="✅"
+          title="Aciertos"
+          value={summary.wins}
+          sub={`${summary.total ? ((summary.wins / summary.total) * 100).toFixed(1) : "0.0"}%`}
+          tone="win"
+        />
+
+        <PerformanceCard
+          icon="❌"
+          title="Fallos"
+          value={summary.losses}
+          sub={`${summary.total ? ((summary.losses / summary.total) * 100).toFixed(1) : "0.0"}%`}
+          tone="loss"
+        />
+
+        <PerformanceCard
+          icon="⏳"
+          title="Pendientes"
+          value={summary.pending}
+          sub={`${summary.total ? ((summary.pending / summary.total) * 100).toFixed(1) : "0.0"}%`}
+          tone="pending"
+        />
+
+        <PerformanceCard
+          icon="🎯"
+          title="Precisión"
+          value={`${summary.precision.toFixed(1)}%`}
+          sub={`(${summary.wins} / ${summary.wins + summary.losses})`}
+          tone="precision"
+        />
+
+        <PerformanceCard
+          icon="📈"
+          title="ROI"
+          value={`${summary.roi >= 0 ? "+" : ""}${summary.roi.toFixed(2)}%`}
+          sub="Beneficio"
+          tone="roi"
+        />
+
+        <PerformanceCard
+          icon="🔥"
+          title="Racha actual"
+          value={summary.streak}
+          sub="Aciertos acumulados"
+          tone="streak"
+        />
       </div>
 
       <div className="history-panel-pro">
@@ -389,6 +466,200 @@ function ResultsProView({ history, summary }) {
         )}
       </div>
     </section>
+  );
+}
+
+function StatsView({ history, signals, opportunities, summary }) {
+  const allLive = [
+    ...(Array.isArray(signals) ? signals : []),
+    ...(Array.isArray(opportunities?.over) ? opportunities.over : []),
+    ...(Array.isArray(opportunities?.under) ? opportunities.under : []),
+    ...(Array.isArray(opportunities?.observe) ? opportunities.observe : []),
+    ...(Array.isArray(opportunities?.rejected) ? opportunities.rejected : []),
+  ];
+
+  const byMarket = groupPerformanceBy(history, (item) => getTypeLabel(item));
+  const byRank = groupPerformanceBy(history, (item) => safeText(item?.rank || "N/A"));
+  const byLeague = groupPerformanceBy(history, (item) => safeText(item?.league || "Liga no disponible"));
+  const byMinute = groupPerformanceBy(history, (item) => minuteBucket(item?.minute));
+
+  const avgSignal = average(allLive.map((x) => Number(x?.signal_score || 0)));
+  const avgAI = average(allLive.map((x) => Number(x?.ai_score || 0)));
+  const avgGoal = average(allLive.map((x) => Number(x?.goal_probability || 0)));
+
+  return (
+    <section className="stats-screen">
+      <div className="panel-title-row">
+        <h2>📊 ESTADÍSTICAS Y RENDIMIENTO REAL</h2>
+        <small>Datos calculados solamente desde historial, señales y oportunidades reales.</small>
+      </div>
+
+      <div className="performance-grid">
+        <PerformanceCard
+          icon="📌"
+          title="Total historial"
+          value={summary.total}
+          sub="Señales guardadas"
+          tone="precision"
+        />
+
+        <PerformanceCard
+          icon="🎯"
+          title="Win Rate"
+          value={`${summary.precision.toFixed(1)}%`}
+          sub={`${summary.wins} aciertos / ${summary.losses} fallos`}
+          tone="win"
+        />
+
+        <PerformanceCard
+          icon="⚡"
+          title="Señales live"
+          value={signals.length}
+          sub="Actualmente activas"
+          tone="streak"
+        />
+
+        <PerformanceCard
+          icon="🧠"
+          title="IA media live"
+          value={formatNum(avgAI)}
+          sub="Promedio real visible"
+          tone="precision"
+        />
+
+        <PerformanceCard
+          icon="🔥"
+          title="Gol % medio"
+          value={`${formatNum(avgGoal)}%`}
+          sub="Promedio live"
+          tone="roi"
+        />
+
+        <PerformanceCard
+          icon="📈"
+          title="Signal medio"
+          value={formatNum(avgSignal)}
+          sub="Fuerza media"
+          tone="pending"
+        />
+      </div>
+
+      <div className="stats-grid-pro">
+        <StatsTable title="Rendimiento por mercado" rows={byMarket} />
+        <StatsTable title="Rendimiento por rango" rows={byRank} />
+        <StatsTable title="Rendimiento por minuto" rows={byMinute} />
+        <StatsTable title="Rendimiento por liga" rows={byLeague.slice(0, 8)} />
+      </div>
+    </section>
+  );
+}
+
+function ConfigView() {
+  return (
+    <section className="config-screen">
+      <div className="panel-title-row">
+        <h2>⚙️ CONFIGURACIÓN Y ALERTAS</h2>
+        <small>Panel visual. Los cambios reales deben conectarse al backend cuando exista endpoint de configuración.</small>
+      </div>
+
+      <div className="config-grid-pro">
+        <div className="premium-card">
+          <h2>Modo del sistema</h2>
+
+          <div className="config-option active">
+            <b>Balanceado</b>
+            <span>Equilibrio entre cantidad y precisión.</span>
+          </div>
+
+          <div className="config-option">
+            <b>Conservador</b>
+            <span>Menos señales, mayor exigencia.</span>
+          </div>
+
+          <div className="config-option">
+            <b>Agresivo</b>
+            <span>Más señales, mayor riesgo.</span>
+          </div>
+        </div>
+
+        <div className="premium-card">
+          <h2>Filtros principales</h2>
+
+          <ConfigRow label="Confianza mínima" value="60%" />
+          <ConfigRow label="Rango mínimo" value="FUERTE" />
+          <ConfigRow label="AI Score mínimo" value="65" />
+          <ConfigRow label="Prob. próximo gol mínima" value="60%" />
+          <ConfigRow label="Riesgo máximo permitido" value="MEDIO" />
+          <ConfigRow label="Minuto mínimo" value="15'" />
+          <ConfigRow label="Minuto máximo" value="87' operable / 130' tracking" />
+        </div>
+
+        <div className="premium-card">
+          <h2>Mercados activos</h2>
+
+          <ConfigToggle label="OVER 2.5" enabled />
+          <ConfigToggle label="UNDER 2.5" enabled />
+          <ConfigToggle label="OVER 1.5" enabled />
+          <ConfigToggle label="BTTS" enabled={false} />
+          <ConfigToggle label="NEXT GOAL" enabled />
+        </div>
+
+        <div className="premium-card">
+          <h2>Alertas activas</h2>
+
+          <ConfigToggle label="Señal PREMIUM" enabled />
+          <ConfigToggle label="Cambio de rango" enabled />
+          <ConfigToggle label="Score Hold detectado" enabled />
+          <ConfigToggle label="Contradicción Next Goal" enabled />
+          <ConfigToggle label="Alta probabilidad de gol" enabled />
+          <ConfigToggle label="No reentrar" enabled />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function StatsTable({ title, rows }) {
+  return (
+    <div className="premium-card">
+      <h2>{title}</h2>
+
+      {!rows || rows.length === 0 ? (
+        <div className="empty-box">No hay datos suficientes.</div>
+      ) : (
+        <div className="stats-table">
+          {rows.map((row, index) => (
+            <div className="stats-row" key={`${row.label}-${index}`}>
+              <span>{row.label}</span>
+              <b>{row.winRate.toFixed(1)}%</b>
+              <small>
+                {row.wins}G / {row.losses}P · {row.total} total
+              </small>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConfigRow({ label, value }) {
+  return (
+    <div className="info-row">
+      <span>{label}</span>
+      <b>{value}</b>
+    </div>
+  );
+}
+
+function ConfigToggle({ label, enabled = false }) {
+  return (
+    <div className="config-toggle">
+      <span>{label}</span>
+      <b className={enabled ? "toggle-on" : "toggle-off"}>
+        {enabled ? "ACTIVO" : "OFF"}
+      </b>
+    </div>
   );
 }
 
@@ -501,6 +772,7 @@ function Section({ title, items, empty, onOpen }) {
 function SignalCard({ item, onOpen }) {
   const typeClass = safeTypeClass(item);
   const confidence = getConfidence(item);
+  const decision = getDecision(item);
 
   return (
     <article className={`card pro-card ${typeClass}`}>
@@ -533,9 +805,19 @@ function SignalCard({ item, onOpen }) {
         <MiniMetric label="Gol %" value={`${formatNum(item?.goal_probability)}%`} />
         <MiniMetric
           label={typeClass === "under" ? "Under %" : "Over %"}
-          value={`${formatNum(typeClass === "under" ? item?.under_probability : item?.over_probability)}%`}
+          value={`${formatNum(
+            typeClass === "under" ? item?.under_probability : item?.over_probability
+          )}%`}
         />
         <MiniMetric label="Señal" value={formatNum(item?.signal_score)} />
+      </div>
+
+      <div className="card-extra-flags">
+        {item?.signal_life_status ? <span>{safeText(item.signal_life_status)}</span> : null}
+        {item?.pressure_trend ? <span>Presión: {safeText(item.pressure_trend)}</span> : null}
+        {item?.rhythm_trend ? <span>Ritmo: {safeText(item.rhythm_trend)}</span> : null}
+        {item?.next_goal_support ? <span>{safeText(item.next_goal_support)}</span> : null}
+        {decision.status ? <span>{safeText(decision.status)}</span> : null}
       </div>
 
       <div className="card-footer-pro">
@@ -545,62 +827,6 @@ function SignalCard({ item, onOpen }) {
         <button onClick={onOpen}>Ver partido</button>
       </div>
     </article>
-  );
-}
-
-function FeaturedSignal({ item }) {
-  const confidence = getConfidence(item);
-  const typeClass = safeTypeClass(item);
-
-  return (
-    <section className={`featured pro-featured ${typeClass}`}>
-      <div className="featured-left">
-        <div className="featured-kicker">DIRECTOR DE SEÑAL</div>
-        <LeagueLine item={item} />
-
-        <div className="featured-pro-teams">
-          <TeamLogo item={item} side="home" size="featured" />
-
-          <div>
-            <h2>{safeText(item?.match_name)}</h2>
-
-            <div className="featured-score-pro">
-              <b>{safeText(item?.score || "0-0")}</b>
-              <LiveMinute item={item} />
-            </div>
-          </div>
-
-          <TeamLogo item={item} side="away" size="featured" />
-        </div>
-
-        <div className={`confidence-badge big ${confidence.class}`}>
-          Confianza: {confidence.label}
-        </div>
-
-        <DecisionMini item={item} big />
-
-        <p>
-          {safeText(item?.rank || item?.signal_rank || "N/A")} ·{" "}
-          {safeText(item?.window_reason || item?.reason || item?.window_phase || "N/A")}
-        </p>
-      </div>
-
-      <div className="featured-right">
-        <div className={`market-pill large ${typeClass}`}>{getTypeLabel(item)}</div>
-
-        <div className="featured-metrics-grid">
-          <MiniMetric label="IA" value={formatNum(item?.ai_score)} />
-          <MiniMetric label="Gol %" value={`${formatNum(item?.goal_probability)}%`} />
-          <MiniMetric
-            label={typeClass === "under" ? "Under %" : "Over %"}
-            value={`${formatNum(typeClass === "under" ? item?.under_probability : item?.over_probability)}%`}
-          />
-          <MiniMetric label="Señal" value={formatNum(item?.signal_score)} />
-          <MiniMetric label="Decisión" value={formatNum(item?.decision_score)} />
-          <MiniMetric label="Rango" value={safeText(item?.rank || "N/A")} strong />
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -691,16 +917,7 @@ function DetailView({ item }) {
           <StatBar label="Signal Score" value={item?.signal_score} />
         </div>
 
-        <div className="premium-card">
-          <h2>Estadísticas del partido</h2>
-          <InfoRow label="Marcador" value={item?.score || "0-0"} />
-          <InfoRow label="Tiros" value={item?.shots ?? "N/A"} />
-          <InfoRow label="Tiros al arco" value={item?.shots_on_target ?? "N/A"} />
-          <InfoRow label="Corners" value={item?.corners ?? "N/A"} />
-          <InfoRow label="Ataques peligrosos" value={item?.dangerous_attacks ?? "N/A"} />
-          <InfoRow label="xG" value={item?.xg || item?.xG || "N/A"} />
-          <InfoRow label="Rojas" value={item?.red_cards ?? "N/A"} />
-        </div>
+        <MatchStatsCard item={item} />
 
         <div className="premium-card">
           <h2>Riesgo / Value</h2>
@@ -712,19 +929,205 @@ function DetailView({ item }) {
           <InfoRow label="Value Category" value={item?.value_category || "N/A"} />
         </div>
 
+        <AuxiliaryAnalysisCard item={item} />
+
+        <NextGoalCard item={item} />
+
         <div className="premium-card">
           <h2>Eventos del partido</h2>
           {events.length === 0 ? (
             <div className="empty-box">No hay eventos disponibles para este partido.</div>
           ) : (
             <div className="event-list">
-              {events.slice(-10).reverse().map((event, index) => (
+              {events.slice(-12).reverse().map((event, index) => (
                 <EventRow key={index} event={event} />
               ))}
             </div>
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function MatchStatsCard({ item }) {
+  const homeStats = item?.home_stats || {};
+  const awayStats = item?.away_stats || {};
+
+  return (
+    <div className="premium-card">
+      <h2>Estadísticas del partido</h2>
+
+      <InfoRow label="Marcador" value={item?.score || "0-0"} />
+      <InfoRow label="Tiros totales" value={item?.shots ?? "N/A"} />
+      <InfoRow label="Tiros al arco" value={item?.shots_on_target ?? "N/A"} />
+      <InfoRow label="Corners" value={item?.corners ?? "N/A"} />
+      <InfoRow label="Ataques peligrosos" value={item?.dangerous_attacks ?? "N/A"} />
+      <InfoRow label="xG" value={item?.xg || item?.xG || "N/A"} />
+      <InfoRow label="Rojas" value={item?.red_cards ?? "N/A"} />
+      <InfoRow label="Posesión local" value={formatPossession(item?.possession_home || homeStats?.possession)} />
+      <InfoRow label="Posesión visita" value={formatPossession(item?.possession_away || awayStats?.possession)} />
+
+      <div className="team-stats-compare">
+        <TeamStatCompare
+          label="Tiros"
+          home={homeStats?.shots}
+          away={awayStats?.shots}
+        />
+        <TeamStatCompare
+          label="Tiros arco"
+          home={homeStats?.shots_on_target}
+          away={awayStats?.shots_on_target}
+        />
+        <TeamStatCompare
+          label="Corners"
+          home={homeStats?.corners}
+          away={awayStats?.corners}
+        />
+        <TeamStatCompare
+          label="Ataques peligrosos"
+          home={homeStats?.dangerous_attacks}
+          away={awayStats?.dangerous_attacks}
+        />
+        <TeamStatCompare
+          label="xG"
+          home={homeStats?.xg || homeStats?.xG}
+          away={awayStats?.xg || awayStats?.xG}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TeamStatCompare({ label, home, away }) {
+  const h = Number(home || 0);
+  const a = Number(away || 0);
+  const total = h + a;
+  const homePct = total > 0 ? (h / total) * 100 : 50;
+  const awayPct = total > 0 ? (a / total) * 100 : 50;
+
+  return (
+    <div className="team-stat-compare">
+      <div className="team-stat-values">
+        <b>{formatCleanNumber(h)}</b>
+        <span>{label}</span>
+        <b>{formatCleanNumber(a)}</b>
+      </div>
+
+      <div className="team-stat-bars">
+        <div className="home-bar" style={{ width: `${homePct}%` }} />
+        <div className="away-bar" style={{ width: `${awayPct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function AuxiliaryAnalysisCard({ item }) {
+  const hasAny =
+    item?.timeline_ready ||
+    item?.deep_analysis_enabled ||
+    item?.player_analysis_enabled ||
+    item?.signal_life_status ||
+    item?.deep_analysis_summary ||
+    item?.player_analysis_summary;
+
+  return (
+    <div className="premium-card">
+      <h2>Análisis auxiliar live</h2>
+
+      {!hasAny ? (
+        <div className="empty-box">
+          Sin análisis auxiliar disponible todavía para este partido.
+        </div>
+      ) : (
+        <>
+          <InfoRow label="Vida señal" value={item?.signal_life_status || item?.deep_signal_life_status} />
+          <InfoRow label="Resumen timeline" value={item?.timeline_summary} />
+          <InfoRow label="Análisis profundo" value={item?.deep_analysis_summary} />
+          <InfoRow label="Jugadores" value={item?.player_analysis_summary} />
+          <InfoRow label="Proyección" value={item?.deep_projection_bias} />
+          <InfoRow label="Confianza proyección" value={formatPercent(item?.deep_projection_confidence)} />
+          <InfoRow label="Ventana proyección" value={item?.deep_projection_window} />
+          <InfoRow label="Riesgo gol tardío" value={item?.late_goal_risk} />
+          <InfoRow label="Riesgo retención" value={item?.retention_risk} />
+
+          <div className="trend-grid">
+            <MiniMetric label="Presión" value={safeText(item?.pressure_trend || item?.deep_pressure_trend)} />
+            <MiniMetric label="Ritmo" value={safeText(item?.rhythm_trend || item?.deep_rhythm_trend)} />
+            <MiniMetric label="Amenaza" value={safeText(item?.goal_threat_trend || item?.deep_goal_threat_trend)} />
+            <MiniMetric label="Snapshots" value={safeText(item?.timeline_snapshots)} />
+          </div>
+
+          <DeltaBlock title="Delta 3m" data={item?.delta_3m} />
+          <DeltaBlock title="Delta 5m" data={item?.delta_5m} />
+          <DeltaBlock title="Delta 10m" data={item?.delta_10m} />
+
+          <AlertList title="Alertas tácticas" items={item?.deep_tactical_alerts} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function DeltaBlock({ title, data }) {
+  if (!data || typeof data !== "object" || Object.keys(data).length === 0) {
+    return null;
+  }
+
+  const keys = [
+    ["pressure_index", "Presión"],
+    ["rhythm_index", "Ritmo"],
+    ["goal_window_score", "Ventana gol"],
+    ["shots_on_target", "Tiros arco"],
+    ["corners", "Corners"],
+    ["dangerous_attacks", "Ataques"],
+  ];
+
+  return (
+    <div className="delta-block">
+      <h4>{title}</h4>
+      <div className="delta-grid">
+        {keys.map(([key, label]) => (
+          <MiniMetric
+            key={key}
+            label={label}
+            value={formatDelta(data?.[key])}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AlertList({ title, items }) {
+  const list = Array.isArray(items) ? items : [];
+
+  if (list.length === 0) return null;
+
+  return (
+    <div className="alert-list">
+      <h4>{title}</h4>
+      {list.slice(0, 8).map((item, index) => (
+        <span key={`${item}-${index}`}>{safeText(item)}</span>
+      ))}
+    </div>
+  );
+}
+
+function NextGoalCard({ item }) {
+  return (
+    <div className="premium-card">
+      <h2>Próximo gol / Retención</h2>
+
+      <InfoRow label="Sesgo próximo gol" value={item?.next_goal_bias} />
+      <InfoRow label="Confianza próximo gol" value={formatPercent(item?.next_goal_confidence)} />
+      <InfoRow label="Prob. mantener marcador" value={formatPercent(item?.score_hold_probability)} />
+      <InfoRow label="Estado próximo gol" value={item?.next_goal_status} />
+      <InfoRow label="Soporte mercado" value={item?.next_goal_support} />
+      <InfoRow label="Consejo auxiliar" value={item?.next_goal_helper_advice} />
+      <InfoRow label="Alerta" value={item?.next_goal_helper_warning || item?.next_goal_warning} />
+      <InfoRow label="Presión local próximo gol" value={formatNum(item?.home_next_goal_pressure)} />
+      <InfoRow label="Presión visita próximo gol" value={formatNum(item?.away_next_goal_pressure)} />
     </div>
   );
 }
@@ -762,6 +1165,7 @@ function DecisionPanel({ item }) {
 
       <div className="decision-grid">
         <InfoRow label="Estado decisión" value={item?.decision_status} />
+        <InfoRow label="Estado MatchState" value={item?.match_state_status || item?.match_state || item?.state} />
         <InfoRow label="Revalidación" value={item?.revalidation_status} />
         <InfoRow label="Edad señal" value={item?.signal_age_label} />
         <InfoRow
@@ -770,6 +1174,7 @@ function DecisionPanel({ item }) {
         />
         <InfoRow label="Goles necesarios" value={item?.decision_needed_goals ?? "N/A"} />
         <InfoRow label="Aviso riesgo" value={item?.risk_reducer_status} />
+        <InfoRow label="Vida señal" value={item?.signal_life_status || item?.deep_signal_life_status} />
       </div>
 
       {[...warnings, ...reWarnings].length > 0 ? (
@@ -792,6 +1197,18 @@ function EventRow({ event }) {
     event?.time?.elapsed ??
     "-";
 
+  const teamName =
+    event?.team?.name ||
+    event?.team_name ||
+    event?.equipo ||
+    "";
+
+  const playerName =
+    event?.player?.name ||
+    event?.player_name ||
+    event?.jugador ||
+    "";
+
   let icon = "•";
   if (type.includes("GOAL")) icon = "⚽";
   else if (type.includes("RED")) icon = "🟥";
@@ -804,7 +1221,13 @@ function EventRow({ event }) {
       <span>{icon}</span>
       <b>{minute}'</b>
       <small>{safeText(type)}</small>
-      <em>{safeText(detail || "Evento del partido")}</em>
+      <em>
+        {safeText(
+          [teamName, playerName, detail || "Evento del partido"]
+            .filter(Boolean)
+            .join(" · ")
+        )}
+      </em>
     </div>
   );
 }
@@ -823,22 +1246,13 @@ function LiveMinute({ item }) {
   const baseMinute = Number(item?.minute ?? item?.minuto ?? 0);
   const receivedAt = Number(item?._panel_received_at || now);
   const elapsedSeconds = Math.max(0, Math.floor((now - receivedAt) / 1000));
-  const liveMinute = Math.min(120, baseMinute + Math.floor(elapsedSeconds / 60));
+  const liveMinute = Math.min(130, baseMinute + Math.floor(elapsedSeconds / 60));
   const liveSeconds = elapsedSeconds % 60;
 
   return (
     <span className={`live-minute ${elapsedSeconds > 45 ? "delayed" : ""}`}>
       EN VIVO · Min {liveMinute}:{String(liveSeconds).padStart(2, "0")}
     </span>
-  );
-}
-
-function ComingSoon({ title }) {
-  return (
-    <section className="coming-soon">
-      <h2>{title}</h2>
-      <p>Esta sección está lista para conectarse al siguiente módulo.</p>
-    </section>
   );
 }
 
@@ -1014,6 +1428,8 @@ function normalizeMatchItem(item = {}) {
     away_logo: item?.away_logo || item?.away_team_logo || item?.visitor_logo,
     league_logo: item?.league_logo || item?.competition_logo,
     country_flag: item?.country_flag || item?.flag || item?.league_flag,
+    home_stats: item?.home_stats || {},
+    away_stats: item?.away_stats || {},
     _panel_received_at: Date.now(),
   };
 }
@@ -1073,29 +1489,53 @@ function getStrength(item) {
 }
 
 function getDecision(item) {
-  const status = String(item?.decision_status || "").toUpperCase();
-  const label = item?.decision_label || "SIN DECISIÓN";
-  const advice =
+  const status = String(
+    item?.decision_status ||
+      item?.deep_signal_life_status ||
+      item?.signal_life_status ||
+      ""
+  ).toUpperCase();
+
+  const backendLabel = item?.decision_label;
+  const backendAdvice =
     item?.decision_advice ||
     item?.revalidation_advice ||
-    "Lectura pendiente.";
-  const reason =
-    item?.decision_reason ||
-    item?.revalidation_reason ||
-    advice;
+    item?.deep_analysis_summary ||
+    item?.timeline_summary ||
+    item?.next_goal_helper_advice;
 
+  let label = backendLabel || "OBSERVAR";
+  let advice = backendAdvice || "Lectura pendiente.";
   let className = "neutral";
 
-  if (status === "ENTER_OK") className = "good";
-  else if (status === "WAIT_CONFIRMATION") className = "warning";
-  else if (status === "NO_REENTRY") className = "danger";
-  else if (status === "AVOID") className = "danger";
+  if (status === "ENTER_OK" || status === "VALID" || status === "ACTIVE_DANGER") {
+    label = backendLabel || "ENTRAR / SEÑAL VIVA";
+    className = "good";
+  } else if (
+    status === "WAIT_CONFIRMATION" ||
+    status === "NEEDS_CONFIRMATION" ||
+    status === "AGING"
+  ) {
+    label = backendLabel || "ESPERAR CONFIRMACIÓN";
+    className = "warning";
+  } else if (
+    status === "NO_REENTRY" ||
+    status === "AVOID" ||
+    status === "WEAKENING"
+  ) {
+    label = backendLabel || "NO REENTRAR / EVITAR";
+    className = "danger";
+  }
 
   return {
     status,
     label,
     advice,
-    reason,
+    reason:
+      item?.decision_reason ||
+      item?.revalidation_reason ||
+      item?.deep_analysis_summary ||
+      advice,
     class: className,
   };
 }
@@ -1116,10 +1556,17 @@ function getConfidence(item) {
   const goal = Number(item?.goal_probability || 0);
   const over = Number(item?.over_probability || 0);
   const under = Number(item?.under_probability || 0);
+  const projection = Number(item?.deep_projection_confidence || 0);
   const market = String(item?.market || item?.side || "").toUpperCase();
   const marketProbability = market.includes("UNDER") ? under : over;
 
-  let score = ai * 0.3 + signal * 0.3 + goal * 0.2 + marketProbability * 0.15;
+  let score =
+    ai * 0.28 +
+    signal * 0.28 +
+    goal * 0.18 +
+    marketProbability * 0.14 +
+    projection * 0.12;
+
   score = Math.max(0, Math.min(100, score));
 
   let label = "MUY BAJA";
@@ -1139,6 +1586,14 @@ function getFinalRecommendation(item, confidence) {
   const decision = getDecision(item);
 
   if (item?.decision_label || item?.decision_status) {
+    return {
+      label: decision.label,
+      reason: decision.reason || decision.advice,
+      class: decision.class,
+    };
+  }
+
+  if (decision.status) {
     return {
       label: decision.label,
       reason: decision.reason || decision.advice,
@@ -1210,9 +1665,17 @@ function confidenceClass(label) {
 function safeTypeClass(item) {
   const market = String(item?.market || item?.side || "").toUpperCase();
   const type = String(item?.type || "").toUpperCase();
+  const projection = String(item?.deep_projection_bias || "").toUpperCase();
+  const nextSupport = String(item?.next_goal_support || "").toUpperCase();
   const over = Number(item?.over_probability || 0);
 
-  if (market.includes("UNDER") || type.includes("UNDER") || over <= 40) {
+  if (
+    market.includes("UNDER") ||
+    type.includes("UNDER") ||
+    projection === "UNDER" ||
+    nextSupport.includes("UNDER") ||
+    over <= 40
+  ) {
     return "under";
   }
 
@@ -1221,6 +1684,8 @@ function safeTypeClass(item) {
     market.includes("MÁS") ||
     market.includes("MAS") ||
     type.includes("OVER") ||
+    projection === "OVER" ||
+    projection === "OVER_WATCH" ||
     over >= 60
   ) {
     return "over";
@@ -1340,8 +1805,85 @@ function buildKey(item, index) {
   );
 }
 
+function groupPerformanceBy(list, getLabel) {
+  const map = new Map();
+
+  for (const item of Array.isArray(list) ? list : []) {
+    const label = safeText(getLabel(item));
+    const result = resultType(item);
+
+    if (!map.has(label)) {
+      map.set(label, {
+        label,
+        total: 0,
+        wins: 0,
+        losses: 0,
+        pending: 0,
+        winRate: 0,
+      });
+    }
+
+    const row = map.get(label);
+    row.total += 1;
+
+    if (result === "win") row.wins += 1;
+    else if (result === "loss") row.losses += 1;
+    else row.pending += 1;
+  }
+
+  return Array.from(map.values())
+    .map((row) => ({
+      ...row,
+      winRate: row.wins + row.losses > 0 ? (row.wins / (row.wins + row.losses)) * 100 : 0,
+    }))
+    .sort((a, b) => b.total - a.total);
+}
+
+function minuteBucket(value) {
+  const minute = Number(value || 0);
+
+  if (minute < 15) return "0-14'";
+  if (minute < 30) return "15-29'";
+  if (minute < 45) return "30-44'";
+  if (minute < 60) return "45-59'";
+  if (minute < 75) return "60-74'";
+  if (minute < 90) return "75-89'";
+
+  return "90+";
+}
+
+function average(values) {
+  const nums = values.map(Number).filter((x) => Number.isFinite(x) && x > 0);
+  if (nums.length === 0) return 0;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+
 function formatNum(value) {
   return Number(value || 0).toFixed(1);
+}
+
+function formatCleanNumber(value) {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n)) return "0";
+  if (Math.abs(n - Math.round(n)) < 0.001) return String(Math.round(n));
+  return n.toFixed(2);
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || value === "") return "N/A";
+  return `${formatNum(value)}%`;
+}
+
+function formatPossession(value) {
+  if (value === null || value === undefined || value === "") return "N/A";
+  return `${formatNum(value)}%`;
+}
+
+function formatDelta(value) {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n)) return "0.0";
+  if (n > 0) return `+${n.toFixed(1)}`;
+  return n.toFixed(1);
 }
 
 function safeText(value) {
@@ -1378,4 +1920,4 @@ function countryToEmoji(country) {
   if (c.includes("venezuela")) return "🇻🇪";
 
   return "🏳️";
-                                 }
+}
