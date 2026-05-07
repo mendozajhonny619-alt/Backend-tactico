@@ -2377,3 +2377,220 @@ body {
     font-size: 56px;
   }
 }
+
+/* =========================================================
+   JHONNY ELITE V16 — NUEVAS SECCIONES App.jsx
+   Stats / Config / Match Stats / Auxiliary / Next Goal
+   ========================================================= */
+
+.stats-screen,
+.config-screen {
+  display: grid;
+  gap: 20px;
+}
+
+.panel-title-row small {
+  color: #aebed0;
+  font-weight: 800;
+}
+
+.stats-grid-pro,
+.config-grid-pro {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  gap: 20px;
+}
+
+.stats-table {
+  display: grid;
+  gap: 10px;
+}
+
+.stats-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(3, 12, 24, 0.75);
+  border: 1px solid rgba(120, 160, 210, 0.18);
+}
+
+.stats-row span {
+  font-weight: 900;
+  color: #eaf7ff;
+}
+
+.stats-row b {
+  color: #00ffcc;
+}
+
+.stats-row small {
+  color: #aebed0;
+  font-weight: 800;
+}
+
+.config-option,
+.config-toggle {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px;
+  margin-bottom: 10px;
+  border-radius: 12px;
+  background: rgba(3, 12, 24, 0.72);
+  border: 1px solid rgba(120, 160, 210, 0.18);
+}
+
+.config-option {
+  display: grid;
+}
+
+.config-option.active {
+  border-color: rgba(0, 255, 204, 0.45);
+  background: rgba(0, 255, 204, 0.08);
+}
+
+.config-option b,
+.config-toggle span {
+  color: #fff;
+  font-weight: 950;
+}
+
+.config-option span {
+  color: #aebed0;
+  font-weight: 700;
+}
+
+.toggle-on {
+  color: #00ff66;
+}
+
+.toggle-off {
+  color: #ff4040;
+}
+
+.card-extra-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.card-extra-flags span {
+  font-size: 11px;
+  font-weight: 900;
+  color: #dffcff;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: rgba(0, 255, 204, 0.08);
+  border: 1px solid rgba(0, 255, 204, 0.18);
+}
+
+.team-stats-compare {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.team-stat-compare {
+  display: grid;
+  gap: 7px;
+}
+
+.team-stat-values {
+  display: grid;
+  grid-template-columns: 60px 1fr 60px;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.team-stat-values b {
+  color: #fff;
+  font-size: 16px;
+}
+
+.team-stat-values span {
+  color: #aebed0;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.team-stat-bars {
+  display: flex;
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(120, 160, 210, 0.16);
+}
+
+.home-bar {
+  background: linear-gradient(90deg, #00ffcc, #00ff66);
+}
+
+.away-bar {
+  background: linear-gradient(90deg, #ff4040, #ff8c8c);
+}
+
+.trend-grid,
+.delta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.delta-block {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(3, 12, 24, 0.62);
+  border: 1px solid rgba(120, 160, 210, 0.18);
+}
+
+.delta-block h4,
+.alert-list h4 {
+  margin: 0 0 10px;
+  color: #00ffcc;
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.alert-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.alert-list h4 {
+  width: 100%;
+}
+
+.alert-list span {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(255, 196, 0, 0.11);
+  border: 1px solid rgba(255, 196, 0, 0.28);
+  color: #ffe7a3;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+@media (max-width: 900px) {
+  .stats-grid-pro,
+  .config-grid-pro {
+    grid-template-columns: 1fr;
+  }
+
+  .stats-row {
+    grid-template-columns: 1fr;
+  }
+
+  .trend-grid,
+  .delta-grid {
+    grid-template-columns: 1fr;
+  }
+}
