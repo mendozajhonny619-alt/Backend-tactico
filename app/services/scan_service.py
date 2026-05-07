@@ -14,6 +14,9 @@ from app.services.elite_analyst_filter import EliteAnalystFilter
 from app.services.match_scan_enhancer import MatchScanEnhancer
 from app.services.match_reading_enhancer import MatchReadingEnhancer
 from app.services.next_goal_context_helper import NextGoalContextHelper
+from app.services.match_timeline_tracker import MatchTimelineTracker
+from app.services.deep_live_match_analyzer import DeepLiveMatchAnalyzer
+from app.services.player_live_analyzer import PlayerLiveAnalyzer
 
 from app.engines.market_engine import MarketEngine
 from app.engines.value_engine import ValueEngine
@@ -36,6 +39,7 @@ class ScanService:
     - Filtro final tipo analista élite antes de publicar.
     - Mejora lectura del partido con MatchReadingEnhancer sin bloquear señales.
     - Agrega lectura auxiliar de próximo gol sin modificar decisiones.
+    - Agrega timeline/análisis profundo/jugadores como lectura auxiliar sin modificar decisiones.
     """
 
     def __init__(self) -> None:
@@ -56,6 +60,9 @@ class ScanService:
         self.reading_enhancer = MatchReadingEnhancer()
         self.next_goal_engine = NextGoalSideEngine()
         self.next_goal_helper = NextGoalContextHelper()
+        self.timeline_tracker = MatchTimelineTracker()
+        self.deep_live_analyzer = DeepLiveMatchAnalyzer()
+        self.player_live_analyzer = PlayerLiveAnalyzer()
 
     def scan(self, live_matches: List[Dict[str, Any]]) -> Dict[str, Any]:
         candidates: List[Dict[str, Any]] = []
@@ -124,6 +131,7 @@ class ScanService:
             )
             match.update(next_goal)
             match.update(next_goal_context)
+            self._apply_auxiliary_live_analysis(match, context, ai)
 
             if not self._should_continue_despite_low_data(match, context, ai):
                 return self._observe(
@@ -148,6 +156,7 @@ class ScanService:
             )
             match.update(next_goal)
             match.update(next_goal_context)
+            self._apply_auxiliary_live_analysis(match, context, ai)
 
             if not self._should_continue_despite_low_data(match, context, ai):
                 return self._observe(
@@ -172,6 +181,7 @@ class ScanService:
         )
         match.update(next_goal)
         match.update(next_goal_context)
+        self._apply_auxiliary_live_analysis(match, context, ai)
 
         if str(context.get("data_quality") or "LOW").upper() == "LOW":
             if not self._should_continue_despite_low_data(match, context, ai):
@@ -769,6 +779,35 @@ class ScanService:
             "risk_flags": [],
         }
 
+    def _apply_auxiliary_live_analysis(
+        self,
+        match: Dict[str, Any],
+        context: Dict[str, Any],
+        ai: Dict[str, Any],
+    ) -> None:
+        timeline = self.timeline_tracker.update(
+            match=match,
+            context=context,
+            ai=ai,
+        )
+
+        deep_analysis = self.deep_live_analyzer.analyze(
+            match=match,
+            context=context,
+            ai=ai,
+            timeline=timeline,
+        )
+
+        player_analysis = self.player_live_analyzer.analyze(
+            match=match,
+            context=context,
+            ai=ai,
+        )
+
+        match.update(timeline)
+        match.update(deep_analysis)
+        match.update(player_analysis)
+
     def _should_continue_despite_low_data(
         self,
         match: Dict[str, Any],
@@ -965,6 +1004,43 @@ class ScanService:
             "next_goal_helper_warning": match.get("next_goal_helper_warning"),
         }
 
+    def _auxiliary_live_fields(self, match: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "timeline_ready": match.get("timeline_ready"),
+            "timeline_snapshots": match.get("timeline_snapshots"),
+            "delta_3m": match.get("delta_3m"),
+            "delta_5m": match.get("delta_5m"),
+            "delta_10m": match.get("delta_10m"),
+            "pressure_trend": match.get("pressure_trend"),
+            "rhythm_trend": match.get("rhythm_trend"),
+            "goal_threat_trend": match.get("goal_threat_trend"),
+            "signal_life_status": match.get("signal_life_status"),
+            "timeline_summary": match.get("timeline_summary"),
+            "deep_analysis_enabled": match.get("deep_analysis_enabled"),
+            "deep_projection_bias": match.get("deep_projection_bias"),
+            "deep_projection_confidence": match.get("deep_projection_confidence"),
+            "deep_projection_window": match.get("deep_projection_window"),
+            "late_goal_risk": match.get("late_goal_risk"),
+            "retention_risk": match.get("retention_risk"),
+            "deep_pressure_trend": match.get("deep_pressure_trend"),
+            "deep_rhythm_trend": match.get("deep_rhythm_trend"),
+            "deep_goal_threat_trend": match.get("deep_goal_threat_trend"),
+            "deep_signal_life_status": match.get("deep_signal_life_status"),
+            "deep_event_profile": match.get("deep_event_profile"),
+            "deep_tactical_alerts": match.get("deep_tactical_alerts"),
+            "deep_analysis_summary": match.get("deep_analysis_summary"),
+            "player_analysis_enabled": match.get("player_analysis_enabled"),
+            "player_data_available": match.get("player_data_available"),
+            "player_attacking_side": match.get("player_attacking_side"),
+            "player_vulnerability_side": match.get("player_vulnerability_side"),
+            "player_pressure_signal": match.get("player_pressure_signal"),
+            "player_fatigue_signal": match.get("player_fatigue_signal"),
+            "home_player_profile": match.get("home_player_profile"),
+            "away_player_profile": match.get("away_player_profile"),
+            "key_live_players": match.get("key_live_players"),
+            "player_analysis_summary": match.get("player_analysis_summary"),
+        }
+
     def _build_signal(
         self,
         match: Dict[str, Any],
@@ -1063,6 +1139,7 @@ class ScanService:
 
         signal.update(self._reading_fields(match))
         signal.update(self._next_goal_fields(match))
+        signal.update(self._auxiliary_live_fields(match))
         return signal
 
     def _build_opportunity_payload(
@@ -1148,6 +1225,7 @@ class ScanService:
 
         payload.update(self._reading_fields(match))
         payload.update(self._next_goal_fields(match))
+        payload.update(self._auxiliary_live_fields(match))
         return payload
 
     def _block(
