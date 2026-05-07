@@ -5,6 +5,7 @@ import EliteMetricCard from "./components/EliteMetricCard";
 import MatchProPanel from "./components/MatchProPanel";
 import EliteAnalyticsPanel from "./components/EliteAnalyticsPanel";
 import MatchMomentumChart from "./components/MatchMomentumChart";
+import XGChart from "./components/XGChart";
 
 const API = "https://backend-tactico-lqok.onrender.com";
 
@@ -331,8 +332,8 @@ export default function App() {
             )}
 
             {activeTab === "stats" && (
-  <EliteAnalyticsPanel history={history} signals={uniqueSignals} />
-)}
+              <EliteAnalyticsPanel history={history} signals={uniqueSignals} />
+            )}
 
             {activeTab === "config" && <ConfigView />}
           </div>
@@ -393,53 +394,12 @@ function ResultsProView({ history, summary }) {
       </div>
 
       <div className="performance-grid">
-        <PerformanceCard
-          icon="✅"
-          title="Aciertos"
-          value={summary.wins}
-          sub={`${summary.total ? ((summary.wins / summary.total) * 100).toFixed(1) : "0.0"}%`}
-          tone="win"
-        />
-
-        <PerformanceCard
-          icon="❌"
-          title="Fallos"
-          value={summary.losses}
-          sub={`${summary.total ? ((summary.losses / summary.total) * 100).toFixed(1) : "0.0"}%`}
-          tone="loss"
-        />
-
-        <PerformanceCard
-          icon="⏳"
-          title="Pendientes"
-          value={summary.pending}
-          sub={`${summary.total ? ((summary.pending / summary.total) * 100).toFixed(1) : "0.0"}%`}
-          tone="pending"
-        />
-
-        <PerformanceCard
-          icon="🎯"
-          title="Precisión"
-          value={`${summary.precision.toFixed(1)}%`}
-          sub={`(${summary.wins} / ${summary.wins + summary.losses})`}
-          tone="precision"
-        />
-
-        <PerformanceCard
-          icon="📈"
-          title="ROI"
-          value={`${summary.roi >= 0 ? "+" : ""}${summary.roi.toFixed(2)}%`}
-          sub="Beneficio"
-          tone="roi"
-        />
-
-        <PerformanceCard
-          icon="🔥"
-          title="Racha actual"
-          value={summary.streak}
-          sub="Aciertos acumulados"
-          tone="streak"
-        />
+        <PerformanceCard icon="✅" title="Aciertos" value={summary.wins} sub={`${summary.total ? ((summary.wins / summary.total) * 100).toFixed(1) : "0.0"}%`} tone="win" />
+        <PerformanceCard icon="❌" title="Fallos" value={summary.losses} sub={`${summary.total ? ((summary.losses / summary.total) * 100).toFixed(1) : "0.0"}%`} tone="loss" />
+        <PerformanceCard icon="⏳" title="Pendientes" value={summary.pending} sub={`${summary.total ? ((summary.pending / summary.total) * 100).toFixed(1) : "0.0"}%`} tone="pending" />
+        <PerformanceCard icon="🎯" title="Precisión" value={`${summary.precision.toFixed(1)}%`} sub={`(${summary.wins} / ${summary.wins + summary.losses})`} tone="precision" />
+        <PerformanceCard icon="📈" title="ROI" value={`${summary.roi >= 0 ? "+" : ""}${summary.roi.toFixed(2)}%`} sub="Beneficio" tone="roi" />
+        <PerformanceCard icon="🔥" title="Racha actual" value={summary.streak} sub="Aciertos acumulados" tone="streak" />
       </div>
 
       <div className="history-panel-pro">
@@ -461,91 +421,6 @@ function ResultsProView({ history, summary }) {
             ))}
           </div>
         )}
-      </div>
-    </section>
-  );
-}
-
-function StatsView({ history, signals, opportunities, summary }) {
-  const allLive = [
-    ...(Array.isArray(signals) ? signals : []),
-    ...(Array.isArray(opportunities?.over) ? opportunities.over : []),
-    ...(Array.isArray(opportunities?.under) ? opportunities.under : []),
-    ...(Array.isArray(opportunities?.observe) ? opportunities.observe : []),
-    ...(Array.isArray(opportunities?.rejected) ? opportunities.rejected : []),
-  ];
-
-  const byMarket = groupPerformanceBy(history, (item) => getTypeLabel(item));
-  const byRank = groupPerformanceBy(history, (item) => safeText(item?.rank || "N/A"));
-  const byLeague = groupPerformanceBy(history, (item) => safeText(item?.league || "Liga no disponible"));
-  const byMinute = groupPerformanceBy(history, (item) => minuteBucket(item?.minute));
-
-  const avgSignal = average(allLive.map((x) => Number(x?.signal_score || 0)));
-  const avgAI = average(allLive.map((x) => Number(x?.ai_score || 0)));
-  const avgGoal = average(allLive.map((x) => Number(x?.goal_probability || 0)));
-
-  return (
-    <section className="stats-screen">
-      <div className="panel-title-row">
-        <h2>📊 ESTADÍSTICAS Y RENDIMIENTO REAL</h2>
-        <small>Datos calculados solamente desde historial, señales y oportunidades reales.</small>
-      </div>
-
-      <div className="performance-grid">
-        <PerformanceCard
-          icon="📌"
-          title="Total historial"
-          value={summary.total}
-          sub="Señales guardadas"
-          tone="precision"
-        />
-
-        <PerformanceCard
-          icon="🎯"
-          title="Win Rate"
-          value={`${summary.precision.toFixed(1)}%`}
-          sub={`${summary.wins} aciertos / ${summary.losses} fallos`}
-          tone="win"
-        />
-
-        <PerformanceCard
-          icon="⚡"
-          title="Señales live"
-          value={signals.length}
-          sub="Actualmente activas"
-          tone="streak"
-        />
-
-        <PerformanceCard
-          icon="🧠"
-          title="IA media live"
-          value={formatNum(avgAI)}
-          sub="Promedio real visible"
-          tone="precision"
-        />
-
-        <PerformanceCard
-          icon="🔥"
-          title="Gol % medio"
-          value={`${formatNum(avgGoal)}%`}
-          sub="Promedio live"
-          tone="roi"
-        />
-
-        <PerformanceCard
-          icon="📈"
-          title="Signal medio"
-          value={formatNum(avgSignal)}
-          sub="Fuerza media"
-          tone="pending"
-        />
-      </div>
-
-      <div className="stats-grid-pro">
-        <StatsTable title="Rendimiento por mercado" rows={byMarket} />
-        <StatsTable title="Rendimiento por rango" rows={byRank} />
-        <StatsTable title="Rendimiento por minuto" rows={byMinute} />
-        <StatsTable title="Rendimiento por liga" rows={byLeague.slice(0, 8)} />
       </div>
     </section>
   );
@@ -613,30 +488,6 @@ function ConfigView() {
         </div>
       </div>
     </section>
-  );
-}
-
-function StatsTable({ title, rows }) {
-  return (
-    <div className="premium-card">
-      <h2>{title}</h2>
-
-      {!rows || rows.length === 0 ? (
-        <div className="empty-box">No hay datos suficientes.</div>
-      ) : (
-        <div className="stats-table">
-          {rows.map((row, index) => (
-            <div className="stats-row" key={`${row.label}-${index}`}>
-              <span>{row.label}</span>
-              <b>{row.winRate.toFixed(1)}%</b>
-              <small>
-                {row.wins}G / {row.losses}P · {row.total} total
-              </small>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -892,9 +743,7 @@ function DetailView({ item }) {
             <li>Estado mercado: {safeText(item?.market_status || "N/A")}</li>
           </ul>
         </div>
-          <div className="premium-card full-span">
-  <MatchMomentumChart item={item} />
-</div>
+
         <div className="premium-card">
           <h2>Lectura IA</h2>
           <InfoRow label="Ventana" value={item?.window_phase} />
@@ -914,6 +763,14 @@ function DetailView({ item }) {
           <StatBar label="Probabilidad OVER" value={item?.over_probability} />
           <StatBar label="Probabilidad UNDER" value={item?.under_probability} />
           <StatBar label="Signal Score" value={item?.signal_score} />
+        </div>
+
+        <div className="premium-card full-span">
+          <MatchMomentumChart item={item} />
+        </div>
+
+        <div className="premium-card full-span">
+          <XGChart item={item} />
         </div>
 
         <MatchStatsCard item={item} />
@@ -968,31 +825,11 @@ function MatchStatsCard({ item }) {
       <InfoRow label="Posesión visita" value={formatPossession(item?.possession_away || awayStats?.possession)} />
 
       <div className="team-stats-compare">
-        <TeamStatCompare
-          label="Tiros"
-          home={homeStats?.shots}
-          away={awayStats?.shots}
-        />
-        <TeamStatCompare
-          label="Tiros arco"
-          home={homeStats?.shots_on_target}
-          away={awayStats?.shots_on_target}
-        />
-        <TeamStatCompare
-          label="Corners"
-          home={homeStats?.corners}
-          away={awayStats?.corners}
-        />
-        <TeamStatCompare
-          label="Ataques peligrosos"
-          home={homeStats?.dangerous_attacks}
-          away={awayStats?.dangerous_attacks}
-        />
-        <TeamStatCompare
-          label="xG"
-          home={homeStats?.xg || homeStats?.xG}
-          away={awayStats?.xg || awayStats?.xG}
-        />
+        <TeamStatCompare label="Tiros" home={homeStats?.shots} away={awayStats?.shots} />
+        <TeamStatCompare label="Tiros arco" home={homeStats?.shots_on_target} away={awayStats?.shots_on_target} />
+        <TeamStatCompare label="Corners" home={homeStats?.corners} away={awayStats?.corners} />
+        <TeamStatCompare label="Ataques peligrosos" home={homeStats?.dangerous_attacks} away={awayStats?.dangerous_attacks} />
+        <TeamStatCompare label="xG" home={homeStats?.xg || homeStats?.xG} away={awayStats?.xg || awayStats?.xG} />
       </div>
     </div>
   );
@@ -1087,11 +924,7 @@ function DeltaBlock({ title, data }) {
       <h4>{title}</h4>
       <div className="delta-grid">
         {keys.map(([key, label]) => (
-          <MiniMetric
-            key={key}
-            label={label}
-            value={formatDelta(data?.[key])}
-          />
+          <MiniMetric key={key} label={label} value={formatDelta(data?.[key])} />
         ))}
       </div>
     </div>
@@ -1144,12 +977,8 @@ function DecisionMini({ item, big = false }) {
 
 function DecisionPanel({ item }) {
   const decision = getDecision(item);
-  const warnings = Array.isArray(item?.decision_warnings)
-    ? item.decision_warnings
-    : [];
-  const reWarnings = Array.isArray(item?.revalidation_warnings)
-    ? item.revalidation_warnings
-    : [];
+  const warnings = Array.isArray(item?.decision_warnings) ? item.decision_warnings : [];
+  const reWarnings = Array.isArray(item?.revalidation_warnings) ? item.revalidation_warnings : [];
 
   return (
     <div className={`decision-panel ${decision.class}`}>
@@ -1167,10 +996,7 @@ function DecisionPanel({ item }) {
         <InfoRow label="Estado MatchState" value={item?.match_state_status || item?.match_state || item?.state} />
         <InfoRow label="Revalidación" value={item?.revalidation_status} />
         <InfoRow label="Edad señal" value={item?.signal_age_label} />
-        <InfoRow
-          label="Minutos activa"
-          value={item?.active_minutes ?? item?.decision_active_minutes}
-        />
+        <InfoRow label="Minutos activa" value={item?.active_minutes ?? item?.decision_active_minutes} />
         <InfoRow label="Goles necesarios" value={item?.decision_needed_goals ?? "N/A"} />
         <InfoRow label="Aviso riesgo" value={item?.risk_reducer_status} />
         <InfoRow label="Vida señal" value={item?.signal_life_status || item?.deep_signal_life_status} />
@@ -1190,23 +1016,9 @@ function DecisionPanel({ item }) {
 function EventRow({ event }) {
   const type = String(event?.type || event?.raw_type || "EVENTO").toUpperCase();
   const detail = event?.detail || event?.comentario || "";
-  const minute =
-    event?.minute ??
-    event?.elapsed ??
-    event?.time?.elapsed ??
-    "-";
-
-  const teamName =
-    event?.team?.name ||
-    event?.team_name ||
-    event?.equipo ||
-    "";
-
-  const playerName =
-    event?.player?.name ||
-    event?.player_name ||
-    event?.jugador ||
-    "";
+  const minute = event?.minute ?? event?.elapsed ?? event?.time?.elapsed ?? "-";
+  const teamName = event?.team?.name || event?.team_name || event?.equipo || "";
+  const playerName = event?.player?.name || event?.player_name || event?.jugador || "";
 
   let icon = "•";
   if (type.includes("GOAL")) icon = "⚽";
@@ -1221,11 +1033,7 @@ function EventRow({ event }) {
       <b>{minute}'</b>
       <small>{safeText(type)}</small>
       <em>
-        {safeText(
-          [teamName, playerName, detail || "Evento del partido"]
-            .filter(Boolean)
-            .join(" · ")
-        )}
+        {safeText([teamName, playerName, detail || "Evento del partido"].filter(Boolean).join(" · "))}
       </em>
     </div>
   );
@@ -1458,9 +1266,7 @@ function dedupeItems(list) {
       item?.signal_key ||
       item?.match_id ||
       item?.id ||
-      `${item?.match_name || ""}-${item?.market || item?.type || ""}-${
-        item?.minute || ""
-      }`;
+      `${item?.match_name || ""}-${item?.market || item?.type || ""}-${item?.minute || ""}`;
 
     if (!map.has(key)) {
       map.set(key, item);
@@ -1584,15 +1390,7 @@ function getConfidence(item) {
 function getFinalRecommendation(item, confidence) {
   const decision = getDecision(item);
 
-  if (item?.decision_label || item?.decision_status) {
-    return {
-      label: decision.label,
-      reason: decision.reason || decision.advice,
-      class: decision.class,
-    };
-  }
-
-  if (decision.status) {
+  if (item?.decision_label || item?.decision_status || decision.status) {
     return {
       label: decision.label,
       reason: decision.reason || decision.advice,
@@ -1713,27 +1511,9 @@ function resultType(item) {
       ""
   ).toUpperCase();
 
-  if (
-    text.includes("WIN") ||
-    text.includes("ACIERTO") ||
-    text.includes("ACERTADA") ||
-    text.includes("GAN")
-  ) {
-    return "win";
-  }
-
-  if (
-    text.includes("LOSS") ||
-    text.includes("FALLO") ||
-    text.includes("FALLIDA") ||
-    text.includes("PERD")
-  ) {
-    return "loss";
-  }
-
-  if (text.includes("ACTIVE") || text.includes("ACTIVO")) {
-    return "active";
-  }
+  if (text.includes("WIN") || text.includes("ACIERTO") || text.includes("ACERTADA") || text.includes("GAN")) return "win";
+  if (text.includes("LOSS") || text.includes("FALLO") || text.includes("FALLIDA") || text.includes("PERD")) return "loss";
+  if (text.includes("ACTIVE") || text.includes("ACTIVO")) return "active";
 
   return "pending";
 }
@@ -1804,59 +1584,6 @@ function buildKey(item, index) {
   );
 }
 
-function groupPerformanceBy(list, getLabel) {
-  const map = new Map();
-
-  for (const item of Array.isArray(list) ? list : []) {
-    const label = safeText(getLabel(item));
-    const result = resultType(item);
-
-    if (!map.has(label)) {
-      map.set(label, {
-        label,
-        total: 0,
-        wins: 0,
-        losses: 0,
-        pending: 0,
-        winRate: 0,
-      });
-    }
-
-    const row = map.get(label);
-    row.total += 1;
-
-    if (result === "win") row.wins += 1;
-    else if (result === "loss") row.losses += 1;
-    else row.pending += 1;
-  }
-
-  return Array.from(map.values())
-    .map((row) => ({
-      ...row,
-      winRate: row.wins + row.losses > 0 ? (row.wins / (row.wins + row.losses)) * 100 : 0,
-    }))
-    .sort((a, b) => b.total - a.total);
-}
-
-function minuteBucket(value) {
-  const minute = Number(value || 0);
-
-  if (minute < 15) return "0-14'";
-  if (minute < 30) return "15-29'";
-  if (minute < 45) return "30-44'";
-  if (minute < 60) return "45-59'";
-  if (minute < 75) return "60-74'";
-  if (minute < 90) return "75-89'";
-
-  return "90+";
-}
-
-function average(values) {
-  const nums = values.map(Number).filter((x) => Number.isFinite(x) && x > 0);
-  if (nums.length === 0) return 0;
-  return nums.reduce((a, b) => a + b, 0) / nums.length;
-}
-
 function formatNum(value) {
   return Number(value || 0).toFixed(1);
 }
@@ -1888,35 +1615,4 @@ function formatDelta(value) {
 function safeText(value) {
   if (value === null || value === undefined || value === "") return "N/A";
   return String(value);
-}
-
-function getInitials(name) {
-  return String(name || "T")
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((x) => x[0])
-    .join("")
-    .toUpperCase();
-}
-
-function countryToEmoji(country) {
-  const c = String(country || "").toLowerCase();
-
-  if (c.includes("argentina")) return "🇦🇷";
-  if (c.includes("chile")) return "🇨🇱";
-  if (c.includes("colombia")) return "🇨🇴";
-  if (c.includes("mexico") || c.includes("méxico")) return "🇲🇽";
-  if (c.includes("brazil") || c.includes("brasil")) return "🇧🇷";
-  if (c.includes("usa") || c.includes("united states")) return "🇺🇸";
-  if (c.includes("spain") || c.includes("españa")) return "🇪🇸";
-  if (c.includes("england") || c.includes("inglaterra")) return "🏴";
-  if (c.includes("ecuador")) return "🇪🇨";
-  if (c.includes("paraguay")) return "🇵🇾";
-  if (c.includes("peru") || c.includes("perú")) return "🇵🇪";
-  if (c.includes("uruguay")) return "🇺🇾";
-  if (c.includes("bolivia")) return "🇧🇴";
-  if (c.includes("venezuela")) return "🇻🇪";
-
-  return "🏳️";
-}
+      }
