@@ -6,7 +6,7 @@ import MatchProPanel from "./components/MatchProPanel";
 import EliteAnalyticsPanel from "./components/EliteAnalyticsPanel";
 import MatchMomentumChart from "./components/MatchMomentumChart";
 
-const API = "https://jhonny-elite-v16-web.onrender.com";
+const API = "https://backend-tactico-lqok.onrender.com";
 
 export default function App() {
   const [stats, setStats] = useState(null);
