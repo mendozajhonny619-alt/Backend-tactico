@@ -16,11 +16,13 @@ class LiveMatchFetcher:
     API_FOOTBALL_LIVE_URL = f"{API_BASE}/fixtures?live=all"
     API_FOOTBALL_STATISTICS_URL = f"{API_BASE}/fixtures/statistics"
     API_FOOTBALL_EVENTS_URL = f"{API_BASE}/fixtures/events"
+    API_FOOTBALL_PLAYERS_URL = f"{API_BASE}/fixtures/players"
     FOOTBALL_DATA_URL = "https://api.football-data.org/v4/matches"
 
     LIVE_CACHE_TTL_SECONDS = 60
     STATS_CACHE_TTL_SECONDS = 15
     EVENTS_CACHE_TTL_SECONDS = 15
+    PLAYERS_CACHE_TTL_SECONDS = 120
 
     MAX_DEEP_SCAN_MATCHES = 12
     MAX_OPERABLE_MINUTE = 87
@@ -31,6 +33,7 @@ class LiveMatchFetcher:
     PRIMARY_TIMEOUT_SECONDS = 10
     STATS_TIMEOUT_SECONDS = 8
     EVENTS_TIMEOUT_SECONDS = 8
+    PLAYERS_TIMEOUT_SECONDS = 10
 
     BLOCKED_STATUS_SHORT = {
         "HT", "FT", "AET", "PEN", "PST", "CANC",
@@ -63,6 +66,7 @@ class LiveMatchFetcher:
         self._live_cache_at: float = 0.0
         self._stats_cache: Dict[str, Dict[str, Any]] = {}
         self._events_cache: Dict[str, Dict[str, Any]] = {}
+        self._players_cache: Dict[str, Dict[str, Any]] = {}
         self._api_football_cooldown_until: float = 0.0
 
         self._allowed_league_ids = set(
@@ -267,6 +271,58 @@ class LiveMatchFetcher:
             logger.warning("LIVE_FETCHER events error fixture=%s: %s", fixture_id, exc)
             return self._clone_list(cached["data"]) if cached else []
 
+    def _fetch_fixture_players(self, fixture_id: Any, should_fetch: bool = True) -> List[Dict[str, Any]]:
+        if not fixture_id:
+            return []
+
+        fixture_key = str(fixture_id)
+        now = time.time()
+
+        cached = self._players_cache.get(fixture_key)
+        if cached and (now - cached["at"]) < self.PLAYERS_CACHE_TTL_SECONDS:
+            return self._clone_list(cached["data"])
+
+        if not should_fetch:
+            return self._clone_list(cached["data"]) if cached else []
+
+        if now < self._api_football_cooldown_until:
+            return self._clone_list(cached["data"]) if cached else []
+
+        try:
+            response = requests.get(
+                self.API_FOOTBALL_PLAYERS_URL,
+                headers=self.api_football_headers,
+                params={"fixture": fixture_id},
+                timeout=self.PLAYERS_TIMEOUT_SECONDS,
+            )
+
+            if response.status_code == 429:
+                self._activate_429_cooldown()
+                logger.warning("LIVE_FETCHER players fixture=%s -> 429", fixture_id)
+                return self._clone_list(cached["data"]) if cached else []
+
+            if response.status_code != 200:
+                logger.warning(
+                    "LIVE_FETCHER players fixture=%s status=%s",
+                    fixture_id,
+                    response.status_code,
+                )
+                return self._clone_list(cached["data"]) if cached else []
+
+            data = response.json()
+            result = data.get("response", []) or []
+
+            self._players_cache[fixture_key] = {
+                "at": now,
+                "data": self._clone_list(result),
+            }
+
+            return result
+
+        except Exception as exc:
+            logger.warning("LIVE_FETCHER players error fixture=%s: %s", fixture_id, exc)
+            return self._clone_list(cached["data"]) if cached else []
+
     def _normalize_api_football(self, raw_matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         normalized_list: List[Dict[str, Any]] = []
         deep_scan_used = 0
@@ -316,6 +372,12 @@ class LiveMatchFetcher:
                     and not tracking_only
                 )
 
+                should_fetch_players = (
+                    deep_scan_used < self.MAX_DEEP_SCAN_MATCHES
+                    and self._should_fetch_player_stats(minute)
+                    and not tracking_only
+                )
+
                 if should_fetch_deep:
                     deep_scan_used += 1
 
@@ -333,6 +395,11 @@ class LiveMatchFetcher:
                 events = self._fetch_fixture_events(
                     fixture_id=fixture_id,
                     should_fetch=should_fetch_deep or tracking_only,
+                )
+
+                players = self._fetch_fixture_players(
+                    fixture_id=fixture_id,
+                    should_fetch=should_fetch_players,
                 )
 
                 home_stats = self._extract_team_stats_api_football(statistics, 0)
@@ -425,6 +492,12 @@ class LiveMatchFetcher:
 
                     "events": events,
                     "event_count": len(events),
+                    "players": players,
+                    "player_count": sum(
+                        len(team.get("players", []))
+                        for team in players
+                        if isinstance(team, dict)
+                    ),
 
                     "data_quality": data_quality,
                     "calidad_datos": data_quality,
@@ -445,6 +518,7 @@ class LiveMatchFetcher:
                     ),
 
                     "deep_scan_enabled": should_fetch_deep,
+                    "players_scan_enabled": should_fetch_players,
                     "tracking_only": tracking_only,
                     "operable": not tracking_only,
                     "confidence": self._estimate_confidence(data_quality, totals),
@@ -649,6 +723,8 @@ class LiveMatchFetcher:
                         "red_cards": 0.0,
                         "events": [],
                         "event_count": 0,
+                        "players": [],
+                        "player_count": 0,
 
                         "home_stats": {**home_stats, "xg": home_stats["xG"]},
                         "away_stats": {**away_stats, "xg": away_stats["xG"]},
@@ -682,6 +758,9 @@ class LiveMatchFetcher:
 
     def _should_fetch_detailed_stats(self, raw_match: Dict[str, Any], minute: int) -> bool:
         return 10 <= minute <= self.MAX_OPERABLE_MINUTE
+
+    def _should_fetch_player_stats(self, minute: int) -> bool:
+        return 15 <= minute <= self.MAX_OPERABLE_MINUTE
 
     def _build_totals(
         self,
