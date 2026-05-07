@@ -2907,3 +2907,95 @@ body {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* =========================================================
+   MOBILE HARD FIX — FORZADO CELULAR/TABLET
+   ========================================================= */
+
+@media (max-width: 950px) {
+  .elite-layout {
+    display: block !important;
+    width: 100% !important;
+  }
+
+  .elite-sidebar {
+    display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+  }
+
+  .elite-main {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+  }
+
+  .overlay {
+    width: 100% !important;
+  }
+
+  .container {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 12px !important;
+    margin: 0 !important;
+  }
+
+  .pro-header {
+    display: block !important;
+    text-align: center !important;
+  }
+
+  .brand {
+    justify-content: center !important;
+    width: 100% !important;
+  }
+
+  .brand-title {
+    font-size: 34px !important;
+    line-height: 1.05 !important;
+  }
+
+  .top-kpis {
+    display: none !important;
+  }
+
+  .elite-metrics-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  .elite-metric-card {
+    min-height: 120px !important;
+    padding: 14px !important;
+  }
+
+  .elite-metric-card strong {
+    font-size: 28px !important;
+  }
+
+  .pro-nav {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+    padding: 10px !important;
+  }
+
+  .pro-nav-btn {
+    width: 100% !important;
+    font-size: 15px !important;
+    padding: 12px 8px !important;
+  }
+
+  .cards {
+    grid-template-columns: 1fr !important;
+  }
+
+  .premium-grid,
+  .detail-grid-pro,
+  .stats-grid-pro,
+  .config-grid-pro,
+  .analytics-chart-grid {
+    grid-template-columns: 1fr !important;
+  }
+    }
