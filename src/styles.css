@@ -2781,3 +2781,129 @@ body {
     grid-column: span 1;
   }
 }
+
+/* =========================================================
+   MOBILE FIX — SOLO CELULAR
+   ========================================================= */
+
+@media (max-width: 720px) {
+  .elite-layout {
+    display: block;
+  }
+
+  .elite-sidebar {
+    display: none;
+  }
+
+  .elite-main {
+    width: 100%;
+  }
+
+  .container {
+    max-width: 100%;
+    padding: 14px;
+  }
+
+  .pro-header {
+    justify-content: center;
+    text-align: center;
+  }
+
+  .brand {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .brand-icon {
+    font-size: 34px;
+  }
+
+  .brand-title {
+    font-size: 34px;
+    line-height: 1.05;
+  }
+
+  .top-kpis {
+    display: none;
+  }
+
+  .elite-metrics-row {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+
+  .elite-metric-card {
+    min-height: 130px;
+    padding: 16px;
+  }
+
+  .elite-metric-card strong {
+    font-size: 30px;
+  }
+
+  .pro-nav {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .pro-nav-btn {
+    width: 100%;
+    font-size: 15px;
+    padding: 12px 8px;
+  }
+
+  .group-title {
+    font-size: 28px;
+    text-align: center;
+  }
+
+  .empty-box {
+    font-size: 20px;
+    text-align: center;
+  }
+
+  .cards {
+    grid-template-columns: 1fr;
+  }
+
+  .pro-card {
+    min-height: auto;
+  }
+
+  .card-teams-pro {
+    display: grid;
+    grid-template-columns: 52px 1fr 52px;
+    gap: 10px;
+  }
+
+  .card-team-text h3 {
+    font-size: 18px;
+  }
+
+  .card-metrics-pro {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .premium-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-premium-hero {
+    padding: 18px;
+  }
+
+  .premium-match {
+    grid-template-columns: 70px 1fr 70px;
+    gap: 8px;
+  }
+
+  .premium-score-box h1 {
+    font-size: 54px;
+  }
+
+  .premium-kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
