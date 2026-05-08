@@ -164,6 +164,31 @@ class MatchContextEngine:
         cooling_detected = live_correction["cooling_detected"]
         under_transition_score = live_correction["under_transition_score"]
 
+        fake_pressure_detected = self._detect_fake_pressure(
+            minute=minute,
+            dangerous_attacks=total_danger,
+            shots_on_target=total_sot,
+            xg=total_xg,
+            pressure=pressure_index,
+            rhythm=rhythm_index,
+        )
+
+        pressure_without_depth = fake_pressure_detected
+
+        if fake_pressure_detected:
+            pressure_index *= 0.82
+            goal_window_score = min(goal_window_score, 34)
+            over_window_score = min(over_window_score, 30)
+            red_alert = False
+
+            if context_state in {"CALIENTE", "MUY_CALIENTE"}:
+                context_state = "TIBIO"
+
+            if minute >= 65:
+                context_state = "CONTROLADO"
+                cooling_detected = True
+                under_transition_score = max(under_transition_score, 68)
+
         return {
             "pressure_index": round(pressure_index, 2),
             "rhythm_index": round(rhythm_index, 2),
@@ -176,6 +201,8 @@ class MatchContextEngine:
             "under_transition_score": round(under_transition_score, 2),
             "live_decay_factor": round(live_decay_factor, 2),
             "cooling_detected": cooling_detected,
+            "fake_pressure_detected": fake_pressure_detected,
+            "pressure_without_depth": pressure_without_depth,
             "data_quality": data_quality,
             "red_alert": red_alert,
 
@@ -205,6 +232,26 @@ class MatchContextEngine:
 
             "minute": minute,
         }
+
+    def _detect_fake_pressure(
+        self,
+        minute: int,
+        dangerous_attacks: float,
+        shots_on_target: float,
+        xg: float,
+        pressure: float,
+        rhythm: float,
+    ) -> bool:
+        if dangerous_attacks >= 25 and shots_on_target <= 1 and xg < 0.70:
+            return True
+
+        if minute >= 60 and dangerous_attacks >= 20 and shots_on_target <= 1 and xg < 0.85:
+            return True
+
+        if pressure >= 18 and rhythm < 12 and shots_on_target <= 1 and xg < 0.75:
+            return True
+
+        return False
 
     def _calculate_live_decay_factor(
         self,
@@ -613,7 +660,7 @@ class MatchContextEngine:
             "home_possession": self._pick_stat(match, ["home_possession", "possession_home", "posesion_local"]),
             "away_possession": self._pick_stat(match, ["away_possession", "possession_away", "posesion_visitante"]),
             "home_corners": self._pick_stat(match, ["home_corners", "corners_home", "corners_local"]),
-            "away_corners": self._pick_stat(match, ["away_corners", "corners_away", "corners_visitante"]),
+            "away_corners": self._pick_stat(match, ["corners_away", "away_corners", "corners_visitante"]),
         }
 
     def _pick_stat(self, source: Dict[str, Any], keys: list[str]) -> float:
