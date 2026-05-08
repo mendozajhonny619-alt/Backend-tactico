@@ -17,6 +17,7 @@ from app.services.next_goal_context_helper import NextGoalContextHelper
 from app.services.match_timeline_tracker import MatchTimelineTracker
 from app.services.deep_live_match_analyzer import DeepLiveMatchAnalyzer
 from app.services.player_live_analyzer import PlayerLiveAnalyzer
+from app.services.final_decision_engine import FinalDecisionEngine
 
 from app.engines.market_engine import MarketEngine
 from app.engines.value_engine import ValueEngine
@@ -24,7 +25,7 @@ from app.engines.risk_engine import RiskEngine
 from app.engines.tactical_engine import TacticalEngine
 from app.engines.match_analyst_engine import MatchAnalystEngine
 from app.engines.next_goal_side_engine import NextGoalSideEngine
-from app.services.final_decision_engine import FinalDecisionEngine
+
 
 class ScanService:
     """
@@ -39,7 +40,8 @@ class ScanService:
     - Filtro final tipo analista élite antes de publicar.
     - Mejora lectura del partido con MatchReadingEnhancer sin bloquear señales.
     - Agrega lectura auxiliar de próximo gol sin modificar decisiones.
-    - Agrega timeline/análisis profundo/jugadores como lectura auxiliar sin modificar decisiones.
+    - Agrega timeline/análisis profundo/jugadores como lectura auxiliar.
+    - Agrega FinalDecisionEngine como juez maestro antes de publicar.
     """
 
     def __init__(self) -> None:
@@ -412,11 +414,11 @@ class ScanService:
                 "status": "OPPORTUNITY",
                 "opportunity": payload,
             }
-            
+
         value = self.value_engine.evaluate(
-             ai=ai,
-             market=market,
-             market_type=opportunity.get("market"),
+            ai=ai,
+            market=market,
+            market_type=opportunity.get("market"),
         )
 
         final_decision = self.final_decision_engine.evaluate(
@@ -430,7 +432,6 @@ class ScanService:
             market=market,
             value=value,
         )
-
         match.update(final_decision)
 
         analyst_full = self.analyst_engine.evaluate(
@@ -443,7 +444,22 @@ class ScanService:
             market=market,
             value=value,
         )
-        
+
+        if self._should_hold_by_final_decision(final_decision):
+            return self._final_decision_to_opportunity(
+                match=match,
+                context=context,
+                ai=ai,
+                window=window,
+                tactical=tactical,
+                risk=risk,
+                analyst=analyst_full,
+                opportunity=opportunity,
+                market=market,
+                value=value,
+                final_decision=final_decision,
+            )
+
         if not value.get("is_value", False):
             if self._should_emit_internal_signal(ai, context, opportunity, allow_operable=True):
                 return self._emit_internal_signal(
@@ -599,6 +615,45 @@ class ScanService:
             ),
         }
 
+    def _should_hold_by_final_decision(self, final_decision: Dict[str, Any]) -> bool:
+        decision = str(final_decision.get("final_decision") or "").upper()
+        return decision in {"OBSERVE", "WAIT", "NO_REENTRY", "AVOID"}
+
+    def _final_decision_to_opportunity(
+        self,
+        match: Dict[str, Any],
+        context: Dict[str, Any],
+        ai: Dict[str, Any],
+        window: Dict[str, Any],
+        tactical: Dict[str, Any],
+        risk: Dict[str, Any],
+        analyst: Dict[str, Any],
+        opportunity: Dict[str, Any],
+        market: Dict[str, Any] | None,
+        value: Dict[str, Any] | None,
+        final_decision: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        payload = self._build_opportunity_payload(
+            match=match,
+            context=context,
+            ai=ai,
+            window=window,
+            tactical=tactical,
+            risk=risk,
+            analyst=analyst,
+            opportunity=opportunity,
+            market=market,
+            value=value,
+        )
+        payload["block_reason"] = final_decision.get("final_decision_reason", "FINAL_DECISION_HOLD")
+        payload["final_decision_status"] = final_decision.get("final_decision")
+        payload.update(final_decision)
+
+        return {
+            "status": "OPPORTUNITY",
+            "opportunity": payload,
+        }
+
     def _apply_elite_analyst_filter(
         self,
         signal: Dict[str, Any],
@@ -701,6 +756,34 @@ class ScanService:
             market=fake_market,
             value=fake_value,
         )
+
+        final_decision = self.final_decision_engine.evaluate(
+            match=match,
+            context=context,
+            ai=ai,
+            window=window,
+            risk=risk,
+            tactical=tactical,
+            opportunity=opportunity,
+            market=fake_market,
+            value=fake_value,
+        )
+        match.update(final_decision)
+
+        if self._should_hold_by_final_decision(final_decision):
+            return self._final_decision_to_opportunity(
+                match=match,
+                context=context,
+                ai=ai,
+                window=window,
+                tactical=tactical,
+                risk=risk,
+                analyst=analyst_internal,
+                opportunity=opportunity,
+                market=fake_market,
+                value=fake_value,
+                final_decision=final_decision,
+            )
 
         signal = self._build_signal(
             match=match,
@@ -1029,6 +1112,8 @@ class ScanService:
             "pressure_trend": match.get("pressure_trend"),
             "rhythm_trend": match.get("rhythm_trend"),
             "goal_threat_trend": match.get("goal_threat_trend"),
+            "late_reactivation": match.get("late_reactivation"),
+            "chaos_mode": match.get("chaos_mode"),
             "signal_life_status": match.get("signal_life_status"),
             "timeline_summary": match.get("timeline_summary"),
             "deep_analysis_enabled": match.get("deep_analysis_enabled"),
@@ -1037,13 +1122,27 @@ class ScanService:
             "deep_projection_window": match.get("deep_projection_window"),
             "late_goal_risk": match.get("late_goal_risk"),
             "retention_risk": match.get("retention_risk"),
+            "retention_risk_label": match.get("retention_risk_label"),
             "deep_pressure_trend": match.get("deep_pressure_trend"),
             "deep_rhythm_trend": match.get("deep_rhythm_trend"),
             "deep_goal_threat_trend": match.get("deep_goal_threat_trend"),
             "deep_signal_life_status": match.get("deep_signal_life_status"),
+            "deep_late_reactivation": match.get("deep_late_reactivation"),
+            "deep_chaos_mode": match.get("deep_chaos_mode"),
+            "deep_fake_pressure_detected": match.get("deep_fake_pressure_detected"),
+            "deep_pressure_without_depth": match.get("deep_pressure_without_depth"),
             "deep_event_profile": match.get("deep_event_profile"),
             "deep_tactical_alerts": match.get("deep_tactical_alerts"),
             "deep_analysis_summary": match.get("deep_analysis_summary"),
+            "final_decision": match.get("final_decision"),
+            "final_decision_reason": match.get("final_decision_reason"),
+            "final_decision_confidence": match.get("final_decision_confidence"),
+            "final_decision_market": match.get("final_decision_market"),
+            "should_enter": match.get("should_enter"),
+            "should_observe": match.get("should_observe"),
+            "should_wait": match.get("should_wait"),
+            "should_no_reentry": match.get("should_no_reentry"),
+            "should_avoid": match.get("should_avoid"),
             "player_analysis_enabled": match.get("player_analysis_enabled"),
             "player_data_available": match.get("player_data_available"),
             "player_attacking_side": match.get("player_attacking_side"),
