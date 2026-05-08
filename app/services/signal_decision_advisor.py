@@ -37,6 +37,15 @@ class SignalDecisionAdvisor:
         under_probability = self._safe_float(signal.get("under_probability"))
         risk_score = self._safe_float(signal.get("risk_score"))
 
+        final_decision = str(signal.get("final_decision") or "").upper()
+        signal_decay_status = str(signal.get("signal_decay_status") or "").upper()
+        revalidation_status = str(signal.get("revalidation_status") or "").upper()
+        cooling_detected = bool(signal.get("cooling_detected", False))
+        under_transition_score = self._safe_float(signal.get("under_transition_score"))
+        score_hold_probability = self._safe_float(signal.get("score_hold_probability"))
+        retention_risk = self._safe_float(signal.get("retention_risk"))
+        live_decay_factor = self._safe_float(signal.get("live_decay_factor") or 1.0)
+
         shots = self._safe_float(signal.get("shots"))
         shots_on_target = self._safe_float(signal.get("shots_on_target"))
         corners = self._safe_float(signal.get("corners"))
@@ -202,6 +211,33 @@ class SignalDecisionAdvisor:
             decision_score += 5
             positives.append("Riesgo controlado")
 
+        if cooling_detected or live_decay_factor <= 0.70:
+            decision_score -= 16
+            warnings.append("Enfriamiento live detectado")
+
+        if under_transition_score >= 70:
+            decision_score -= 24
+            warnings.append("Transición UNDER activa")
+
+        if score_hold_probability >= 70 or retention_risk >= 70:
+            decision_score -= 22
+            warnings.append("Alta retención del marcador")
+
+        if signal_decay_status in {"NO_REENTRY", "AVOID"}:
+            decision_score -= 25
+            warnings.append("Vida de señal degradada")
+
+        if revalidation_status in {"COOLING", "HIGH_RISK", "NO_REENTRY", "AVOID"}:
+            decision_score -= 18
+            warnings.append("Revalidación debilitada")
+
+        if final_decision in {"NO_REENTRY", "AVOID"}:
+            decision_score -= 35
+            warnings.append("Decisión maestra bloquea entrada")
+        elif final_decision == "WAIT":
+            decision_score -= 14
+            warnings.append("Decisión maestra exige esperar")
+
         # -----------------------------
         # Actividad positiva
         # -----------------------------
@@ -245,6 +281,26 @@ class SignalDecisionAdvisor:
             decision_status = "AVOID"
             decision_label = "EVITAR"
             decision_advice = "Condiciones peligrosas para tomar esta señal."
+
+        if final_decision == "WAIT":
+            decision_status = "WAIT_CONFIRMATION"
+            decision_label = "ESPERAR CONFIRMACIÓN"
+            decision_advice = "La decisión maestra no autoriza entrada inmediata."
+
+        if final_decision == "NO_REENTRY":
+            decision_status = "NO_REENTRY"
+            decision_label = "NO REENTRAR"
+            decision_advice = "La decisión maestra indica que la señal perdió valor operativo."
+
+        if final_decision == "AVOID":
+            decision_status = "AVOID"
+            decision_label = "EVITAR"
+            decision_advice = "La decisión maestra bloquea esta señal."
+
+        if signal_decay_status in {"NO_REENTRY", "AVOID"} and final_decision != "ENTER":
+            decision_status = signal_decay_status
+            decision_label = "NO REENTRAR" if signal_decay_status == "NO_REENTRY" else "EVITAR"
+            decision_advice = "La vida útil de la señal ya no permite entrada segura."
 
         reason = self._build_reason(
             decision_status=decision_status,
