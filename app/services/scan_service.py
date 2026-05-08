@@ -24,7 +24,7 @@ from app.engines.risk_engine import RiskEngine
 from app.engines.tactical_engine import TacticalEngine
 from app.engines.match_analyst_engine import MatchAnalystEngine
 from app.engines.next_goal_side_engine import NextGoalSideEngine
-
+from app.services.final_decision_engine import FinalDecisionEngine
 
 class ScanService:
     """
@@ -63,6 +63,7 @@ class ScanService:
         self.timeline_tracker = MatchTimelineTracker()
         self.deep_live_analyzer = DeepLiveMatchAnalyzer()
         self.player_live_analyzer = PlayerLiveAnalyzer()
+        self.final_decision_engine = FinalDecisionEngine()
 
     def scan(self, live_matches: List[Dict[str, Any]]) -> Dict[str, Any]:
         candidates: List[Dict[str, Any]] = []
@@ -411,12 +412,26 @@ class ScanService:
                 "status": "OPPORTUNITY",
                 "opportunity": payload,
             }
-
+            
         value = self.value_engine.evaluate(
-            ai=ai,
-            market=market,
-            market_type=opportunity.get("market"),
+             ai=ai,
+             market=market,
+             market_type=opportunity.get("market"),
         )
+
+        final_decision = self.final_decision_engine.evaluate(
+            match=match,
+            context=context,
+            ai=ai,
+            window=window,
+            risk=risk,
+            tactical=tactical,
+            opportunity=opportunity,
+            market=market,
+            value=value,
+        )
+
+        match.update(final_decision)
 
         analyst_full = self.analyst_engine.evaluate(
             match=match,
@@ -428,7 +443,7 @@ class ScanService:
             market=market,
             value=value,
         )
-
+        
         if not value.get("is_value", False):
             if self._should_emit_internal_signal(ai, context, opportunity, allow_operable=True):
                 return self._emit_internal_signal(
