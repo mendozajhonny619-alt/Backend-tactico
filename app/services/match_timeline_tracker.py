@@ -11,11 +11,13 @@ class MatchTimelineTracker:
     No bloquea.
     No crea señales.
     No modifica probabilidades.
-    Solo entrega lectura auxiliar:
-    - cambios últimos 3/5/10 min
-    - tendencia de presión
-    - tendencia de ritmo
-    - estado de vida de la señal
+
+    Ahora también detecta:
+    - reactivación tardía
+    - caos ofensivo
+    - presión desesperada
+    - falso enfriamiento
+    - transición partido muerto -> vivo
     """
 
     MAX_SNAPSHOTS_PER_MATCH = 80
@@ -94,12 +96,25 @@ class MatchTimelineTracker:
         rhythm_trend = self._trend(delta_5.get("rhythm_index", 0.0))
         goal_threat_trend = self._trend(delta_5.get("goal_window_score", 0.0))
 
+        late_reactivation = self._detect_late_reactivation(
+            current=current,
+            delta_3=delta_3,
+            delta_5=delta_5,
+        )
+
+        chaos_mode = self._detect_chaos_mode(
+            current=current,
+            delta_3=delta_3,
+        )
+
         signal_life_status = self._signal_life_status(
             current=current,
             delta_5=delta_5,
             pressure_trend=pressure_trend,
             rhythm_trend=rhythm_trend,
             goal_threat_trend=goal_threat_trend,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
         )
 
         return {
@@ -113,6 +128,10 @@ class MatchTimelineTracker:
             "pressure_trend": pressure_trend,
             "rhythm_trend": rhythm_trend,
             "goal_threat_trend": goal_threat_trend,
+
+            "late_reactivation": late_reactivation,
+            "chaos_mode": chaos_mode,
+
             "signal_life_status": signal_life_status,
 
             "timeline_summary": self._summary(
@@ -121,8 +140,63 @@ class MatchTimelineTracker:
                 goal_threat_trend=goal_threat_trend,
                 signal_life_status=signal_life_status,
                 current=current,
+                late_reactivation=late_reactivation,
+                chaos_mode=chaos_mode,
             ),
         }
+
+    def _detect_late_reactivation(
+        self,
+        current: Dict[str, Any],
+        delta_3: Dict[str, float],
+        delta_5: Dict[str, float],
+    ) -> bool:
+        minute = self._safe_int(current.get("minute"))
+
+        if minute < 70:
+            return False
+
+        pressure = self._safe_float(current.get("pressure_index"))
+        rhythm = self._safe_float(current.get("rhythm_index"))
+
+        recent_sot = self._safe_float(delta_3.get("shots_on_target"))
+        recent_corners = self._safe_float(delta_3.get("corners"))
+        recent_danger = self._safe_float(delta_3.get("dangerous_attacks"))
+
+        return (
+            pressure >= 18
+            and rhythm >= 11
+            and (
+                recent_sot > 0
+                or recent_corners >= 1
+                or recent_danger >= 4
+            )
+        )
+
+    def _detect_chaos_mode(
+        self,
+        current: Dict[str, Any],
+        delta_3: Dict[str, float],
+    ) -> bool:
+        minute = self._safe_int(current.get("minute"))
+
+        if minute < 75:
+            return False
+
+        pressure = self._safe_float(current.get("pressure_index"))
+        rhythm = self._safe_float(current.get("rhythm_index"))
+
+        recent_danger = self._safe_float(delta_3.get("dangerous_attacks"))
+        recent_sot = self._safe_float(delta_3.get("shots_on_target"))
+
+        return (
+            pressure >= 24
+            and rhythm >= 14
+            and (
+                recent_danger >= 6
+                or recent_sot >= 1
+            )
+        )
 
     def _delta_since_minutes(
         self,
@@ -174,6 +248,8 @@ class MatchTimelineTracker:
         pressure_trend: str,
         rhythm_trend: str,
         goal_threat_trend: str,
+        late_reactivation: bool,
+        chaos_mode: bool,
     ) -> str:
         minute = self._safe_int(current.get("minute"))
         pressure = self._safe_float(current.get("pressure_index"))
@@ -187,20 +263,40 @@ class MatchTimelineTracker:
         recent_corners = self._safe_float(delta_5.get("corners"))
         recent_danger = self._safe_float(delta_5.get("dangerous_attacks"))
 
+        if chaos_mode:
+            return "CHAOS_ACTIVE"
+
+        if late_reactivation:
+            return "LATE_REACTIVATION"
+
         if red_alert and pressure >= 24 and rhythm >= 14:
             return "ACTIVE_DANGER"
 
-        if minute >= 80 and cooling and under_transition >= 70:
+        if (
+            minute >= 80
+            and cooling
+            and under_transition >= 70
+            and not late_reactivation
+        ):
             return "NO_REENTRY"
 
-        if cooling and pressure_trend == "FALLING" and rhythm_trend == "FALLING":
+        if (
+            cooling
+            and pressure_trend == "FALLING"
+            and rhythm_trend == "FALLING"
+            and not late_reactivation
+        ):
             return "WEAKENING"
 
         if (
             pressure >= 18
             and rhythm >= 12
             and goal_window >= 18
-            and (recent_sot > 0 or recent_corners > 0 or recent_danger >= 4)
+            and (
+                recent_sot > 0
+                or recent_corners > 0
+                or recent_danger >= 4
+            )
         ):
             return "VALID"
 
@@ -219,7 +315,15 @@ class MatchTimelineTracker:
         goal_threat_trend: str,
         signal_life_status: str,
         current: Dict[str, Any],
+        late_reactivation: bool,
+        chaos_mode: bool,
     ) -> str:
+        if chaos_mode:
+            return "Caos ofensivo detectado: partido abierto y altamente volátil."
+
+        if late_reactivation:
+            return "Reactivación tardía detectada: el partido volvió a acelerarse."
+
         if signal_life_status == "ACTIVE_DANGER":
             return "Peligro activo: presión y ritmo siguen altos."
 
@@ -253,6 +357,8 @@ class MatchTimelineTracker:
             "pressure_trend": "UNKNOWN",
             "rhythm_trend": "UNKNOWN",
             "goal_threat_trend": "UNKNOWN",
+            "late_reactivation": False,
+            "chaos_mode": False,
             "signal_life_status": "UNKNOWN",
             "timeline_summary": "Sin historial suficiente del partido.",
         }
