@@ -98,6 +98,72 @@ class RuntimeState:
 
         self._touch()
 
+    def add_closed_signal_to_history(self, signal: Dict[str, Any]) -> None:
+        """
+        Registra o actualiza una señal cerrada en el historial visible del panel.
+
+        Esto evita que una señal desaparezca cuando termina el partido.
+        """
+        if not signal:
+            return
+
+        signal_key = (
+            signal.get("signal_id")
+            or signal.get("signal_key")
+            or self._build_history_key(signal)
+        )
+
+        result = str(
+            signal.get("resultado")
+            or signal.get("status")
+            or "VOID"
+        ).upper()
+
+        if not signal_key:
+            return
+
+        for item in self._signals_history:
+            existing_key = (
+                item.get("signal_id")
+                or item.get("signal_key")
+                or self._build_history_key(item)
+            )
+
+            if existing_key == signal_key:
+                item.update(dict(signal))
+                item["signal_id"] = signal_key
+                item["signal_key"] = signal_key
+                item["status"] = result
+                item["resultado"] = result
+                item.setdefault("closed_at", datetime.now().isoformat(timespec="seconds"))
+                self._touch()
+                return
+
+        item = dict(signal)
+        item["signal_id"] = signal_key
+        item["signal_key"] = signal_key
+        item["status"] = result
+        item["resultado"] = result
+        item.setdefault("created_at", item.get("activated_at") or datetime.now().isoformat(timespec="seconds"))
+        item.setdefault("closed_at", datetime.now().isoformat(timespec="seconds"))
+
+        self._signals_history.append(item)
+
+        if len(self._signals_history) > self.MAX_HISTORY:
+            self._signals_history = self._signals_history[-self.MAX_HISTORY :]
+
+        self._touch()
+
+    def add_closed_signals_to_history(self, signals: List[Dict[str, Any]]) -> None:
+        """
+        Registra varias señales cerradas en el historial visible del panel.
+        """
+        for signal in signals or []:
+            if isinstance(signal, dict):
+                self.add_closed_signal_to_history(signal)
+
+        self._touch()
+
     def get_signals_history(self) -> List[Dict[str, Any]]:
         return deepcopy(self._signals_history)
 
@@ -199,6 +265,6 @@ class RuntimeState:
     def _build_history_key(self, signal: Dict[str, Any]) -> str:
         match_id = signal.get("match_id") or signal.get("id") or signal.get("match_name")
         market = signal.get("market") or signal.get("type") or "SIGNAL"
-        minute = signal.get("minute") or signal.get("minuto") or "0"
+        minute = signal.get("entry_minute") or signal.get("minute") or signal.get("minuto") or "0"
 
         return f"{match_id}:{market}:{minute}".upper()
