@@ -12,6 +12,7 @@ from app.services.signal_decision_advisor import SignalDecisionAdvisor
 from app.services.signal_decay_service import SignalDecayService
 from app.services.signal_performance_analyzer import SignalPerformanceAnalyzer
 
+
 class LiveSignalManager:
     """
     Gestiona señales activas.
@@ -35,6 +36,7 @@ class LiveSignalManager:
         self._decision_advisor = SignalDecisionAdvisor()
         self._signal_decay = SignalDecayService()
         self._performance_analyzer = SignalPerformanceAnalyzer()
+
         # Tracking interno de rendimiento
         self._tracking_history: List[Dict[str, Any]] = []
         self._tracked_closed_keys: set[str] = set()
@@ -216,7 +218,7 @@ class LiveSignalManager:
 
     def get_tracking_summary(self) -> Dict[str, Any]:
         return self._build_tracking_summary(self._tracking_history)
-   
+
     def get_performance_analysis(self) -> Dict[str, Any]:
         """
         Analiza rendimiento real de señales cerradas.
@@ -289,6 +291,64 @@ class LiveSignalManager:
         signal.update(self._revalidator.evaluate(signal))
         signal.update(self._decision_advisor.evaluate(signal))
         signal.update(self._signal_decay.evaluate(signal))
+
+        self._apply_final_decision_to_live_signal(signal)
+
+    def _apply_final_decision_to_live_signal(self, signal: Dict[str, Any]) -> None:
+        """
+        Aplica la decisión maestra a la señal viva.
+
+        No cierra resultados.
+        No cambia WIN/LOSS.
+        Solo degrada estado operativo live.
+        """
+        if not isinstance(signal, dict):
+            return
+
+        final_decision = str(signal.get("final_decision") or "").upper()
+        final_reason = signal.get("final_decision_reason")
+        final_confidence = signal.get("final_decision_confidence")
+
+        if not final_decision:
+            return
+
+        signal["master_decision_status"] = final_decision
+        signal["master_decision_reason"] = final_reason
+        signal["master_decision_confidence"] = final_confidence
+
+        if final_decision == "ENTER":
+            signal["live_entry_status"] = "ENTRADA_VALIDADA"
+            signal["live_entry_advice"] = "Entrada validada por decisión maestra."
+            signal["no_reentry"] = False
+            return
+
+        if final_decision == "OBSERVE":
+            signal["live_entry_status"] = "OBSERVAR"
+            signal["live_entry_advice"] = "Mantener en observación. No aumentar exposición sin nueva confirmación."
+            signal["no_reentry"] = False
+            return
+
+        if final_decision == "WAIT":
+            signal["live_entry_status"] = "ESPERAR_CONFIRMACION"
+            signal["live_entry_advice"] = "Esperar confirmación adicional antes de entrar o reentrar."
+            signal["no_reentry"] = False
+            return
+
+        if final_decision == "NO_REENTRY":
+            signal["live_entry_status"] = "NO_REENTRAR"
+            signal["live_entry_advice"] = "No reentrar. La señal perdió valor operativo."
+            signal["no_reentry"] = True
+            signal["signal_decay_status"] = "NO_REENTRY"
+            signal["signal_decay_advice"] = "Señal degradada por decisión maestra."
+            return
+
+        if final_decision == "AVOID":
+            signal["live_entry_status"] = "EVITAR"
+            signal["live_entry_advice"] = "Evitar entrada. Condiciones tácticas o de mercado desfavorables."
+            signal["no_reentry"] = True
+            signal["signal_decay_status"] = "AVOID"
+            signal["signal_decay_advice"] = "Señal bloqueada por decisión maestra."
+            return
 
     def _refresh_live_fields(
         self,
@@ -412,6 +472,16 @@ class LiveSignalManager:
             "signal_decay_status": closed_signal.get("signal_decay_status"),
             "signal_decay_advice": closed_signal.get("signal_decay_advice"),
             "signal_decay_score": closed_signal.get("signal_decay_score"),
+
+            "final_decision": closed_signal.get("final_decision"),
+            "final_decision_reason": closed_signal.get("final_decision_reason"),
+            "final_decision_confidence": closed_signal.get("final_decision_confidence"),
+            "master_decision_status": closed_signal.get("master_decision_status"),
+            "master_decision_reason": closed_signal.get("master_decision_reason"),
+            "master_decision_confidence": closed_signal.get("master_decision_confidence"),
+            "live_entry_status": closed_signal.get("live_entry_status"),
+            "live_entry_advice": closed_signal.get("live_entry_advice"),
+            "no_reentry": closed_signal.get("no_reentry"),
 
             "auto_rescan_status": closed_signal.get("auto_rescan_status"),
             "auto_rescan_minutes_passed": closed_signal.get("auto_rescan_minutes_passed"),
