@@ -95,6 +95,8 @@ class HistoryService:
             or datetime.now().isoformat(timespec="seconds")
         )
         record["closed_at"] = record.get("closed_at") if record.get("closed_at") else None
+        record["stake"] = self._safe_float(record.get("stake") or 1.0)
+        record["profit_units"] = self._calculate_profit_units(record)
 
         self._history.insert(0, record)
         self._published_count += 1
@@ -118,9 +120,6 @@ class HistoryService:
             item_key = str(item.get("signal_key") or "").strip().upper()
 
             if item_key == normalized_key:
-                if item.get("history_status") == "CLOSED":
-                    return True
-
                 if extra:
                     enriched = self._enrich_visual_assets(extra)
                     enriched["signal_key"] = normalized_key
@@ -129,8 +128,13 @@ class HistoryService:
                 item["signal_key"] = normalized_key
                 item["status"] = normalized_result
                 item["resultado"] = normalized_result
-                item["history_status"] = "CLOSED"
-                item["closed_at"] = datetime.now().isoformat(timespec="seconds")
+                item["history_status"] = "CLOSED" if normalized_result in {"WIN", "LOSS", "VOID", "PUSH", "REMOVED"} else item.get("history_status", "PUBLISHED")
+                item["closed_at"] = (
+                    item.get("closed_at")
+                    or datetime.now().isoformat(timespec="seconds")
+                )
+                item["stake"] = self._safe_float(item.get("stake") or 1.0)
+                item["profit_units"] = self._calculate_profit_units(item)
 
                 self._save_to_disk()
                 return True
@@ -164,6 +168,7 @@ class HistoryService:
             return True
 
         record["signal_key"] = signal_key
+        record["signal_id"] = record.get("signal_id") or signal_key
         record["status"] = final_result
         record["resultado"] = final_result
         record["history_status"] = "CLOSED"
@@ -176,6 +181,8 @@ class HistoryService:
             record.get("closed_at")
             or datetime.now().isoformat(timespec="seconds")
         )
+        record["stake"] = self._safe_float(record.get("stake") or 1.0)
+        record["profit_units"] = self._calculate_profit_units(record)
 
         self._history.insert(0, record)
         self._trim_history()
@@ -193,25 +200,103 @@ class HistoryService:
 
         wins = sum(1 for x in self._history if str(x.get("resultado")).upper() == "WIN")
         losses = sum(1 for x in self._history if str(x.get("resultado")).upper() == "LOSS")
+        voids = sum(1 for x in self._history if str(x.get("resultado")).upper() == "VOID")
+        pushes = sum(1 for x in self._history if str(x.get("resultado")).upper() == "PUSH")
+
         pending = sum(
             1 for x in self._history
             if str(x.get("resultado")).upper() in {"PENDIENTE", "ACTIVE", "PUBLISHED"}
         )
-        voids = sum(1 for x in self._history if str(x.get("resultado")).upper() == "VOID")
+
+        closed = sum(
+            1 for x in self._history
+            if str(x.get("history_status")).upper() == "CLOSED"
+        )
 
         settled = wins + losses
+        decided = wins + losses + voids + pushes
         winrate = (wins / settled * 100) if settled > 0 else 0.0
+
+        total_staked = sum(
+            self._safe_float(x.get("stake") or 1.0)
+            for x in self._history
+            if str(x.get("resultado")).upper() in {"WIN", "LOSS"}
+        )
+
+        profit_units = sum(
+            self._safe_float(x.get("profit_units"))
+            for x in self._history
+        )
+
+        roi = (profit_units / total_staked * 100) if total_staked > 0 else 0.0
 
         return {
             "history_items": total,
             "published_signals_total": self._published_count,
+            "closed_signals_total": closed,
             "wins": wins,
             "losses": losses,
             "pending": pending,
             "voids": voids,
+            "pushes": pushes,
             "settled": settled,
+            "decided": decided,
             "winrate": round(winrate, 2),
+            "total_staked": round(total_staked, 2),
+            "profit_units": round(profit_units, 2),
+            "roi": round(roi, 2),
+            "by_market": self._group_stats("market"),
+            "by_rank": self._group_stats("rank"),
+            "by_signal_mode": self._group_stats("signal_mode"),
         }
+
+    def _group_stats(self, field: str) -> Dict[str, Dict[str, Any]]:
+        grouped: Dict[str, Dict[str, Any]] = {}
+
+        for item in self._history:
+            key = str(item.get(field) or "UNKNOWN").upper()
+            result = str(item.get("resultado") or "PENDIENTE").upper()
+
+            if key not in grouped:
+                grouped[key] = {
+                    "total": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "voids": 0,
+                    "pending": 0,
+                    "settled": 0,
+                    "winrate": 0.0,
+                    "profit_units": 0.0,
+                    "roi": 0.0,
+                    "total_staked": 0.0,
+                }
+
+            grouped[key]["total"] += 1
+
+            if result == "WIN":
+                grouped[key]["wins"] += 1
+                grouped[key]["settled"] += 1
+                grouped[key]["profit_units"] += self._safe_float(item.get("profit_units"))
+                grouped[key]["total_staked"] += self._safe_float(item.get("stake") or 1.0)
+            elif result == "LOSS":
+                grouped[key]["losses"] += 1
+                grouped[key]["settled"] += 1
+                grouped[key]["profit_units"] += self._safe_float(item.get("profit_units"))
+                grouped[key]["total_staked"] += self._safe_float(item.get("stake") or 1.0)
+            elif result == "VOID":
+                grouped[key]["voids"] += 1
+            else:
+                grouped[key]["pending"] += 1
+
+        for stats in grouped.values():
+            settled = stats["settled"]
+            total_staked = stats["total_staked"]
+            stats["winrate"] = round((stats["wins"] / settled) * 100, 2) if settled else 0.0
+            stats["roi"] = round((stats["profit_units"] / total_staked) * 100, 2) if total_staked else 0.0
+            stats["profit_units"] = round(stats["profit_units"], 2)
+            stats["total_staked"] = round(stats["total_staked"], 2)
+
+        return grouped
 
     def _get_signal_key(self, signal: Dict[str, Any]) -> str:
         raw_key = signal.get("signal_key") or signal.get("signal_id")
@@ -232,6 +317,21 @@ class HistoryService:
             match_id = "UNKNOWN"
 
         return f"{str(match_id).strip()}:{str(market).strip().upper()}"
+
+    def _calculate_profit_units(self, item: Dict[str, Any]) -> float:
+        result = str(item.get("resultado") or item.get("status") or "").upper()
+        stake = self._safe_float(item.get("stake") or 1.0)
+        odds = self._safe_float(item.get("odds"))
+
+        if result == "WIN":
+            if odds > 1:
+                return round((odds - 1.0) * stake, 2)
+            return round(stake, 2)
+
+        if result == "LOSS":
+            return round(-stake, 2)
+
+        return 0.0
 
     def _trim_history(self) -> None:
         if len(self._history) > self.MAX_HISTORY_ITEMS:
@@ -374,3 +474,9 @@ class HistoryService:
                 return flag
 
         return None
+
+    def _safe_float(self, value: Any) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
