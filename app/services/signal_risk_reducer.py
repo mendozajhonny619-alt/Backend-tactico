@@ -42,6 +42,15 @@ class SignalRiskReducer:
         under_probability = self._safe_float(signal.get("under_probability"))
         risk_score = self._safe_float(signal.get("risk_score"))
 
+        final_decision = str(signal.get("final_decision") or "").upper()
+        signal_decay_status = str(signal.get("signal_decay_status") or "").upper()
+        revalidation_status = str(signal.get("revalidation_status") or "").upper()
+        cooling_detected = bool(signal.get("cooling_detected", False))
+        under_transition_score = self._safe_float(signal.get("under_transition_score"))
+        score_hold_probability = self._safe_float(signal.get("score_hold_probability"))
+        retention_risk = self._safe_float(signal.get("retention_risk"))
+        live_decay_factor = self._safe_float(signal.get("live_decay_factor") or 1.0)
+
         shots_on_target = self._safe_float(signal.get("shots_on_target"))
         shots = self._safe_float(signal.get("shots"))
         corners = self._safe_float(signal.get("corners"))
@@ -116,6 +125,30 @@ class SignalRiskReducer:
             if dangerous_attacks >= 28:
                 warnings.append("Partido con presión alta contra UNDER")
 
+        if cooling_detected or live_decay_factor <= 0.70:
+            warnings.append("Enfriamiento live detectado")
+
+        if under_transition_score >= 70:
+            warnings.append("Transición UNDER activa")
+
+        if score_hold_probability >= 70 or retention_risk >= 70:
+            warnings.append("Alta retención del marcador")
+
+        if signal_decay_status in {"COOLING", "NO_REENTRY", "AVOID"}:
+            warnings.append("Vida de señal degradada")
+
+        if revalidation_status in {"COOLING", "HIGH_RISK", "NO_REENTRY", "AVOID"}:
+            warnings.append("Revalidación debilitada")
+
+        if final_decision == "WAIT":
+            warnings.append("Decisión maestra exige esperar")
+
+        if final_decision == "NO_REENTRY":
+            warnings.append("Decisión maestra indica no reentrar")
+
+        if final_decision == "AVOID":
+            warnings.append("Decisión maestra indica evitar")
+
         # -----------------------------
         # Estado final del avisador
         # -----------------------------
@@ -137,6 +170,22 @@ class SignalRiskReducer:
         if market == "OVER" and minute >= 85 and active_minutes >= 15:
             status = "HIGH_CAUTION"
             live_advice = "MINUTO MUY AVANZADO: SOLO CON PRESIÓN EXTREMA"
+
+        if final_decision == "WAIT":
+            status = "WAIT_CONFIRMATION"
+            live_advice = "ESPERAR CONFIRMACIÓN: no reforzar sin nueva validación."
+
+        if final_decision == "NO_REENTRY":
+            status = "NO_REENTRY"
+            live_advice = "NO REENTRAR: la decisión maestra degradó la señal."
+
+        if final_decision == "AVOID":
+            status = "AVOID"
+            live_advice = "EVITAR: la decisión maestra bloqueó esta señal."
+
+        if signal_decay_status in {"NO_REENTRY", "AVOID"} and final_decision != "ENTER":
+            status = signal_decay_status
+            live_advice = "La vida útil de la señal ya no permite reentrada segura."
 
         reason = self._build_reason(
             status=status,
