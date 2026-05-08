@@ -72,6 +72,8 @@ class DeepLiveMatchAnalyzer:
         rhythm_trend = str(timeline.get("rhythm_trend") or "UNKNOWN").upper()
         goal_threat_trend = str(timeline.get("goal_threat_trend") or "UNKNOWN").upper()
         signal_life_status = str(timeline.get("signal_life_status") or "UNKNOWN").upper()
+        late_reactivation = bool(timeline.get("late_reactivation", False))
+        chaos_mode = bool(timeline.get("chaos_mode", False))
 
         delta_5 = timeline.get("delta_5m") if isinstance(timeline.get("delta_5m"), dict) else {}
         delta_10 = timeline.get("delta_10m") if isinstance(timeline.get("delta_10m"), dict) else {}
@@ -97,6 +99,8 @@ class DeepLiveMatchAnalyzer:
             pressure_trend=pressure_trend,
             rhythm_trend=rhythm_trend,
             goal_threat_trend=goal_threat_trend,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
             event_profile=event_profile,
         )
 
@@ -122,6 +126,8 @@ class DeepLiveMatchAnalyzer:
             rhythm_trend=rhythm_trend,
             goal_threat_trend=goal_threat_trend,
             signal_life_status=signal_life_status,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
             event_profile=event_profile,
         )
 
@@ -139,6 +145,8 @@ class DeepLiveMatchAnalyzer:
             red_alert=red_alert,
             pressure_trend=pressure_trend,
             goal_threat_trend=goal_threat_trend,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
             event_profile=event_profile,
         )
 
@@ -168,6 +176,8 @@ class DeepLiveMatchAnalyzer:
             fake_pressure_detected=fake_pressure_detected,
             pressure_without_depth=pressure_without_depth,
             red_alert=red_alert,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
             event_profile=event_profile,
             delta_5=delta_5,
             delta_10=delta_10,
@@ -184,6 +194,8 @@ class DeepLiveMatchAnalyzer:
             pressure_trend=pressure_trend,
             rhythm_trend=rhythm_trend,
             goal_threat_trend=goal_threat_trend,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
             tactical_alerts=tactical_alerts,
         )
 
@@ -202,6 +214,8 @@ class DeepLiveMatchAnalyzer:
             "deep_goal_threat_trend": goal_threat_trend,
             "deep_signal_life_status": signal_life_status,
 
+            "deep_late_reactivation": late_reactivation,
+            "deep_chaos_mode": chaos_mode,
             "deep_fake_pressure_detected": fake_pressure_detected,
             "deep_pressure_without_depth": pressure_without_depth,
 
@@ -229,11 +243,19 @@ class DeepLiveMatchAnalyzer:
         pressure_trend: str,
         rhythm_trend: str,
         goal_threat_trend: str,
+        late_reactivation: bool,
+        chaos_mode: bool,
         event_profile: Dict[str, Any],
     ) -> str:
         recent_goal = bool(event_profile.get("recent_goal", False))
         recent_red = bool(event_profile.get("recent_red_card", False))
         recent_subs = self._safe_int(event_profile.get("recent_substitutions"))
+
+        if chaos_mode:
+            return "VOLATILE"
+
+        if late_reactivation:
+            return "OVER_WATCH"
 
         if fake_pressure_detected or pressure_without_depth:
             if minute >= 60 and under_transition >= 60:
@@ -304,6 +326,8 @@ class DeepLiveMatchAnalyzer:
         rhythm_trend: str,
         goal_threat_trend: str,
         signal_life_status: str,
+        late_reactivation: bool,
+        chaos_mode: bool,
         event_profile: Dict[str, Any],
     ) -> float:
         confidence = 45.0
@@ -333,9 +357,13 @@ class DeepLiveMatchAnalyzer:
                 confidence += 6
             if red_alert:
                 confidence += 8
-            if cooling_detected:
+            if late_reactivation:
+                confidence += 8
+            if chaos_mode:
+                confidence += 6
+            if cooling_detected and not late_reactivation:
                 confidence -= 14
-            if live_decay <= 0.70:
+            if live_decay <= 0.70 and not late_reactivation:
                 confidence -= 8
             if fake_pressure_detected or pressure_without_depth:
                 confidence -= 18
@@ -354,11 +382,17 @@ class DeepLiveMatchAnalyzer:
                 confidence += 6
             if rhythm_trend == "FALLING":
                 confidence += 6
+            if late_reactivation or chaos_mode:
+                confidence -= 14
             if red_alert:
                 confidence -= 14
 
         elif projection_bias == "VOLATILE":
             confidence += 12
+            if chaos_mode:
+                confidence += 10
+            if late_reactivation:
+                confidence += 6
             if self._safe_int(event_profile.get("recent_goals_count")) >= 2:
                 confidence += 8
 
@@ -371,12 +405,14 @@ class DeepLiveMatchAnalyzer:
             confidence += 5
         elif signal_life_status == "ACTIVE_DANGER":
             confidence += 8
+        elif signal_life_status in {"LATE_REACTIVATION", "CHAOS_ACTIVE"}:
+            confidence += 10
         elif signal_life_status in {"WEAKENING", "NO_REENTRY"}:
             confidence -= 10
         elif signal_life_status == "AGING":
             confidence -= 5
 
-        if minute >= 80 and projection_bias in {"OVER", "OVER_WATCH"}:
+        if minute >= 80 and projection_bias in {"OVER", "OVER_WATCH"} and not late_reactivation:
             confidence -= 8
 
         if minute < 15:
@@ -413,10 +449,15 @@ class DeepLiveMatchAnalyzer:
         red_alert: bool,
         pressure_trend: str,
         goal_threat_trend: str,
+        late_reactivation: bool,
+        chaos_mode: bool,
         event_profile: Dict[str, Any],
     ) -> str:
         if minute < 70:
             return "NORMAL"
+
+        if chaos_mode or late_reactivation:
+            return "ALTO"
 
         if red_alert:
             return "ALTO"
@@ -560,6 +601,8 @@ class DeepLiveMatchAnalyzer:
         fake_pressure_detected: bool,
         pressure_without_depth: bool,
         red_alert: bool,
+        late_reactivation: bool,
+        chaos_mode: bool,
         event_profile: Dict[str, Any],
         delta_5: Dict[str, Any],
         delta_10: Dict[str, Any],
@@ -568,6 +611,12 @@ class DeepLiveMatchAnalyzer:
 
         if red_alert:
             alerts.append("RED_ALERT_ACTIVE")
+
+        if late_reactivation:
+            alerts.append("LATE_REACTIVATION")
+
+        if chaos_mode:
+            alerts.append("CHAOS_MODE_ACTIVE")
 
         if fake_pressure_detected:
             alerts.append("FAKE_PRESSURE_DETECTED")
@@ -584,7 +633,7 @@ class DeepLiveMatchAnalyzer:
         if minute >= 75 and pressure >= 20 and rhythm >= 12:
             alerts.append("LATE_PRESSURE_STILL_ACTIVE")
 
-        if minute >= 75 and cooling_detected:
+        if minute >= 75 and cooling_detected and not late_reactivation:
             alerts.append("LATE_COOLING_DETECTED")
 
         if score_diff >= 2 and minute >= 65:
@@ -622,8 +671,24 @@ class DeepLiveMatchAnalyzer:
         pressure_trend: str,
         rhythm_trend: str,
         goal_threat_trend: str,
+        late_reactivation: bool,
+        chaos_mode: bool,
         tactical_alerts: List[str],
     ) -> str:
+        if chaos_mode:
+            return (
+                f"Caos ofensivo detectado ({projection_confidence:.0f}%). "
+                f"Ventana estimada: {projection_window}. "
+                "El partido está abierto y puede romperse en cualquier momento."
+            )
+
+        if late_reactivation:
+            return (
+                f"Reactivación tardía detectada ({projection_confidence:.0f}%). "
+                f"Ventana estimada: {projection_window}. "
+                f"Riesgo de gol tardío: {late_goal_risk}."
+            )
+
         if projection_bias == "OVER":
             return (
                 f"Proyección OVER activa ({projection_confidence:.0f}%). "
