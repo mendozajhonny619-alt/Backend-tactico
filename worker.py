@@ -545,6 +545,8 @@ def run_worker() -> None:
                 closed_signals=closed_signals,
             )
 
+            runtime_state.add_closed_signals_to_history(closed_signals)
+
             active_signals = live_signal_manager.get_active_signals()
 
             runtime_state.update_live_matches(live_matches)
