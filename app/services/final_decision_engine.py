@@ -102,6 +102,10 @@ class FinalDecisionEngine:
         next_goal_support = str(match.get("next_goal_support") or "").upper()
 
         deep_projection_bias = str(match.get("deep_projection_bias") or "").upper()
+        deep_late_reactivation = bool(match.get("deep_late_reactivation", False))
+        deep_chaos_mode = bool(match.get("deep_chaos_mode", False))
+        late_goal_risk = str(match.get("late_goal_risk") or "").upper()
+
         risk_reducer_status = str(match.get("risk_reducer_status") or "").upper()
         revalidation_status = str(match.get("revalidation_status") or "").upper()
         signal_decay_status = str(match.get("signal_decay_status") or "").upper()
@@ -111,6 +115,13 @@ class FinalDecisionEngine:
             or match.get("deep_signal_life_status")
             or ""
         ).upper()
+
+        has_late_push = (
+            deep_late_reactivation
+            or deep_chaos_mode
+            or late_goal_risk == "ALTO"
+            or signal_life_status in {"LATE_REACTIVATION", "CHAOS_ACTIVE", "ACTIVE_DANGER"}
+        )
 
         decision = self.DECISION_OBSERVE
         reason = "FINAL_DECISION_OBSERVE_DEFAULT"
@@ -143,7 +154,7 @@ class FinalDecisionEngine:
                 market_type=market_type,
             )
 
-        if minute >= 86:
+        if minute >= 86 and not has_late_push:
             return self._result(
                 decision=self.DECISION_NO_REENTRY,
                 reason="FINAL_NO_REENTRY_TOO_LATE",
@@ -195,7 +206,7 @@ class FinalDecisionEngine:
                     market_type=market_type,
                 )
 
-            if context_state in {"MUERTO", "FRIO"}:
+            if context_state in {"MUERTO", "FRIO"} and not has_late_push:
                 return self._result(
                     decision=self.DECISION_AVOID,
                     reason="FINAL_AVOID_OVER_COLD_CONTEXT",
@@ -211,7 +222,7 @@ class FinalDecisionEngine:
                     market_type=market_type,
                 )
 
-            if cooling_detected or live_decay_factor <= 0.70:
+            if (cooling_detected or live_decay_factor <= 0.70) and not has_late_push:
                 return self._result(
                     decision=self.DECISION_NO_REENTRY,
                     reason="FINAL_NO_REENTRY_OVER_LIVE_COOLING",
@@ -219,7 +230,7 @@ class FinalDecisionEngine:
                     market_type=market_type,
                 )
 
-            if under_transition_score >= 70:
+            if under_transition_score >= 70 and not has_late_push:
                 return self._result(
                     decision=self.DECISION_NO_REENTRY,
                     reason="FINAL_NO_REENTRY_OVER_UNDER_TRANSITION",
@@ -227,7 +238,7 @@ class FinalDecisionEngine:
                     market_type=market_type,
                 )
 
-            if retention_risk >= 70 or retention_risk_label == "ALTO":
+            if (retention_risk >= 70 or retention_risk_label == "ALTO") and not has_late_push:
                 return self._result(
                     decision=self.DECISION_NO_REENTRY,
                     reason="FINAL_NO_REENTRY_OVER_RETENTION_RISK",
@@ -235,7 +246,7 @@ class FinalDecisionEngine:
                     market_type=market_type,
                 )
 
-            if score_hold_probability >= 70 and score_hold_probability > goal_probability:
+            if score_hold_probability >= 70 and score_hold_probability > goal_probability and not has_late_push:
                 return self._result(
                     decision=self.DECISION_NO_REENTRY,
                     reason="FINAL_NO_REENTRY_OVER_HOLD_BEATS_GOAL",
@@ -243,7 +254,7 @@ class FinalDecisionEngine:
                     market_type=market_type,
                 )
 
-            if next_goal_support == "AGAINST_OVER":
+            if next_goal_support == "AGAINST_OVER" and not has_late_push:
                 return self._result(
                     decision=self.DECISION_NO_REENTRY,
                     reason="FINAL_NO_REENTRY_NEXT_GOAL_AGAINST_OVER",
@@ -261,7 +272,7 @@ class FinalDecisionEngine:
                     market_type=market_type,
                 )
 
-            if minute >= 80 and not self._has_extreme_over_pressure(
+            if minute >= 80 and not has_late_push and not self._has_extreme_over_pressure(
                 pressure, rhythm, goal_window, over_window, context_state
             ):
                 return self._result(
@@ -271,7 +282,7 @@ class FinalDecisionEngine:
                     market_type=market_type,
                 )
 
-            if pressure >= 12 and rhythm < 7 and goal_probability < 62:
+            if pressure >= 12 and rhythm < 7 and goal_probability < 62 and not has_late_push:
                 return self._result(
                     decision=self.DECISION_OBSERVE,
                     reason="FINAL_OBSERVE_OVER_PRESSURE_WITHOUT_RHYTHM",
@@ -287,7 +298,17 @@ class FinalDecisionEngine:
                     market_type=market_type,
                 )
 
-            if (
+            if has_late_push and minute >= 80:
+                if market_valid and is_value:
+                    decision = self.DECISION_ENTER
+                    reason = "FINAL_ENTER_OVER_LATE_REACTIVATION_CONFIRMED"
+                    confidence = 78 + min(10, value_edge * 100)
+                else:
+                    decision = self.DECISION_WAIT
+                    reason = "FINAL_WAIT_OVER_LATE_REACTIVATION_NEEDS_MARKET"
+                    confidence = 76
+
+            elif (
                 ai_score >= 64
                 and goal_probability >= 66
                 and over_probability >= 66
@@ -335,6 +356,14 @@ class FinalDecisionEngine:
                     decision=self.DECISION_WAIT,
                     reason="FINAL_WAIT_UNDER_TOO_EARLY",
                     confidence=76,
+                    market_type=market_type,
+                )
+
+            if has_late_push:
+                return self._result(
+                    decision=self.DECISION_WAIT,
+                    reason="FINAL_WAIT_UNDER_LATE_REACTIVATION_RISK",
+                    confidence=78,
                     market_type=market_type,
                 )
 
@@ -415,18 +444,18 @@ class FinalDecisionEngine:
             reason = "FINAL_WAIT_RISK_REDUCER_HIGH_CAUTION"
             confidence = min(confidence, 70)
 
-        if decision == self.DECISION_ENTER and revalidation_status in {"COOLING", "WEAKENING"}:
+        if decision == self.DECISION_ENTER and revalidation_status in {"COOLING", "WEAKENING"} and not has_late_push:
             decision = self.DECISION_WAIT
             reason = "FINAL_WAIT_REVALIDATION_WEAKENING"
             confidence = min(confidence, 70)
 
-        if decision == self.DECISION_ENTER and signal_decay_status in {"COOLING", "AGING"}:
+        if decision == self.DECISION_ENTER and signal_decay_status in {"COOLING", "AGING"} and not has_late_push:
             decision = self.DECISION_WAIT
             reason = "FINAL_WAIT_SIGNAL_DECAY_WARNING"
             confidence = min(confidence, 70)
 
         if decision == self.DECISION_ENTER and next_goal_confidence > 0:
-            if market_type == "OVER" and next_goal_bias in {"NONE", "NO_GOAL", "HOLD"}:
+            if market_type == "OVER" and next_goal_bias in {"NONE", "NO_GOAL", "HOLD"} and not has_late_push:
                 decision = self.DECISION_OBSERVE
                 reason = "FINAL_OBSERVE_OVER_NEXT_GOAL_NOT_CONFIRMED"
                 confidence = min(confidence, 72)
