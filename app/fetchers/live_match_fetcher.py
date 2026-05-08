@@ -25,7 +25,11 @@ class LiveMatchFetcher:
     PLAYERS_CACHE_TTL_SECONDS = 120
 
     MAX_DEEP_SCAN_MATCHES = 12
-    MAX_OPERABLE_MINUTE = 87
+
+    # Ajuste:
+    # Antes era 87 y apagaba muy pronto el análisis fuerte.
+    # Ahora permite seguir leyendo minuto 88, 90+ y tramo final vivo.
+    MAX_OPERABLE_MINUTE = 97
     MAX_TRACKING_MINUTE = 130
 
     API_429_COOLDOWN_SECONDS = 300
@@ -347,6 +351,7 @@ class LiveMatchFetcher:
                 status_short = str(status.get("short") or "").upper()
                 status_long = str(status.get("long") or "").upper()
                 minute = self._safe_int(status.get("elapsed"))
+                elapsed_plus = self._safe_int(status.get("extra"))
 
                 if status_short in self.BLOCKED_STATUS_SHORT:
                     logger.info("LIVE_FETCHER: fixture=%s descartado por status_short=%s", fixture_id, status_short)
@@ -365,6 +370,8 @@ class LiveMatchFetcher:
                     continue
 
                 tracking_only = minute > self.MAX_OPERABLE_MINUTE
+                is_late_game = minute >= 75
+                is_added_time = minute >= 90 or elapsed_plus > 0
 
                 should_fetch_deep = (
                     deep_scan_used < self.MAX_DEEP_SCAN_MATCHES
@@ -394,7 +401,7 @@ class LiveMatchFetcher:
 
                 events = self._fetch_fixture_events(
                     fixture_id=fixture_id,
-                    should_fetch=should_fetch_deep or tracking_only,
+                    should_fetch=should_fetch_deep or tracking_only or is_late_game,
                 )
 
                 players = self._fetch_fixture_players(
@@ -458,6 +465,10 @@ class LiveMatchFetcher:
 
                     "minute": minute,
                     "minuto": minute,
+                    "elapsed_plus": elapsed_plus,
+                    "added_time": elapsed_plus,
+                    "is_added_time": is_added_time,
+                    "is_late_game": is_late_game,
                     "status_short": status_short,
                     "status_long": status_long,
 
@@ -653,6 +664,8 @@ class LiveMatchFetcher:
                     continue
 
                 tracking_only = minute > self.MAX_OPERABLE_MINUTE
+                is_late_game = minute >= 75
+                is_added_time = minute >= 90
 
                 home_stats = {
                     "possession": 50.0,
@@ -709,6 +722,10 @@ class LiveMatchFetcher:
 
                         "minute": minute,
                         "minuto": minute,
+                        "elapsed_plus": 0,
+                        "added_time": 0,
+                        "is_added_time": is_added_time,
+                        "is_late_game": is_late_game,
                         "home_score": home_score,
                         "away_score": away_score,
                         "score": f"{home_score}-{away_score}",
