@@ -47,6 +47,28 @@ class EliteContextGuard:
         market = str(signal.get("market") or "").upper()
         rank = str(signal.get("rank") or "").upper()
 
+        final_decision = str(signal.get("final_decision") or "").upper()
+        signal_decay_status = str(signal.get("signal_decay_status") or "").upper()
+        revalidation_status = str(signal.get("revalidation_status") or "").upper()
+        risk_reducer_status = str(signal.get("risk_reducer_status") or "").upper()
+
+        retention_risk = self._safe_float(signal.get("retention_risk"))
+        score_hold_probability = self._safe_float(signal.get("score_hold_probability"))
+        under_transition_score = self._safe_float(
+            context.get("under_transition_score") or signal.get("under_transition_score")
+        )
+
+        fake_pressure_detected = bool(
+            context.get("fake_pressure_detected")
+            or signal.get("fake_pressure_detected")
+            or signal.get("deep_fake_pressure_detected")
+        )
+        pressure_without_depth = bool(
+            context.get("pressure_without_depth")
+            or signal.get("pressure_without_depth")
+            or signal.get("deep_pressure_without_depth")
+        )
+
         # 1) Datos débiles
         if data_quality == "LOW":
             penalty += 10
@@ -84,6 +106,18 @@ class EliteContextGuard:
                 penalty += 12
                 warnings.append("OVER_AGAINST_COLD_CONTEXT")
 
+            if retention_risk >= 70 or score_hold_probability >= 70:
+                penalty += 18
+                warnings.append("OVER_AGAINST_RETENTION_RISK")
+
+            if fake_pressure_detected or pressure_without_depth:
+                penalty += 18
+                warnings.append("OVER_FAKE_PRESSURE_OR_NO_DEPTH")
+
+            if under_transition_score >= 70:
+                penalty += 14
+                warnings.append("OVER_AGAINST_UNDER_TRANSITION")
+
         # 5) UNDER con señales ofensivas fuertes en contra
         if "UNDER" in market:
             if goal_prob >= 60:
@@ -112,6 +146,31 @@ class EliteContextGuard:
             if context_state not in {"TIBIO", "CALIENTE", "MUY_CALIENTE", "CONTROLADO"}:
                 penalty += 6
                 warnings.append("HIGH_RANK_WITH_UNCLEAR_CONTEXT")
+
+        # 8) Coordinación con decisión/vida/revalidación
+        if final_decision == "WAIT":
+            penalty += 8
+            warnings.append("FINAL_DECISION_WAIT")
+
+        if final_decision == "NO_REENTRY":
+            penalty += 18
+            warnings.append("FINAL_DECISION_NO_REENTRY")
+
+        if final_decision == "AVOID":
+            penalty += 28
+            warnings.append("FINAL_DECISION_AVOID")
+
+        if signal_decay_status in {"COOLING", "NO_REENTRY", "AVOID"}:
+            penalty += 14
+            warnings.append("SIGNAL_DECAY_DEGRADED")
+
+        if revalidation_status in {"COOLING", "HIGH_RISK", "NO_REENTRY", "AVOID"}:
+            penalty += 14
+            warnings.append("REVALIDATION_DEGRADED")
+
+        if risk_reducer_status in {"HIGH_CAUTION", "NO_REENTRY", "AVOID"}:
+            penalty += 14
+            warnings.append("RISK_REDUCER_WARNING")
 
         guard_score = max(0.0, min(100.0, 100.0 - penalty))
 
