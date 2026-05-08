@@ -84,7 +84,6 @@ class SignalLifecycleService:
         entry_minute = self._safe_int(record.get("entry_minute") or record.get("minute"))
         entry_total = self._safe_float(record.get("entry_total_goals"))
         current_total = self._total_goals(live_match)
-        current_minute = self._minute(live_match)
         status_short = str(live_match.get("status_short") or "").upper()
 
         goal_after_entry = (
@@ -92,7 +91,10 @@ class SignalLifecycleService:
             or self._has_goal_after(events or [], entry_minute)
         )
 
-        finished = current_minute >= 90 or status_short in self.FINISHED_STATUS
+        # Importante:
+        # No cerrar solo por minuto >= 90.
+        # En fútbol puede haber 90+ añadido; se cierra cuando API confirma FT/AET/PEN/etc.
+        finished = status_short in self.FINISHED_STATUS
 
         if "OVER" in market:
             if goal_after_entry:
@@ -136,6 +138,8 @@ class SignalLifecycleService:
 
         closed = deepcopy(signal)
         closed["signal_key"] = key
+        closed["signal_id"] = closed.get("signal_id") or key
+
         closed["status"] = result
         closed["resultado"] = result
         closed["live_status"] = "CLOSED"
@@ -143,8 +147,25 @@ class SignalLifecycleService:
         closed["lifecycle_close_reason"] = reason
         closed["close_reason"] = reason
         closed["closed_at"] = datetime.now().isoformat(timespec="seconds")
+
         closed["final_score"] = self._score_text(live_match)
         closed["final_minute"] = self._minute(live_match)
+        closed["current_score"] = self._score_text(live_match)
+        closed["current_minute"] = self._minute(live_match)
+
+        closed["score"] = self._score_text(live_match)
+        closed["minute"] = self._minute(live_match)
+
+        closed["home_score"] = self._safe_int(
+            live_match.get("home_score")
+            or live_match.get("local_score")
+            or live_match.get("marcador_local")
+        )
+        closed["away_score"] = self._safe_int(
+            live_match.get("away_score")
+            or live_match.get("visitante_score")
+            or live_match.get("marcador_visitante")
+        )
 
         self._signals[key] = closed
         return deepcopy(closed)
