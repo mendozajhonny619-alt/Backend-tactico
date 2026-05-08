@@ -37,7 +37,6 @@ class LiveSignalManager:
         self._signal_decay = SignalDecayService()
         self._performance_analyzer = SignalPerformanceAnalyzer()
 
-        # Tracking interno de rendimiento
         self._tracking_history: List[Dict[str, Any]] = []
         self._tracked_closed_keys: set[str] = set()
 
@@ -220,13 +219,6 @@ class LiveSignalManager:
         return self._build_tracking_summary(self._tracking_history)
 
     def get_performance_analysis(self) -> Dict[str, Any]:
-        """
-        Analiza rendimiento real de señales cerradas.
-
-        No modifica señales.
-        No bloquea señales.
-        Solo devuelve lectura estadística.
-        """
         return self._performance_analyzer.analyze(self._tracking_history)
 
     def get_best_patterns(self) -> List[Dict[str, Any]]:
@@ -238,11 +230,6 @@ class LiveSignalManager:
         return analysis.get("danger_patterns", []) or []
 
     def _apply_auto_rescan(self, signal: Dict[str, Any]) -> None:
-        """
-        Marca reescaneo automático cada AUTO_RESCAN_MINUTES.
-        No bloquea ni cierra señales.
-        Solo agrega metadata para que los asesores/panel sepan si fue revalidada.
-        """
         if not isinstance(signal, dict):
             return
 
@@ -269,15 +256,6 @@ class LiveSignalManager:
             signal["auto_rescan_minutes_passed"] = minutes_passed
 
     def _apply_signal_advisors(self, signal: Dict[str, Any]) -> None:
-        """
-        Aplica módulos asesores sin bloquear ni modificar la señal base.
-
-        Agrega:
-        - risk_reducer_*
-        - revalidation_*
-        - decision_*
-        - signal_decay_*
-        """
         if not isinstance(signal, dict):
             return
 
@@ -295,13 +273,6 @@ class LiveSignalManager:
         self._apply_final_decision_to_live_signal(signal)
 
     def _apply_final_decision_to_live_signal(self, signal: Dict[str, Any]) -> None:
-        """
-        Aplica la decisión maestra a la señal viva.
-
-        No cierra resultados.
-        No cambia WIN/LOSS.
-        Solo degrada estado operativo live.
-        """
         if not isinstance(signal, dict):
             return
 
@@ -444,27 +415,23 @@ class LiveSignalManager:
             "context_state": closed_signal.get("context_state"),
             "data_quality": closed_signal.get("data_quality"),
             "game_quality": closed_signal.get("game_quality"),
-
             "risk_reducer_status": closed_signal.get("risk_reducer_status"),
             "risk_reducer_reason": closed_signal.get("risk_reducer_reason"),
             "live_advice": closed_signal.get("live_advice"),
             "risk_warnings": closed_signal.get("risk_warnings"),
             "positive_factors": closed_signal.get("positive_factors"),
-
             "revalidation_status": closed_signal.get("revalidation_status"),
             "revalidation_score": closed_signal.get("revalidation_score"),
             "revalidation_reason": closed_signal.get("revalidation_reason"),
             "revalidation_advice": closed_signal.get("revalidation_advice"),
             "signal_age_label": closed_signal.get("signal_age_label"),
             "revalidation_warnings": closed_signal.get("revalidation_warnings"),
-
             "decision_status": closed_signal.get("decision_status"),
             "decision_score": closed_signal.get("decision_score"),
             "decision_label": closed_signal.get("decision_label"),
             "decision_advice": closed_signal.get("decision_advice"),
             "decision_reason": closed_signal.get("decision_reason"),
             "decision_warnings": closed_signal.get("decision_warnings"),
-
             "active_minutes": closed_signal.get("active_minutes"),
             "entry_signal_score": closed_signal.get("entry_signal_score"),
             "entry_decision_score": closed_signal.get("entry_decision_score"),
@@ -472,7 +439,6 @@ class LiveSignalManager:
             "signal_decay_status": closed_signal.get("signal_decay_status"),
             "signal_decay_advice": closed_signal.get("signal_decay_advice"),
             "signal_decay_score": closed_signal.get("signal_decay_score"),
-
             "final_decision": closed_signal.get("final_decision"),
             "final_decision_reason": closed_signal.get("final_decision_reason"),
             "final_decision_confidence": closed_signal.get("final_decision_confidence"),
@@ -482,13 +448,11 @@ class LiveSignalManager:
             "live_entry_status": closed_signal.get("live_entry_status"),
             "live_entry_advice": closed_signal.get("live_entry_advice"),
             "no_reentry": closed_signal.get("no_reentry"),
-
             "auto_rescan_status": closed_signal.get("auto_rescan_status"),
             "auto_rescan_minutes_passed": closed_signal.get("auto_rescan_minutes_passed"),
             "rescan_count": closed_signal.get("rescan_count"),
             "last_rescan_minute": closed_signal.get("last_rescan_minute"),
             "last_rescan_at": closed_signal.get("last_rescan_at"),
-
             "closed_at": closed_signal.get("closed_at") or datetime.now().isoformat(timespec="seconds"),
         }
 
@@ -607,6 +571,51 @@ class LiveSignalManager:
             return None
 
         return None
+
+    def _close_signal(
+        self,
+        signal: Dict[str, Any],
+        result: str,
+        reason: str,
+        live_match: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        key = self._signal_key(signal)
+        if key:
+            self._closed_keys.add(key)
+
+        closed = deepcopy(signal)
+        closed["signal_key"] = key or closed.get("signal_key")
+        closed["signal_id"] = closed.get("signal_id") or closed.get("signal_key")
+
+        closed["live_status"] = "CLOSED"
+        closed["status"] = result
+        closed["resultado"] = result
+        closed["close_reason"] = reason
+        closed["closed_at"] = datetime.now().isoformat(timespec="seconds")
+
+        closed["final_score"] = self._score_text(live_match)
+        closed["final_minute"] = self._minute(live_match)
+        closed["current_score"] = self._score_text(live_match)
+        closed["current_minute"] = self._minute(live_match)
+
+        closed["score"] = self._score_text(live_match)
+        closed["minute"] = self._minute(live_match)
+
+        closed["home_score"] = self._safe_int(
+            live_match.get("home_score")
+            or live_match.get("local_score")
+            or live_match.get("marcador_local")
+        )
+        closed["away_score"] = self._safe_int(
+            live_match.get("away_score")
+            or live_match.get("visitante_score")
+            or live_match.get("marcador_visitante")
+        )
+
+        self._refresh_live_fields(closed, live_match)
+        self._apply_signal_advisors(closed)
+
+        return closed
 
     def _close_without_live_match(
         self,
