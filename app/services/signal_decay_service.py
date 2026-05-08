@@ -33,6 +33,13 @@ class SignalDecayService:
             or data.get("decision_score")
         )
 
+        final_decision = str(data.get("final_decision") or "").upper()
+        cooling_detected = bool(data.get("cooling_detected", False))
+        under_transition_score = self._safe_float(data.get("under_transition_score"))
+        retention_risk = self._safe_float(data.get("retention_risk"))
+        score_hold_probability = self._safe_float(data.get("score_hold_probability"))
+        live_decay_factor = self._safe_float(data.get("live_decay_factor") or 1.0)
+
         trend = "STABLE"
         if current_score >= entry_score + 8:
             trend = "UP"
@@ -61,6 +68,30 @@ class SignalDecayService:
         if trend == "DOWN" and active_minutes >= 5:
             status = "COOLING"
             advice = "La señal está bajando respecto a su entrada. Riesgo de enfriamiento."
+
+        if cooling_detected or live_decay_factor <= 0.70:
+            status = "COOLING"
+            advice = "La señal muestra enfriamiento live. No reentrar sin nueva confirmación fuerte."
+
+        if under_transition_score >= 70:
+            status = "NO_REENTRY"
+            advice = "Transición UNDER activa. No reentrar en señales OVER sin reactivación real."
+
+        if retention_risk >= 70 or score_hold_probability >= 70:
+            status = "NO_REENTRY"
+            advice = "Alta probabilidad de retención del marcador. No reentrar."
+
+        if final_decision == "WAIT":
+            status = "WAIT_CONFIRMATION"
+            advice = "La decisión maestra exige esperar confirmación."
+
+        if final_decision == "NO_REENTRY":
+            status = "NO_REENTRY"
+            advice = "La decisión maestra indica no reentrar."
+
+        if final_decision == "AVOID":
+            status = "AVOID"
+            advice = "La decisión maestra indica evitar la señal."
 
         return {
             "active_minutes": active_minutes,
