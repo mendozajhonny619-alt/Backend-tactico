@@ -64,6 +64,8 @@ class DeepLiveMatchAnalyzer:
         attack_side = str(context.get("attack_side") or "BALANCED").upper()
 
         cooling_detected = bool(context.get("cooling_detected", False))
+        fake_pressure_detected = bool(context.get("fake_pressure_detected", False))
+        pressure_without_depth = bool(context.get("pressure_without_depth", False))
         red_alert = bool(context.get("red_alert", False))
 
         pressure_trend = str(timeline.get("pressure_trend") or "UNKNOWN").upper()
@@ -89,6 +91,8 @@ class DeepLiveMatchAnalyzer:
             under_probability=under_probability,
             context_state=context_state,
             cooling_detected=cooling_detected,
+            fake_pressure_detected=fake_pressure_detected,
+            pressure_without_depth=pressure_without_depth,
             red_alert=red_alert,
             pressure_trend=pressure_trend,
             rhythm_trend=rhythm_trend,
@@ -111,6 +115,8 @@ class DeepLiveMatchAnalyzer:
             data_quality=data_quality,
             game_quality=game_quality,
             cooling_detected=cooling_detected,
+            fake_pressure_detected=fake_pressure_detected,
+            pressure_without_depth=pressure_without_depth,
             red_alert=red_alert,
             pressure_trend=pressure_trend,
             rhythm_trend=rhythm_trend,
@@ -142,9 +148,12 @@ class DeepLiveMatchAnalyzer:
             rhythm=rhythm,
             under_transition=under_transition,
             cooling_detected=cooling_detected,
+            fake_pressure_detected=fake_pressure_detected,
+            pressure_without_depth=pressure_without_depth,
             context_state=context_state,
             live_decay=live_decay,
         )
+        retention_risk_label = self._risk_label(retention_risk)
 
         tactical_alerts = self._tactical_alerts(
             minute=minute,
@@ -156,6 +165,8 @@ class DeepLiveMatchAnalyzer:
             dominance=dominance,
             attack_side=attack_side,
             cooling_detected=cooling_detected,
+            fake_pressure_detected=fake_pressure_detected,
+            pressure_without_depth=pressure_without_depth,
             red_alert=red_alert,
             event_profile=event_profile,
             delta_5=delta_5,
@@ -168,6 +179,7 @@ class DeepLiveMatchAnalyzer:
             projection_window=projection_window,
             late_goal_risk=late_goal_risk,
             retention_risk=retention_risk,
+            retention_risk_label=retention_risk_label,
             signal_life_status=signal_life_status,
             pressure_trend=pressure_trend,
             rhythm_trend=rhythm_trend,
@@ -182,12 +194,16 @@ class DeepLiveMatchAnalyzer:
             "deep_projection_window": projection_window,
 
             "late_goal_risk": late_goal_risk,
-            "retention_risk": retention_risk,
+            "retention_risk": round(retention_risk, 2),
+            "retention_risk_label": retention_risk_label,
 
             "deep_pressure_trend": pressure_trend,
             "deep_rhythm_trend": rhythm_trend,
             "deep_goal_threat_trend": goal_threat_trend,
             "deep_signal_life_status": signal_life_status,
+
+            "deep_fake_pressure_detected": fake_pressure_detected,
+            "deep_pressure_without_depth": pressure_without_depth,
 
             "deep_event_profile": event_profile,
             "deep_tactical_alerts": tactical_alerts,
@@ -207,6 +223,8 @@ class DeepLiveMatchAnalyzer:
         under_probability: float,
         context_state: str,
         cooling_detected: bool,
+        fake_pressure_detected: bool,
+        pressure_without_depth: bool,
         red_alert: bool,
         pressure_trend: str,
         rhythm_trend: str,
@@ -216,6 +234,11 @@ class DeepLiveMatchAnalyzer:
         recent_goal = bool(event_profile.get("recent_goal", False))
         recent_red = bool(event_profile.get("recent_red_card", False))
         recent_subs = self._safe_int(event_profile.get("recent_substitutions"))
+
+        if fake_pressure_detected or pressure_without_depth:
+            if minute >= 60 and under_transition >= 60:
+                return "UNDER"
+            return "NEUTRAL"
 
         if red_alert or recent_red:
             return "OVER"
@@ -274,6 +297,8 @@ class DeepLiveMatchAnalyzer:
         data_quality: str,
         game_quality: str,
         cooling_detected: bool,
+        fake_pressure_detected: bool,
+        pressure_without_depth: bool,
         red_alert: bool,
         pressure_trend: str,
         rhythm_trend: str,
@@ -312,6 +337,8 @@ class DeepLiveMatchAnalyzer:
                 confidence -= 14
             if live_decay <= 0.70:
                 confidence -= 8
+            if fake_pressure_detected or pressure_without_depth:
+                confidence -= 18
 
         elif projection_bias == "UNDER":
             confidence += max(0.0, under_probability - 50.0) * 0.35
@@ -320,6 +347,8 @@ class DeepLiveMatchAnalyzer:
             confidence += max(0.0, 15.0 - min(rhythm, 15.0)) * 0.35
 
             if cooling_detected:
+                confidence += 8
+            if fake_pressure_detected or pressure_without_depth:
                 confidence += 8
             if pressure_trend == "FALLING":
                 confidence += 6
@@ -335,6 +364,8 @@ class DeepLiveMatchAnalyzer:
 
         else:
             confidence -= 8
+            if fake_pressure_detected or pressure_without_depth:
+                confidence += 4
 
         if signal_life_status == "VALID":
             confidence += 5
@@ -414,24 +445,57 @@ class DeepLiveMatchAnalyzer:
         rhythm: float,
         under_transition: float,
         cooling_detected: bool,
+        fake_pressure_detected: bool,
+        pressure_without_depth: bool,
         context_state: str,
         live_decay: float,
-    ) -> str:
+    ) -> float:
+        risk = 20.0
+
+        if minute >= 55:
+            risk += 10.0
+        if minute >= 65:
+            risk += 10.0
+        if minute >= 75:
+            risk += 10.0
+
+        if context_state in {"CONTROLADO", "FRIO", "MUERTO"}:
+            risk += 18.0
+
+        if pressure <= 16:
+            risk += 14.0
+        elif pressure <= 22:
+            risk += 8.0
+
+        if rhythm <= 10:
+            risk += 14.0
+        elif rhythm <= 16:
+            risk += 8.0
+
+        if under_transition >= 75:
+            risk += 18.0
+        elif under_transition >= 60:
+            risk += 10.0
+
+        if cooling_detected:
+            risk += 10.0
+
+        if fake_pressure_detected or pressure_without_depth:
+            risk += 12.0
+
+        if live_decay <= 0.70:
+            risk += 10.0
+
         if minute < 55:
-            return "BAJO"
+            risk = min(risk, 45.0)
 
-        if (
-            under_transition >= 75
-            and cooling_detected
-            and pressure <= 16
-            and rhythm <= 10
-            and context_state in {"CONTROLADO", "FRIO", "MUERTO"}
-        ):
+        return max(0.0, min(risk, 100.0))
+
+    def _risk_label(self, risk: float) -> str:
+        if risk >= 70:
             return "ALTO"
-
-        if under_transition >= 60 or live_decay <= 0.70:
+        if risk >= 45:
             return "MEDIO"
-
         return "BAJO"
 
     def _event_profile(self, events: List[Dict[str, Any]], minute: int) -> Dict[str, Any]:
@@ -493,6 +557,8 @@ class DeepLiveMatchAnalyzer:
         dominance: str,
         attack_side: str,
         cooling_detected: bool,
+        fake_pressure_detected: bool,
+        pressure_without_depth: bool,
         red_alert: bool,
         event_profile: Dict[str, Any],
         delta_5: Dict[str, Any],
@@ -502,6 +568,12 @@ class DeepLiveMatchAnalyzer:
 
         if red_alert:
             alerts.append("RED_ALERT_ACTIVE")
+
+        if fake_pressure_detected:
+            alerts.append("FAKE_PRESSURE_DETECTED")
+
+        if pressure_without_depth:
+            alerts.append("PRESSURE_WITHOUT_DEPTH")
 
         if bool(event_profile.get("recent_red_card", False)):
             alerts.append("RECENT_RED_CARD_VOLATILITY")
@@ -544,7 +616,8 @@ class DeepLiveMatchAnalyzer:
         projection_confidence: float,
         projection_window: str,
         late_goal_risk: str,
-        retention_risk: str,
+        retention_risk: float,
+        retention_risk_label: str,
         signal_life_status: str,
         pressure_trend: str,
         rhythm_trend: str,
@@ -569,7 +642,7 @@ class DeepLiveMatchAnalyzer:
         if projection_bias == "UNDER":
             return (
                 f"Proyección UNDER/retención ({projection_confidence:.0f}%). "
-                f"Riesgo de retención: {retention_risk}. "
+                f"Riesgo de retención: {retention_risk_label} ({retention_risk:.0f}%). "
                 f"Estado señal: {signal_life_status}."
             )
 
@@ -578,6 +651,9 @@ class DeepLiveMatchAnalyzer:
                 f"Partido volátil ({projection_confidence:.0f}%). "
                 "Eventos recientes pueden alterar la lectura normal."
             )
+
+        if "FAKE_PRESSURE_DETECTED" in tactical_alerts:
+            return "Lectura neutral: presión detectada, pero sin profundidad real."
 
         if "RECENT_SUBSTITUTIONS_TACTICAL_SHIFT" in tactical_alerts:
             return "Lectura neutral con posible cambio táctico reciente; esperar nueva confirmación."
