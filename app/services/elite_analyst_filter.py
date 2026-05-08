@@ -53,7 +53,25 @@ class EliteAnalystFilter:
         game_quality = str(context.get("game_quality") or signal.get("game_quality") or "LOW").upper()
         context_state = str(context.get("context_state") or signal.get("context_state") or "").upper()
 
-        # 🔍 CONTEXT GUARD (nuevo)
+        final_decision = str(signal.get("final_decision") or "").upper()
+        signal_decay_status = str(signal.get("signal_decay_status") or "").upper()
+        revalidation_status = str(signal.get("revalidation_status") or "").upper()
+        risk_reducer_status = str(signal.get("risk_reducer_status") or "").upper()
+        next_goal_support = str(signal.get("next_goal_support") or "").upper()
+
+        retention_risk = self._safe_float(signal.get("retention_risk"))
+        fake_pressure_detected = bool(
+            context.get("fake_pressure_detected")
+            or signal.get("fake_pressure_detected")
+            or signal.get("deep_fake_pressure_detected")
+        )
+        pressure_without_depth = bool(
+            context.get("pressure_without_depth")
+            or signal.get("pressure_without_depth")
+            or signal.get("deep_pressure_without_depth")
+        )
+
+        # 🔍 CONTEXT GUARD
         guard = self._context_guard.evaluate(
             signal=signal,
             context=context,
@@ -78,6 +96,31 @@ class EliteAnalystFilter:
 
         if minute < 12:
             return self._reject("ANALYST_TOO_EARLY")
+
+        # 🔴 DECISIÓN MAESTRA / VIDA DE SEÑAL / REVALIDACIÓN
+        if final_decision == "AVOID":
+            return self._reject("ANALYST_FINAL_DECISION_AVOID")
+
+        if final_decision == "NO_REENTRY":
+            return self._downgrade("OBSERVACION", "ANALYST_FINAL_DECISION_NO_REENTRY")
+
+        if signal_decay_status in {"NO_REENTRY", "AVOID"}:
+            return self._downgrade("OBSERVACION", "ANALYST_SIGNAL_DECAY_BLOCK")
+
+        if revalidation_status in {"HIGH_RISK", "NO_REENTRY", "AVOID"}:
+            return self._downgrade("OBSERVACION", "ANALYST_REVALIDATION_BLOCK")
+
+        if risk_reducer_status in {"HIGH_CAUTION", "NO_REENTRY", "AVOID"}:
+            return self._downgrade("OBSERVACION", "ANALYST_RISK_REDUCER_BLOCK")
+
+        if "OVER" in market and retention_risk >= 70:
+            return self._downgrade("OBSERVACION", "ANALYST_OVER_RETENTION_RISK")
+
+        if "OVER" in market and (fake_pressure_detected or pressure_without_depth):
+            return self._downgrade("OBSERVACION", "ANALYST_OVER_FAKE_PRESSURE")
+
+        if "OVER" in market and next_goal_support == "AGAINST_OVER":
+            return self._downgrade("OBSERVACION", "ANALYST_NEXT_GOAL_AGAINST_OVER")
 
         # 🔴 CONTEXTO PELIGROSO
         if guard_status == "DANGER":
@@ -121,8 +164,6 @@ class EliteAnalystFilter:
             )
 
         return self._reject("ANALYST_UNKNOWN_MARKET")
-
-    # 🔽 TODO LO DEMÁS QUEDA EXACTAMENTE IGUAL
 
     def _validate_over(
         self,
