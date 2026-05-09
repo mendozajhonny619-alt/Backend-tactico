@@ -12,6 +12,11 @@ class SignalRiskReducer:
     - No elimina señales.
     - No cambia el mercado.
     - Solo agrega lectura preventiva para ayudar a decidir mejor.
+
+    Ajuste:
+    - No sobrecastiga minuto 80+ si hay reactivación real.
+    - Distingue presión falsa, retención, cooling y caos.
+    - Permite lectura de riesgo más inteligente en tramo final.
     """
 
     def evaluate(self, signal: Dict[str, Any]) -> Dict[str, Any]:
@@ -45,6 +50,7 @@ class SignalRiskReducer:
         final_decision = str(signal.get("final_decision") or "").upper()
         signal_decay_status = str(signal.get("signal_decay_status") or "").upper()
         revalidation_status = str(signal.get("revalidation_status") or "").upper()
+
         cooling_detected = bool(signal.get("cooling_detected", False))
         under_transition_score = self._safe_float(signal.get("under_transition_score"))
         score_hold_probability = self._safe_float(signal.get("score_hold_probability"))
@@ -56,6 +62,39 @@ class SignalRiskReducer:
         corners = self._safe_float(signal.get("corners"))
         dangerous_attacks = self._safe_float(signal.get("dangerous_attacks"))
         xg = self._safe_float(signal.get("xg") or signal.get("xG"))
+
+        pressure = self._safe_float(signal.get("pressure_index"))
+        rhythm = self._safe_float(signal.get("rhythm_index"))
+        goal_window = self._safe_float(signal.get("goal_window_score"))
+        over_window = self._safe_float(signal.get("over_window_score"))
+        context_state = str(signal.get("context_state") or "").upper()
+
+        late_reactivation = bool(signal.get("late_reactivation", False))
+        chaos_mode = bool(signal.get("chaos_mode", False))
+        red_alert = bool(signal.get("red_alert", False))
+        fake_pressure_detected = bool(signal.get("fake_pressure_detected", False))
+        pressure_without_depth = bool(signal.get("pressure_without_depth", False))
+        retention_shape = bool(signal.get("retention_shape", False))
+        field_vision_status = str(signal.get("field_vision_status") or "").upper()
+        is_added_time = bool(
+            signal.get("is_added_time")
+            or signal.get("field_vision_is_added_time")
+            or minute >= 90
+        )
+
+        live_reactivation = self._has_live_reactivation(
+            minute=minute,
+            pressure=pressure,
+            rhythm=rhythm,
+            goal_window=goal_window,
+            over_window=over_window,
+            context_state=context_state,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
+            red_alert=red_alert,
+            field_vision_status=field_vision_status,
+            is_added_time=is_added_time,
+        )
 
         warnings: List[str] = []
         positives: List[str] = []
@@ -90,6 +129,12 @@ class SignalRiskReducer:
         if xg >= 1.0:
             positives.append("xG competitivo")
 
+        if live_reactivation:
+            positives.append("Reactivación live detectada")
+
+        if chaos_mode or red_alert:
+            positives.append("Partido en modo caos / alerta roja")
+
         # -----------------------------
         # Alertas de riesgo
         # -----------------------------
@@ -98,53 +143,104 @@ class SignalRiskReducer:
 
         if market == "OVER":
             if minute >= 80:
-                warnings.append("OVER en minuto avanzado")
+                if live_reactivation:
+                    warnings.append("OVER en minuto avanzado, pero con reactivación")
+                else:
+                    warnings.append("OVER en minuto avanzado")
 
             if active_minutes >= 15:
-                warnings.append("La señal lleva varios minutos activa sin cumplirse")
+                if live_reactivation:
+                    warnings.append("Señal antigua, pero reactivada")
+                else:
+                    warnings.append("La señal lleva varios minutos activa sin cumplirse")
 
             if active_minutes >= 22:
-                warnings.append("Señal enfriada por tiempo activo prolongado")
+                if live_reactivation:
+                    warnings.append("Señal muy antigua, requiere confirmación extrema")
+                else:
+                    warnings.append("Señal enfriada por tiempo activo prolongado")
 
-            if shots_on_target <= 1 and minute >= 65:
+            if shots_on_target <= 1 and minute >= 65 and not live_reactivation:
                 warnings.append("Pocos tiros al arco para una señal OVER")
 
-            if xg < 0.7 and minute >= 65:
+            if xg < 0.7 and minute >= 65 and not live_reactivation:
                 warnings.append("xG bajo para sostener alta probabilidad de gol")
 
-            if dangerous_attacks < 12 and minute >= 65:
+            if dangerous_attacks < 12 and minute >= 65 and not live_reactivation:
                 warnings.append("Ataques peligrosos bajos para OVER")
 
+            if fake_pressure_detected:
+                warnings.append("Presión falsa contra OVER")
+
+            if pressure_without_depth:
+                warnings.append("Presión sin profundidad contra OVER")
+
+            if retention_shape:
+                warnings.append("Forma de retención contra OVER")
+
         if market == "UNDER":
-            if goal_probability >= 60:
+            if goal_probability >= 60 and not (
+                retention_shape or fake_pressure_detected or pressure_without_depth
+            ):
                 warnings.append("Amenaza de gol elevada para una señal UNDER")
 
-            if shots_on_target >= 4:
+            if shots_on_target >= 4 and not fake_pressure_detected:
                 warnings.append("Demasiados tiros al arco para UNDER")
 
-            if dangerous_attacks >= 28:
+            if dangerous_attacks >= 28 and not pressure_without_depth:
                 warnings.append("Partido con presión alta contra UNDER")
 
+            if retention_shape:
+                positives.append("Retención favorece UNDER")
+
+            if fake_pressure_detected or pressure_without_depth:
+                positives.append("Presión débil favorece UNDER")
+
         if cooling_detected or live_decay_factor <= 0.70:
-            warnings.append("Enfriamiento live detectado")
+            if live_reactivation:
+                warnings.append("Enfriamiento previo, pero con reactivación")
+            else:
+                warnings.append("Enfriamiento live detectado")
 
         if under_transition_score >= 70:
-            warnings.append("Transición UNDER activa")
+            if market == "UNDER":
+                positives.append("Transición UNDER activa a favor")
+            elif live_reactivation:
+                warnings.append("Transición UNDER activa, pero hay reactivación")
+            else:
+                warnings.append("Transición UNDER activa")
 
         if score_hold_probability >= 70 or retention_risk >= 70:
-            warnings.append("Alta retención del marcador")
+            if market == "UNDER":
+                positives.append("Alta retención favorece UNDER")
+            elif live_reactivation:
+                warnings.append("Alta retención, pero con reactivación")
+            else:
+                warnings.append("Alta retención del marcador")
 
         if signal_decay_status in {"COOLING", "NO_REENTRY", "AVOID"}:
-            warnings.append("Vida de señal degradada")
+            if live_reactivation:
+                warnings.append("Vida de señal degradada, pero reactivada")
+            else:
+                warnings.append("Vida de señal degradada")
 
         if revalidation_status in {"COOLING", "HIGH_RISK", "NO_REENTRY", "AVOID"}:
-            warnings.append("Revalidación debilitada")
+            if live_reactivation:
+                warnings.append("Revalidación débil, pero con reactivación")
+            else:
+                warnings.append("Revalidación debilitada")
+
+        if is_added_time and not live_reactivation:
+            warnings.append("Tiempo añadido sin reactivación clara")
 
         if final_decision == "WAIT":
             warnings.append("Decisión maestra exige esperar")
 
         if final_decision == "NO_REENTRY":
-            warnings.append("Decisión maestra indica no reentrar")
+            if live_reactivation:
+                warnings.append("Decisión maestra indica no reentrar, pero hay reactivación")
+            else:
+                warnings.append("Decisión maestra indica no reentrar")
 
         if final_decision == "AVOID":
             warnings.append("Decisión maestra indica evitar")
@@ -163,29 +259,57 @@ class SignalRiskReducer:
             status = "HIGH_CAUTION"
             live_advice = "RIESGO ELEVADO: NO REFORZAR SIN NUEVA CONFIRMACIÓN"
 
+        if live_reactivation and status in {"CAUTION", "HIGH_CAUTION"}:
+            status = "REVALIDATE"
+            live_advice = "HAY REACTIVACIÓN LIVE: esperar confirmación antes de descartar o reforzar."
+
         if market == "OVER" and active_minutes >= 22:
-            status = "COOLING"
-            live_advice = "SEÑAL ENFRIADA: OBSERVAR Y EVITAR REENTRADA"
+            if live_reactivation:
+                status = "REVALIDATE"
+                live_advice = "SEÑAL ANTIGUA PERO REACTIVADA: solo observar confirmación extrema."
+            else:
+                status = "COOLING"
+                live_advice = "SEÑAL ENFRIADA: OBSERVAR Y EVITAR REENTRADA"
 
         if market == "OVER" and minute >= 85 and active_minutes >= 15:
+            if live_reactivation:
+                status = "REVALIDATE"
+                live_advice = "MINUTO MUY AVANZADO, PERO HAY REACTIVACIÓN: no entrar sin presión extrema."
+            else:
+                status = "HIGH_CAUTION"
+                live_advice = "MINUTO MUY AVANZADO: SOLO CON PRESIÓN EXTREMA"
+
+        if fake_pressure_detected or pressure_without_depth:
             status = "HIGH_CAUTION"
-            live_advice = "MINUTO MUY AVANZADO: SOLO CON PRESIÓN EXTREMA"
+            live_advice = "PRESIÓN FALSA O SIN PROFUNDIDAD: evitar reentrada agresiva."
+
+        if retention_shape and market == "OVER":
+            status = "HIGH_CAUTION"
+            live_advice = "RETENCIÓN CONTRA OVER: mejor observar o esperar nueva ruptura."
 
         if final_decision == "WAIT":
             status = "WAIT_CONFIRMATION"
             live_advice = "ESPERAR CONFIRMACIÓN: no reforzar sin nueva validación."
 
         if final_decision == "NO_REENTRY":
-            status = "NO_REENTRY"
-            live_advice = "NO REENTRAR: la decisión maestra degradó la señal."
+            if live_reactivation:
+                status = "REVALIDATE"
+                live_advice = "NO REENTRY previo, pero hay reactivación. Solo observar confirmación fuerte."
+            else:
+                status = "NO_REENTRY"
+                live_advice = "NO REENTRAR: la decisión maestra degradó la señal."
 
         if final_decision == "AVOID":
             status = "AVOID"
             live_advice = "EVITAR: la decisión maestra bloqueó esta señal."
 
         if signal_decay_status in {"NO_REENTRY", "AVOID"} and final_decision != "ENTER":
-            status = signal_decay_status
-            live_advice = "La vida útil de la señal ya no permite reentrada segura."
+            if live_reactivation:
+                status = "REVALIDATE"
+                live_advice = "Vida útil degradada, pero existe reactivación live. Solo observar."
+            else:
+                status = signal_decay_status
+                live_advice = "La vida útil de la señal ya no permite reentrada segura."
 
         reason = self._build_reason(
             status=status,
@@ -200,7 +324,44 @@ class SignalRiskReducer:
             "risk_warnings": warnings,
             "positive_factors": positives,
             "active_minutes": active_minutes,
+            "risk_reducer_live_reactivation": live_reactivation,
         }
+
+    def _has_live_reactivation(
+        self,
+        minute: int,
+        pressure: float,
+        rhythm: float,
+        goal_window: float,
+        over_window: float,
+        context_state: str,
+        late_reactivation: bool,
+        chaos_mode: bool,
+        red_alert: bool,
+        field_vision_status: str,
+        is_added_time: bool,
+    ) -> bool:
+        if minute < 70:
+            return False
+
+        if late_reactivation or chaos_mode or red_alert:
+            return True
+
+        if field_vision_status in {"REACTIVATION", "CHAOS", "OVER_PRESSURE"}:
+            return True
+
+        if (
+            pressure >= 26
+            and rhythm >= 15
+            and (goal_window >= 22 or over_window >= 22)
+            and context_state in {"CALIENTE", "MUY_CALIENTE"}
+        ):
+            return True
+
+        if is_added_time and pressure >= 30 and rhythm >= 16:
+            return True
+
+        return False
 
     def _build_reason(
         self,
@@ -208,10 +369,10 @@ class SignalRiskReducer:
         positives: List[str],
         warnings: List[str],
     ) -> str:
-        if status == "OK":
+        if status in {"OK", "REVALIDATE"}:
             if positives:
-                return "Señal limpia: " + ", ".join(positives[:4])
-            return "Señal sin alertas relevantes"
+                return "Señal con soporte: " + ", ".join(positives[:4])
+            return "Señal sin alertas críticas"
 
         if warnings:
             return "Aviso PRO: " + ", ".join(warnings[:4])
