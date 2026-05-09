@@ -34,6 +34,17 @@ class AIMatchEngine:
         home_pressure = self._safe_float(context.get("home_pressure"))
         away_pressure = self._safe_float(context.get("away_pressure"))
 
+        late_reactivation = bool(context.get("late_reactivation", False))
+        chaos_mode = bool(context.get("chaos_mode", False))
+        fake_pressure_detected = bool(context.get("fake_pressure_detected", False))
+        pressure_without_depth = bool(context.get("pressure_without_depth", False))
+        retention_shape = bool(context.get("retention_shape", False))
+
+        field_vision_status = str(context.get("field_vision_status") or "").upper()
+        field_vision_score = self._safe_float(context.get("field_vision_score"))
+        is_late_game = bool(context.get("is_late_game") or context.get("field_vision_is_late_game") or minute >= 75)
+        is_added_time = bool(context.get("is_added_time") or context.get("field_vision_is_added_time") or minute >= 90)
+
         is_dead_empty = (
             pressure <= 0
             and rhythm <= 0
@@ -56,6 +67,8 @@ class AIMatchEngine:
                 "momentum_label": "ESTABLE",
                 "result_prediction": "NO_EDGE",
                 "winner_prediction": "DRAW_LEAN",
+                "ai_live_adjustment": "DEAD_EMPTY_CONTEXT",
+                "ai_live_advice": "Sin datos útiles para lectura IA.",
             }
             return self._confidence_helper.adjust(result, context)
 
@@ -281,6 +294,33 @@ class AIMatchEngine:
         over_probability = live_adjusted["over_probability"]
         under_probability = live_adjusted["under_probability"]
 
+        field_adjusted = self._apply_field_vision_correction(
+            ai_score=ai_score,
+            goal_probability=goal_probability,
+            over_probability=over_probability,
+            under_probability=under_probability,
+            minute=minute,
+            pressure=pressure,
+            rhythm=rhythm,
+            context_state=context_state,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
+            fake_pressure_detected=fake_pressure_detected,
+            pressure_without_depth=pressure_without_depth,
+            retention_shape=retention_shape,
+            field_vision_status=field_vision_status,
+            field_vision_score=field_vision_score,
+            is_late_game=is_late_game,
+            is_added_time=is_added_time,
+        )
+
+        ai_score = field_adjusted["ai_score"]
+        goal_probability = field_adjusted["goal_probability"]
+        over_probability = field_adjusted["over_probability"]
+        under_probability = field_adjusted["under_probability"]
+        ai_live_adjustment = field_adjusted["ai_live_adjustment"]
+        ai_live_advice = field_adjusted["ai_live_advice"]
+
         risk_score = self._calculate_risk_score(
             data_quality=data_quality,
             context_state=context_state,
@@ -291,6 +331,12 @@ class AIMatchEngine:
             ai_score=ai_score,
             cooling_detected=cooling_detected,
             under_transition_score=under_transition_score,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
+            fake_pressure_detected=fake_pressure_detected,
+            pressure_without_depth=pressure_without_depth,
+            retention_shape=retention_shape,
+            is_added_time=is_added_time,
         )
 
         risk_level = self._risk_level_from_score(risk_score)
@@ -302,6 +348,10 @@ class AIMatchEngine:
             red_alert=red_alert,
             cooling_detected=cooling_detected,
             under_transition_score=under_transition_score,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
+            fake_pressure_detected=fake_pressure_detected,
+            retention_shape=retention_shape,
         )
 
         result_prediction = self._result_prediction(
@@ -328,6 +378,8 @@ class AIMatchEngine:
             "momentum_label": momentum_label,
             "result_prediction": result_prediction,
             "winner_prediction": winner_prediction,
+            "ai_live_adjustment": ai_live_adjustment,
+            "ai_live_advice": ai_live_advice,
         }
 
         return self._confidence_helper.adjust(result, context)
@@ -413,6 +465,115 @@ class AIMatchEngine:
             "under_probability": self._clamp(under_probability, 0.0, 95.0),
         }
 
+    def _apply_field_vision_correction(
+        self,
+        ai_score: float,
+        goal_probability: float,
+        over_probability: float,
+        under_probability: float,
+        minute: int,
+        pressure: float,
+        rhythm: float,
+        context_state: str,
+        late_reactivation: bool,
+        chaos_mode: bool,
+        fake_pressure_detected: bool,
+        pressure_without_depth: bool,
+        retention_shape: bool,
+        field_vision_status: str,
+        field_vision_score: float,
+        is_late_game: bool,
+        is_added_time: bool,
+    ) -> Dict[str, Any]:
+        adjustment = "NORMAL"
+        advice = "Lectura IA estándar."
+
+        if chaos_mode or field_vision_status == "CHAOS":
+            ai_score += 7.0
+            goal_probability += 9.0
+            over_probability += 8.0
+            under_probability -= 8.0
+            adjustment = "CHAOS_BOOST"
+            advice = "Partido volátil: la IA mantiene alerta de gol o ruptura tardía."
+
+        elif late_reactivation or field_vision_status == "REACTIVATION":
+            ai_score += 5.0
+            goal_probability += 7.0
+            over_probability += 6.0
+            under_probability -= 6.0
+            adjustment = "LATE_REACTIVATION_BOOST"
+            advice = "Reactivación detectada: no castigar el tramo final automáticamente."
+
+        if fake_pressure_detected or field_vision_status == "FAKE_PRESSURE":
+            ai_score -= 8.0
+            goal_probability -= 9.0
+            over_probability -= 10.0
+            under_probability += 8.0
+            adjustment = "FAKE_PRESSURE_PENALTY"
+            advice = "Presión falsa detectada: volumen sin precisión suficiente."
+
+        if pressure_without_depth or field_vision_status == "PRESSURE_WITHOUT_DEPTH":
+            ai_score -= 5.0
+            goal_probability -= 6.0
+            over_probability -= 7.0
+            under_probability += 5.0
+            adjustment = "PRESSURE_WITHOUT_DEPTH"
+            advice = "Hay acercamientos, pero falta profundidad real."
+
+        if retention_shape or field_vision_status in {"RETENTION", "UNDER_CONTROL"}:
+            ai_score -= 4.0
+            goal_probability -= 8.0
+            over_probability -= 9.0
+            under_probability += 10.0
+            adjustment = "RETENTION_SHAPE"
+            advice = "Perfil de retención: marcador con tendencia a mantenerse."
+
+        if is_late_game and minute >= 80:
+            if chaos_mode or late_reactivation:
+                goal_probability += 3.0
+                over_probability += 3.0
+                adjustment = f"{adjustment}_LATE_ACTIVE"
+            elif pressure < 18 and rhythm < 13:
+                ai_score -= 4.0
+                goal_probability -= 5.0
+                over_probability -= 6.0
+                under_probability += 5.0
+                adjustment = "LATE_LOW_ACTIVITY"
+                advice = "Minuto avanzado sin suficiente actividad real."
+
+        if is_added_time:
+            if chaos_mode or late_reactivation:
+                goal_probability += 2.0
+                over_probability += 2.0
+                adjustment = f"{adjustment}_ADDED_TIME_DANGER"
+            else:
+                ai_score -= 3.0
+                goal_probability -= 4.0
+                over_probability -= 5.0
+                under_probability += 4.0
+                adjustment = "ADDED_TIME_NO_PRESSURE"
+                advice = "Tiempo añadido sin presión suficiente."
+
+        if field_vision_score >= 75 and context_state in {"CALIENTE", "MUY_CALIENTE"}:
+            ai_score += 3.0
+            goal_probability += 3.0
+            over_probability += 3.0
+
+        if field_vision_score > 0 and field_vision_score <= 35:
+            ai_score -= 3.0
+            goal_probability -= 3.0
+            over_probability -= 3.0
+            under_probability += 3.0
+
+        return {
+            "ai_score": self._clamp(ai_score, 0.0, 96.0),
+            "goal_probability": self._clamp(goal_probability, 0.0, 96.0),
+            "over_probability": self._clamp(over_probability, 0.0, 95.0),
+            "under_probability": self._clamp(under_probability, 0.0, 95.0),
+            "ai_live_adjustment": adjustment,
+            "ai_live_advice": advice,
+        }
+
     def _calculate_risk_score(
         self,
         data_quality: str,
@@ -424,6 +585,12 @@ class AIMatchEngine:
         ai_score: float,
         cooling_detected: bool,
         under_transition_score: float,
+        late_reactivation: bool,
+        chaos_mode: bool,
+        fake_pressure_detected: bool,
+        pressure_without_depth: bool,
+        retention_shape: bool,
+        is_added_time: bool,
     ) -> float:
         risk = 3.0
 
@@ -445,9 +612,12 @@ class AIMatchEngine:
             risk += 1.0
 
         if minute >= 80:
-            risk += 1.4
+            risk += 1.0
         elif minute <= 12:
             risk += 1.0
+
+        if is_added_time:
+            risk += 0.5
 
         if red_alert:
             risk += 0.5
@@ -459,6 +629,21 @@ class AIMatchEngine:
             risk += 0.8
         elif under_transition_score >= 55:
             risk += 0.4
+
+        if fake_pressure_detected:
+            risk += 1.0
+
+        if pressure_without_depth:
+            risk += 0.7
+
+        if retention_shape:
+            risk += 0.5
+
+        if chaos_mode:
+            risk += 0.8
+
+        if late_reactivation and data_quality in {"MEDIUM", "HIGH"}:
+            risk -= 0.4
 
         if ai_score >= 78:
             risk -= 1.0
@@ -485,8 +670,21 @@ class AIMatchEngine:
         red_alert: bool,
         cooling_detected: bool,
         under_transition_score: float,
+        late_reactivation: bool,
+        chaos_mode: bool,
+        fake_pressure_detected: bool,
+        retention_shape: bool,
     ) -> str:
-        if under_transition_score >= 70:
+        if chaos_mode:
+            return "CAOS"
+
+        if late_reactivation:
+            return "REACTIVACION"
+
+        if fake_pressure_detected:
+            return "PRESION_FALSA"
+
+        if retention_shape or under_transition_score >= 70:
             return "UNDER_TRANSITION"
 
         if cooling_detected:
@@ -560,9 +758,11 @@ class AIMatchEngine:
             return 4.0
         if 76 <= minute <= 85:
             return 4.0
+        if 86 <= minute <= 97:
+            return 0.0
         if minute < 10:
             return -4.0
-        if minute > 85:
+        if minute > 97:
             return -3.0
         return 0.0
 
@@ -573,6 +773,8 @@ class AIMatchEngine:
             return 8.0
         if 76 <= minute <= 85:
             return 4.0
+        if 86 <= minute <= 97:
+            return 0.0
         if minute < 12:
             return -5.0
         return 0.0
