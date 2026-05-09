@@ -11,6 +11,7 @@ class MatchStateGuard:
     - Evitar OVER tardíos en partidos muertos/fríos.
     - Detectar retención de marcador.
     - Sugerir UNDER cuando el partido ya no tiene ritmo real.
+    - Permitir OVER tardío solo si hay reactivación, caos o presión extrema.
     - Separar probabilidad de gol vs calidad de entrada.
     """
 
@@ -50,20 +51,48 @@ class MatchStateGuard:
         over_probability = self._safe_float(ai.get("over_probability"))
         under_probability = self._safe_float(ai.get("under_probability"))
 
+        late_reactivation = bool(context.get("late_reactivation", False))
+        chaos_mode = bool(context.get("chaos_mode", False))
+        red_alert = bool(context.get("red_alert", False))
+        fake_pressure_detected = bool(context.get("fake_pressure_detected", False))
+        pressure_without_depth = bool(context.get("pressure_without_depth", False))
+        retention_shape = bool(context.get("retention_shape", False))
+        field_vision_status = str(context.get("field_vision_status") or "").upper()
+        is_added_time = bool(
+            context.get("is_added_time")
+            or context.get("field_vision_is_added_time")
+            or minute >= 90
+        )
+
         is_late = minute >= 70
         is_very_late = minute >= 80
         is_dead_context = context_state in {"MUERTO", "FRIO"}
         is_low_rhythm = rhythm <= 7
         is_low_pressure = pressure <= 10
-        is_weak_window = goal_window <= 12 and over_window <= 12
         is_under_transition = under_transition_score >= 70
         is_live_cooling = cooling_detected or live_decay_factor <= 0.70
+
+        late_over_allowed = self._has_late_over_permission(
+            minute=minute,
+            pressure=pressure,
+            rhythm=rhythm,
+            goal_window=goal_window,
+            over_window=over_window,
+            context_state=context_state,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
+            red_alert=red_alert,
+            field_vision_status=field_vision_status,
+            is_added_time=is_added_time,
+        )
+
         is_score_retention = (
             minute >= 60
             and total_goals <= 2
             and is_low_rhythm
             and pressure <= 14
             and context_state in {"MUERTO", "FRIO", "CONTROLADO", "TIBIO"}
+            and not late_over_allowed
         )
 
         hold_probability = self._calculate_hold_probability(
@@ -75,6 +104,11 @@ class MatchStateGuard:
             context_state=context_state,
             data_quality=data_quality,
             total_goals=total_goals,
+            late_over_allowed=late_over_allowed,
+            fake_pressure_detected=fake_pressure_detected,
+            pressure_without_depth=pressure_without_depth,
+            retention_shape=retention_shape,
+            is_added_time=is_added_time,
         )
 
         status = "LIVE"
@@ -84,9 +118,12 @@ class MatchStateGuard:
         downgraded_rank = None
         entry_quality = "VALID"
 
-        # =========================
-        # RETENCIÓN / PARTIDO MUERTO
-        # =========================
+        if late_over_allowed:
+            status = "LATE_REACTIVATION"
+            reason = "MATCH_STATE_LATE_REACTIVATION_ACTIVE"
+            suggested_market = "OVER"
+            entry_quality = "VALID_LATE_PRESSURE"
+
         if is_score_retention or hold_probability >= 78:
             status = "SCORE_RETENTION"
             reason = "MATCH_STATE_SCORE_RETENTION"
@@ -98,46 +135,58 @@ class MatchStateGuard:
             and is_dead_context
             and is_low_rhythm
             and is_low_pressure
+            and not late_over_allowed
         ):
             status = "DEAD_MATCH"
             reason = "MATCH_STATE_DEAD_LOW_ACTIVITY"
             suggested_market = "UNDER"
             entry_quality = "NO_OVER"
 
-        if is_under_transition or is_live_cooling:
+        if (is_under_transition or is_live_cooling) and not late_over_allowed:
             status = "LIVE_COOLING"
             reason = "MATCH_STATE_LIVE_COOLING_UNDER_TRANSITION"
             suggested_market = "UNDER"
             entry_quality = "UNDER_LEAN"
 
-        # =========================
-        # BLOQUEO DE OVER TARDÍO
-        # =========================
+        if retention_shape:
+            status = "SCORE_RETENTION"
+            reason = "MATCH_STATE_RETENTION_SHAPE"
+            suggested_market = "UNDER"
+            entry_quality = "UNDER_LEAN"
+
+        if fake_pressure_detected or pressure_without_depth:
+            if "OVER" in market:
+                status = "FAKE_PRESSURE"
+                reason = "MATCH_STATE_FAKE_PRESSURE_AGAINST_OVER"
+                suggested_market = "UNDER"
+                entry_quality = "WAIT"
+
         if "OVER" in market:
-            if is_under_transition:
+            if fake_pressure_detected or pressure_without_depth:
+                force_action = "OBSERVE"
+                downgraded_rank = "OBSERVACION"
+                reason = "MATCH_STATE_OVER_FAKE_PRESSURE"
+                suggested_market = "UNDER"
+                entry_quality = "WAIT"
+
+            elif is_under_transition and not late_over_allowed:
                 force_action = "OBSERVE"
                 downgraded_rank = "OBSERVACION"
                 reason = "MATCH_STATE_OVER_BLOCKED_UNDER_TRANSITION"
                 suggested_market = "UNDER"
                 entry_quality = "NO_REENTRY"
 
-            elif is_live_cooling:
+            elif is_live_cooling and not late_over_allowed:
                 force_action = "OBSERVE"
                 downgraded_rank = "OBSERVACION"
                 reason = "MATCH_STATE_OVER_BLOCKED_LIVE_COOLING"
                 suggested_market = "UNDER"
                 entry_quality = "NO_REENTRY"
 
-            elif is_very_late and not self._has_extreme_pressure(
-                pressure=pressure,
-                rhythm=rhythm,
-                goal_window=goal_window,
-                over_window=over_window,
-                context_state=context_state,
-            ):
+            elif is_very_late and not late_over_allowed:
                 force_action = "OBSERVE"
                 downgraded_rank = "OBSERVACION"
-                reason = "MATCH_STATE_OVER_TOO_LATE_NO_EXTREME_PRESSURE"
+                reason = "MATCH_STATE_OVER_TOO_LATE_NO_LIVE_REACTIVATION"
                 entry_quality = "NO_REENTRY"
 
             elif (
@@ -145,6 +194,7 @@ class MatchStateGuard:
                 and total_goals <= 2
                 and is_low_rhythm
                 and pressure <= 14
+                and not late_over_allowed
             ):
                 force_action = "OBSERVE"
                 downgraded_rank = "OBSERVACION"
@@ -156,6 +206,7 @@ class MatchStateGuard:
                 minute >= 60
                 and hold_probability >= 72
                 and over_probability < 82
+                and not late_over_allowed
             ):
                 force_action = "OBSERVE"
                 downgraded_rank = "OBSERVACION"
@@ -169,22 +220,20 @@ class MatchStateGuard:
                 and game_quality in {"LOW", "MEDIUM"}
                 and pressure <= 16
                 and rhythm <= 10
+                and not late_over_allowed
             ):
                 force_action = "OBSERVE"
                 downgraded_rank = "OBSERVACION"
                 reason = "MATCH_STATE_OVER_WEAK_DATA_LATE"
                 entry_quality = "WAIT"
 
-        # =========================
-        # UNDER CUANDO EL PARTIDO SE CIERRA
-        # =========================
         if "UNDER" in market:
             if minute < 58:
                 force_action = "OBSERVE"
                 downgraded_rank = "OBSERVACION"
                 reason = "MATCH_STATE_UNDER_TOO_EARLY"
 
-            elif context_state in {"CALIENTE", "MUY_CALIENTE"} and pressure >= 22:
+            elif context_state in {"CALIENTE", "MUY_CALIENTE"} and pressure >= 22 and not retention_shape:
                 force_action = "REJECT"
                 downgraded_rank = "NO_BET"
                 reason = "MATCH_STATE_UNDER_BLOCKED_HOT_CONTEXT"
@@ -207,6 +256,12 @@ class MatchStateGuard:
                 suggested_market = "UNDER"
                 entry_quality = "VALID"
 
+            elif fake_pressure_detected or pressure_without_depth or retention_shape:
+                status = "UNDER_VALID_CONTEXT"
+                reason = "MATCH_STATE_UNDER_VALID_FAKE_PRESSURE_OR_RETENTION"
+                suggested_market = "UNDER"
+                entry_quality = "VALID"
+
         return {
             "match_state_status": status,
             "match_state_reason": reason,
@@ -218,6 +273,7 @@ class MatchStateGuard:
             "is_score_retention": status in {"SCORE_RETENTION", "DEAD_MATCH", "UNDER_VALID_CONTEXT"},
             "should_block_over": force_action in {"OBSERVE", "REJECT"} and "OVER" in market,
             "should_suggest_under": suggested_market == "UNDER",
+            "late_over_allowed": late_over_allowed,
             "debug": {
                 "minute": minute,
                 "total_goals": total_goals,
@@ -234,6 +290,13 @@ class MatchStateGuard:
                 "cooling_detected": cooling_detected,
                 "under_transition_score": under_transition_score,
                 "live_decay_factor": live_decay_factor,
+                "late_reactivation": late_reactivation,
+                "chaos_mode": chaos_mode,
+                "red_alert": red_alert,
+                "fake_pressure_detected": fake_pressure_detected,
+                "pressure_without_depth": pressure_without_depth,
+                "retention_shape": retention_shape,
+                "field_vision_status": field_vision_status,
                 "rank": rank,
                 "market": market,
             },
@@ -249,6 +312,11 @@ class MatchStateGuard:
         context_state: str,
         data_quality: str,
         total_goals: int,
+        late_over_allowed: bool,
+        fake_pressure_detected: bool,
+        pressure_without_depth: bool,
+        retention_shape: bool,
+        is_added_time: bool,
     ) -> float:
         hold = 35.0
 
@@ -293,7 +361,56 @@ class MatchStateGuard:
         if total_goals <= 1 and minute >= 65:
             hold += 6.0
 
+        if fake_pressure_detected or pressure_without_depth:
+            hold += 10.0
+
+        if retention_shape:
+            hold += 14.0
+
+        if is_added_time:
+            hold += 5.0
+
+        if late_over_allowed:
+            hold -= 22.0
+
         return self._clamp(hold, 0.0, 96.0)
+
+    def _has_late_over_permission(
+        self,
+        minute: int,
+        pressure: float,
+        rhythm: float,
+        goal_window: float,
+        over_window: float,
+        context_state: str,
+        late_reactivation: bool,
+        chaos_mode: bool,
+        red_alert: bool,
+        field_vision_status: str,
+        is_added_time: bool,
+    ) -> bool:
+        if minute < 76:
+            return False
+
+        if late_reactivation or chaos_mode or red_alert:
+            return True
+
+        if field_vision_status in {"REACTIVATION", "CHAOS", "OVER_PRESSURE"}:
+            return True
+
+        if self._has_extreme_pressure(
+            pressure=pressure,
+            rhythm=rhythm,
+            goal_window=goal_window,
+            over_window=over_window,
+            context_state=context_state,
+        ):
+            return True
+
+        if is_added_time and pressure >= 30 and rhythm >= 16:
+            return True
+
+        return False
 
     def _has_extreme_pressure(
         self,
