@@ -7,11 +7,13 @@ class MatchWindowEngine:
     """
     Controla ventanas operativas del partido.
 
-    Reglas base:
-    - 25–45 y 60–75 => PREMIUM
-    - 15–24 y 76–85 => OPERABLE con filtro extra
-    - 1–14 => bloqueado
-    - 86+ => bloqueado salvo premium real (de momento restringido)
+    Ahora no bloquea automáticamente el tramo final.
+    Permite lectura late-game si hay:
+    - reactivación
+    - caos
+    - presión real extrema
+    - red alert
+    - añadido con peligro
 
     Devuelve:
     - phase
@@ -29,6 +31,8 @@ class MatchWindowEngine:
     PHASE_PREMIUM = "PREMIUM"
 
     def evaluate(self, match: Dict[str, Any]) -> Dict[str, Any]:
+        match = match or {}
+
         minute = self._extract_minute(match)
 
         context_state = str(match.get("context_state") or "").upper()
@@ -36,6 +40,16 @@ class MatchWindowEngine:
         under_transition_score = self._safe_float(match.get("under_transition_score"))
         pressure = self._safe_float(match.get("pressure_index"))
         rhythm = self._safe_float(match.get("rhythm_index"))
+
+        late_reactivation = bool(match.get("late_reactivation", False))
+        chaos_mode = bool(match.get("chaos_mode", False))
+        red_alert = bool(match.get("red_alert", False))
+        field_vision_status = str(match.get("field_vision_status") or "").upper()
+        is_added_time = bool(
+            match.get("is_added_time")
+            or match.get("field_vision_is_added_time")
+            or minute >= 90
+        )
 
         if minute <= 0:
             return self._build_response(
@@ -49,12 +63,25 @@ class MatchWindowEngine:
                 reason="WINDOW_INVALID_MINUTE",
             )
 
+        late_over_allowed = self._has_late_over_permission(
+            minute=minute,
+            context_state=context_state,
+            pressure=pressure,
+            rhythm=rhythm,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
+            red_alert=red_alert,
+            field_vision_status=field_vision_status,
+            is_added_time=is_added_time,
+        )
+
         if self._is_dead_live_context(
             context_state=context_state,
             cooling_detected=cooling_detected,
             under_transition_score=under_transition_score,
             pressure=pressure,
             rhythm=rhythm,
+            late_over_allowed=late_over_allowed,
         ):
             return self._build_response(
                 minute=minute,
@@ -67,7 +94,6 @@ class MatchWindowEngine:
                 reason="WINDOW_LIVE_CONTEXT_UNDER_ONLY",
             )
 
-        # 1–14 bloqueado
         if 1 <= minute <= 14:
             return self._build_response(
                 minute=minute,
@@ -80,7 +106,6 @@ class MatchWindowEngine:
                 reason="WINDOW_TOO_EARLY",
             )
 
-        # 15–24 operable con filtro extra, más sesgo a OVER
         if 15 <= minute <= 24:
             return self._build_response(
                 minute=minute,
@@ -93,7 +118,6 @@ class MatchWindowEngine:
                 reason="WINDOW_OPERABLE_FIRST_HALF",
             )
 
-        # 25–45 premium
         if 25 <= minute <= 45:
             return self._build_response(
                 minute=minute,
@@ -106,7 +130,6 @@ class MatchWindowEngine:
                 reason="WINDOW_PREMIUM_FIRST_HALF",
             )
 
-        # 46–59 intermedio, operable conservador
         if 46 <= minute <= 59:
             return self._build_response(
                 minute=minute,
@@ -119,7 +142,6 @@ class MatchWindowEngine:
                 reason="WINDOW_SECOND_HALF_BUILDUP",
             )
 
-        # 60–75 premium
         if 60 <= minute <= 75:
             return self._build_response(
                 minute=minute,
@@ -132,21 +154,43 @@ class MatchWindowEngine:
                 reason="WINDOW_PREMIUM_SECOND_HALF",
             )
 
-        # 76–85 operable con filtro extra, sesgo a UNDER
         if 76 <= minute <= 85:
             return self._build_response(
                 minute=minute,
                 phase=self.PHASE_OPERABLE,
                 allowed=True,
-                allow_over=False,
+                allow_over=late_over_allowed,
                 allow_under=True,
-                bias="UNDER",
-                gate_min_score=74,
-                reason="WINDOW_OPERABLE_LATE_GAME",
+                bias="OVER" if late_over_allowed else "UNDER",
+                gate_min_score=76 if late_over_allowed else 74,
+                reason="WINDOW_LATE_REACTIVATION_ALLOWED" if late_over_allowed else "WINDOW_OPERABLE_LATE_GAME",
             )
 
-        # 86–90 restringido: solo UNDER en contextos muy limpios, el resto bloqueado en capas siguientes
-        if 86 <= minute <= 90:
+        if 86 <= minute <= 97:
+            return self._build_response(
+                minute=minute,
+                phase=self.PHASE_RESTRICTED,
+                allowed=True,
+                allow_over=late_over_allowed,
+                allow_under=True,
+                bias="OVER" if late_over_allowed else "UNDER",
+                gate_min_score=82 if late_over_allowed else 80,
+                reason="WINDOW_RESTRICTED_LATE_OVER_ALLOWED" if late_over_allowed else "WINDOW_RESTRICTED_LATE_UNDER_ONLY",
+            )
+
+        if 98 <= minute <= 130:
+            if late_over_allowed:
+                return self._build_response(
+                    minute=minute,
+                    phase=self.PHASE_RESTRICTED,
+                    allowed=True,
+                    allow_over=True,
+                    allow_under=True,
+                    bias="OVER",
+                    gate_min_score=86,
+                    reason="WINDOW_ADDED_TIME_EXTREME_PRESSURE",
+                )
+
             return self._build_response(
                 minute=minute,
                 phase=self.PHASE_RESTRICTED,
@@ -154,8 +198,8 @@ class MatchWindowEngine:
                 allow_over=False,
                 allow_under=True,
                 bias="UNDER",
-                gate_min_score=80,
-                reason="WINDOW_RESTRICTED_LATE_UNDER_ONLY",
+                gate_min_score=84,
+                reason="WINDOW_ADDED_TIME_HOLD_ONLY",
             )
 
         return self._build_response(
@@ -169,6 +213,39 @@ class MatchWindowEngine:
             reason="WINDOW_TOO_LATE",
         )
 
+    def _has_late_over_permission(
+        self,
+        minute: int,
+        context_state: str,
+        pressure: float,
+        rhythm: float,
+        late_reactivation: bool,
+        chaos_mode: bool,
+        red_alert: bool,
+        field_vision_status: str,
+        is_added_time: bool,
+    ) -> bool:
+        if minute < 76:
+            return True
+
+        if late_reactivation or chaos_mode or red_alert:
+            return True
+
+        if field_vision_status in {"REACTIVATION", "CHAOS", "OVER_PRESSURE"}:
+            return True
+
+        if (
+            pressure >= 26
+            and rhythm >= 15
+            and context_state in {"CALIENTE", "MUY_CALIENTE"}
+        ):
+            return True
+
+        if is_added_time and pressure >= 30 and rhythm >= 16:
+            return True
+
+        return False
+
     def _is_dead_live_context(
         self,
         context_state: str,
@@ -176,7 +253,11 @@ class MatchWindowEngine:
         under_transition_score: float,
         pressure: float,
         rhythm: float,
+        late_over_allowed: bool,
     ) -> bool:
+        if late_over_allowed:
+            return False
+
         if context_state in {"MUERTO", "FRIO"}:
             return True
 
@@ -199,7 +280,7 @@ class MatchWindowEngine:
             or 0
         )
         try:
-            return int(raw)
+            return int(float(raw))
         except (TypeError, ValueError):
             return 0
 
