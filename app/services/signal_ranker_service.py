@@ -126,17 +126,49 @@ class SignalRankerService:
         game_quality = str(signal.get("game_quality") or "").upper()
         minute = self._safe_int(signal.get("minute"))
 
+        late_reactivation = bool(signal.get("late_reactivation", False))
+        chaos_mode = bool(signal.get("chaos_mode", False))
+        red_alert = bool(signal.get("red_alert", False))
+        fake_pressure_detected = bool(signal.get("fake_pressure_detected", False))
+        pressure_without_depth = bool(signal.get("pressure_without_depth", False))
+        retention_shape = bool(signal.get("retention_shape", False))
+
+        field_vision_status = str(signal.get("field_vision_status") or "").upper()
+        pressure = self._safe_float(signal.get("pressure_index"))
+        rhythm = self._safe_float(signal.get("rhythm_index"))
+        goal_window = self._safe_float(signal.get("goal_window_score"))
+        over_window = self._safe_float(signal.get("over_window_score"))
+
         is_over = self._is_over_market(market)
         market_probability = over_probability if is_over else under_probability
 
+        live_reactivation = self._has_live_reactivation(
+            minute=minute,
+            pressure=pressure,
+            rhythm=rhythm,
+            goal_window=goal_window,
+            over_window=over_window,
+            context_state=context_state,
+            late_reactivation=late_reactivation,
+            chaos_mode=chaos_mode,
+            red_alert=red_alert,
+            field_vision_status=field_vision_status,
+        )
+
         if risk_level == "ALTO" and risk_score >= 7.8:
-            signal["rank"] = "OBSERVACION"
-            signal["rank_reason"] = "RISK_TOO_HIGH_FOR_SIGNAL"
-            return signal
+            if not live_reactivation:
+                signal["rank"] = "OBSERVACION"
+                signal["rank_reason"] = "RISK_TOO_HIGH_FOR_SIGNAL"
+                return signal
 
         if ai_score < 50 or signal_score < 50:
             signal["rank"] = "OBSERVACION"
             signal["rank_reason"] = "LOW_INTERNAL_SCORE"
+            return signal
+
+        if is_over and (fake_pressure_detected or pressure_without_depth or retention_shape):
+            signal["rank"] = "OBSERVACION"
+            signal["rank_reason"] = "OVER_DOWNGRADED_BY_FAKE_PRESSURE_OR_RETENTION"
             return signal
 
         playable_context = context_state in {
@@ -151,6 +183,10 @@ class SignalRankerService:
             "MUY_CALIENTE",
             "TIBIO",
         }
+
+        if live_reactivation:
+            playable_context = True
+            strong_context = context_state in {"CALIENTE", "MUY_CALIENTE"} or chaos_mode or red_alert
 
         good_quality = data_quality in {"MEDIUM", "HIGH"} or game_quality in {"MEDIUM", "HIGH"}
 
@@ -193,12 +229,21 @@ class SignalRankerService:
         if (
             ai_score >= 56
             and signal_score >= 56
-            and goal_probability >= 60
             and market_probability >= 58
-            and 15 <= minute <= 88
+            and 15 <= minute <= 97
         ):
+            if is_over and goal_probability < 60:
+                signal["rank"] = "OBSERVACION"
+                signal["rank_reason"] = "OVER_GOAL_PROB_NOT_ENOUGH"
+                return signal
+
             signal["rank"] = "OPERABLE"
             signal["rank_reason"] = "OPERABLE_BUT_NOT_STRONG"
+            return signal
+
+        if live_reactivation and is_over and ai_score >= 55 and signal_score >= 55:
+            signal["rank"] = "OPERABLE"
+            signal["rank_reason"] = "LATE_REACTIVATION_OPERABLE"
             return signal
 
         signal["rank"] = "OBSERVACION"
@@ -255,6 +300,13 @@ class SignalRankerService:
         risk_score = self._safe_float(signal.get("risk_score"))
         value_edge = self._safe_float(signal.get("value_edge"))
 
+        late_reactivation = bool(signal.get("late_reactivation", False))
+        chaos_mode = bool(signal.get("chaos_mode", False))
+        red_alert = bool(signal.get("red_alert", False))
+        fake_pressure_detected = bool(signal.get("fake_pressure_detected", False))
+        pressure_without_depth = bool(signal.get("pressure_without_depth", False))
+        retention_shape = bool(signal.get("retention_shape", False))
+
         is_over = self._is_over_market(market)
         market_probability = over_probability if is_over else under_probability
 
@@ -267,7 +319,48 @@ class SignalRankerService:
             - risk_score * 2.0
         )
 
+        if late_reactivation or chaos_mode or red_alert:
+            score += 5.0
+
+        if is_over and (fake_pressure_detected or pressure_without_depth or retention_shape):
+            score -= 10.0
+
+        if not is_over and retention_shape:
+            score += 4.0
+
         return round(max(0.0, min(score, 100.0)), 2)
+
+    def _has_live_reactivation(
+        self,
+        minute: int,
+        pressure: float,
+        rhythm: float,
+        goal_window: float,
+        over_window: float,
+        context_state: str,
+        late_reactivation: bool,
+        chaos_mode: bool,
+        red_alert: bool,
+        field_vision_status: str,
+    ) -> bool:
+        if minute < 70:
+            return False
+
+        if late_reactivation or chaos_mode or red_alert:
+            return True
+
+        if field_vision_status in {"REACTIVATION", "CHAOS", "OVER_PRESSURE"}:
+            return True
+
+        if (
+            pressure >= 26
+            and rhythm >= 15
+            and (goal_window >= 22 or over_window >= 22)
+            and context_state in {"CALIENTE", "MUY_CALIENTE"}
+        ):
+            return True
+
+        return False
 
     def _is_over_market(self, market: str) -> bool:
         text = str(market or "").upper()
