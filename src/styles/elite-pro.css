@@ -1,0 +1,260 @@
+.elite-detail-pro {
+  width: 100%;
+  color: #eaf4ff;
+  padding: 18px;
+}
+
+.elite-detail-pro.empty {
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  border-radius: 24px;
+  background: rgba(4, 14, 34, 0.78);
+  border: 1px solid rgba(70, 180, 255, 0.18);
+}
+
+.elite-hero-card,
+.elite-card-pro {
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px;
+  border: 1px solid rgba(79, 190, 255, 0.18);
+  background:
+    radial-gradient(circle at top, rgba(0, 132, 255, 0.22), transparent 38%),
+    linear-gradient(135deg, rgba(5, 16, 38, 0.96), rgba(1, 8, 24, 0.94));
+  box-shadow:
+    0 20px 50px rgba(0, 0, 0, 0.38),
+    inset 0 0 35px rgba(0, 174, 255, 0.05);
+  backdrop-filter: blur(16px);
+}
+
+.elite-hero-card {
+  padding: 20px;
+  margin-bottom: 18px;
+}
+
+.elite-league-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: #8ecfff;
+  margin-bottom: 18px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.elite-scoreboard {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 20px;
+}
+
+.elite-team {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.elite-team img {
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  margin-bottom: 10px;
+  filter: drop-shadow(0 0 18px rgba(0, 174, 255, 0.35));
+}
+
+.elite-team h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.elite-score-center {
+  text-align: center;
+  min-width: 190px;
+}
+
+.elite-live-minute {
+  display: inline-flex;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(0, 255, 160, 0.12);
+  border: 1px solid rgba(0, 255, 160, 0.32);
+  color: #50ffbd;
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.elite-score {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  font-size: 54px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.elite-score em {
+  color: #5fbfff;
+  font-style: normal;
+  font-size: 34px;
+}
+
+.elite-market-main {
+  margin-top: 10px;
+  color: #bfe8ff;
+  font-weight: 800;
+}
+
+.elite-grid-pro {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.elite-card-pro {
+  padding: 18px;
+}
+
+.elite-card-pro h3 {
+  margin: 0 0 12px;
+  font-size: 17px;
+  color: #ffffff;
+}
+
+.elite-card-pro p {
+  margin: 0 0 12px;
+  color: #bfd4e8;
+  line-height: 1.55;
+}
+
+.elite-main-reading {
+  grid-column: span 2;
+}
+
+.elite-pill-grid,
+.elite-prob-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.elite-prob-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.elite-pill {
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.elite-pill small {
+  display: block;
+  color: #8caac4;
+  font-size: 11px;
+  margin-bottom: 5px;
+}
+
+.elite-pill b {
+  color: #fff;
+  font-size: 14px;
+}
+
+.elite-pill-blue {
+  border-color: rgba(0, 132, 255, 0.28);
+}
+
+.elite-pill-green {
+  border-color: rgba(0, 255, 160, 0.28);
+}
+
+.elite-pill-cyan {
+  border-color: rgba(0, 220, 255, 0.28);
+}
+
+.elite-pill-purple {
+  border-color: rgba(145, 120, 255, 0.28);
+}
+
+.elite-pill-yellow {
+  border-color: rgba(255, 200, 80, 0.28);
+}
+
+.elite-pill-red {
+  border-color: rgba(255, 70, 95, 0.28);
+}
+
+.elite-mini-table p {
+  margin: 7px 0;
+  color: #d7e9f8;
+}
+
+.elite-mini-table b {
+  color: #8ecfff;
+}
+
+.elite-stats-card {
+  grid-row: span 2;
+}
+
+.elite-stat-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 80px;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.elite-stat-row span {
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.elite-stat-row span:last-child {
+  text-align: right;
+}
+
+.elite-stat-row strong {
+  text-align: center;
+  color: #95b9d6;
+  font-size: 13px;
+}
+
+.elite-note,
+.elite-muted {
+  color: #8fa7ba;
+  font-size: 12px;
+}
+
+.elite-events {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.elite-event-row {
+  display: grid;
+  grid-template-columns: 45px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.elite-event-row b {
+  color: #50ffbd;
+}
+
+.elite-event-row small {
+  color: #8ecfff;
+  }
