@@ -667,3 +667,52 @@
 
   letter-spacing: 1px;
   }
+
+.v16-tactical-window-card {
+  padding: 16px;
+  text-align: left;
+  border-radius: 18px;
+  border: 1px solid var(--v16-border);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.v16-window-label {
+  display: block;
+  color: var(--v16-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-bottom: 6px;
+}
+
+.v16-tactical-window-card h4 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.v16-tactical-window-card p {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--v16-muted);
+}
+
+.v16-tactical-window-card strong {
+  display: block;
+  margin-top: 10px;
+  font-size: 0.82rem;
+}
+
+.v16-window-high {
+  border-color: rgba(77, 255, 157, 0.42);
+  box-shadow: 0 0 22px rgba(77, 255, 157, 0.12);
+}
+
+.v16-window-medium {
+  border-color: rgba(255, 209, 102, 0.42);
+  box-shadow: 0 0 22px rgba(255, 209, 102, 0.12);
+}
+
+.v16-window-low {
+  border-color: rgba(255, 59, 95, 0.42);
+  box-shadow: 0 0 22px rgba(255, 59, 95, 0.12);
+}
