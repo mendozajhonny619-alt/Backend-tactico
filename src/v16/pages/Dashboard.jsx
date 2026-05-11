@@ -17,12 +17,19 @@ import LiveSignalFeed from "../components/LiveSignalFeed";
 
 import useLiveData from "../hooks/useLiveData";
 
+import "../styles/variables.css";
 import "../styles/dashboard.css";
+import "../styles/components.css";
 
 const Dashboard = () => {
-  const { matches, signals, systemStatus, loading } = useLiveData();
+  const {
+    matches = [],
+    signals = [],
+    systemStatus = {},
+    loading = false,
+  } = useLiveData() || {};
 
-  const featuredMatch = matches?.[0] || null;
+  const featuredMatch = matches[0] || null;
 
   return (
     <MainLayout>
@@ -39,9 +46,9 @@ const Dashboard = () => {
 
       <ResponsiveGrid>
         {/* PARTIDOS LIVE */}
-        {matches.map((match) => (
+        {(matches || []).map((match, index) => (
           <LiveMatchCard
-            key={match.id}
+            key={match?.id || match?.match_id || index}
             match={match}
           />
         ))}
@@ -51,10 +58,10 @@ const Dashboard = () => {
 
         {/* RADAR IA */}
         <SignalRadar
-          rhythm={featuredMatch?.rhythm_index || 72}
-          pressure={featuredMatch?.pressure_index || 78}
-          risk={featuredMatch?.risk_score || 22}
-          xg={featuredMatch?.xg || 1.45}
+          rhythm={featuredMatch?.rhythm_index ?? 0}
+          pressure={featuredMatch?.pressure_index ?? 0}
+          risk={featuredMatch?.risk_score ?? 0}
+          xg={featuredMatch?.xg ?? 0}
         />
 
         {/* RIESGO */}
@@ -62,25 +69,22 @@ const Dashboard = () => {
           risk={
             featuredMatch?.risk_level ||
             systemStatus?.riskLevel ||
+            systemStatus?.risk_level ||
             "MEDIO"
           }
         />
 
         {/* STATS */}
-        <MatchStatsGrid
-          stats={featuredMatch || {}}
-        />
+        <MatchStatsGrid stats={featuredMatch || {}} />
 
         {/* FEED LIVE */}
         <LiveSignalFeed
-          events={
-            signals?.map(
-              (s) =>
-                `${s.type || "SEÑAL"} • ${
-                  s.confidence || s.aiScore || 0
-                }%`
-            ) || []
-          }
+          events={(signals || []).map(
+            (s) =>
+              `${s?.type || s?.market || "SEÑAL"} • ${
+                s?.confidence || s?.ai_score || s?.signal_score || 0
+              }%`
+          )}
         />
       </ResponsiveGrid>
     </MainLayout>
