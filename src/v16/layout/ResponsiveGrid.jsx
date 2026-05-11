@@ -1,11 +1,18 @@
 // src/v16/layout/ResponsiveGrid.jsx
 
 import React from "react";
-import "../styles/dashboard.css";
 
 export default function ResponsiveGrid({ children }) {
   return (
-    <div className="responsive-grid">
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1.1fr 2fr 1fr",
+        gap: "20px",
+        alignItems: "start",
+        marginTop: "20px",
+      }}
+    >
       {children}
     </div>
   );
