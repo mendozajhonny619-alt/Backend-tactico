@@ -1,193 +1,23 @@
+/* src/v16/styles/dashboard.css */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #020713;
+  color: #fff;
+}
+
 .dashboard {
   width: 100%;
   min-height: 100vh;
 }
 
-/* =========================
-   COMMAND CENTER V16
-========================= */
+/* LAYOUT */
 
-.v16-command-center {
-  min-height: 100vh;
-  padding: 20px;
-  background:
-    radial-gradient(circle at top, rgba(0,140,255,0.15), transparent 40%),
-    linear-gradient(to bottom, #050b16 0%, #08111f 45%, #04070d 100%);
-  color: white;
-}
-
-/* =========================
-   TOP STATUS
-========================= */
-
-.v16-top-status {
-  margin-bottom: 20px;
-}
-
-/* =========================
-   MAIN GRID
-========================= */
-
-.v16-dashboard-grid {
-  display: grid;
-  grid-template-columns: 320px 1fr 320px;
-  gap: 20px;
-  align-items: start;
-}
-
-/* =========================
-   ZONES
-========================= */
-
-.v16-left-zone,
-.v16-center-zone,
-.v16-right-zone {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-/* =========================
-   GLASS EFFECT
-========================= */
-
-.glass-card {
-  background: rgba(10, 18, 32, 0.88);
-  border: 1px solid rgba(0, 170, 255, 0.18);
-  border-radius: 18px;
-  padding: 18px;
-  backdrop-filter: blur(12px);
-  box-shadow:
-    0 0 20px rgba(0, 120, 255, 0.12),
-    inset 0 0 10px rgba(255,255,255,0.03);
-}
-
-/* =========================
-   TITLES
-========================= */
-
-.zone-title {
-  color: #63c6ff;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  margin-bottom: -5px;
-}
-
-/* =========================
-   LOADING
-========================= */
-
-.loading-live {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: rgba(0,0,0,0.35);
-  border: 1px solid rgba(0,255,255,0.15);
-  padding: 12px 16px;
-  border-radius: 12px;
-  margin-top: 12px;
-  color: #8ed8ff;
-}
-
-.live-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #00ff99;
-  box-shadow: 0 0 10px #00ff99;
-  animation: pulseLive 1s infinite;
-}
-
-@keyframes pulseLive {
-  0% {
-    transform: scale(1);
-    opacity: 1;
-  }
-
-  50% {
-    transform: scale(1.5);
-    opacity: 0.5;
-  }
-
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
-
-/* =========================
-   OPPORTUNITY CARD
-========================= */
-
-.v16-opportunity-card {
-  text-align: center;
-}
-
-.v16-opportunity-card span {
-  display: block;
-  font-size: 13px;
-  color: #ffcf40;
-  margin-bottom: 10px;
-}
-
-.v16-opportunity-card strong {
-  display: block;
-  font-size: 52px;
-  color: white;
-  margin-bottom: 10px;
-}
-
-.v16-opportunity-card small {
-  color: #55d7ff;
-  font-size: 14px;
-}
-
-/* =========================
-   SYSTEM STABILITY
-========================= */
-
-.v16-system-stability {
-  text-align: center;
-}
-
-.v16-system-stability span {
-  display: block;
-  color: #66d7ff;
-  margin-bottom: 10px;
-}
-
-.v16-system-stability strong {
-  display: block;
-  font-size: 44px;
-  color: #ffe14a;
-}
-
-.v16-system-stability b {
-  color: #00ff99;
-  letter-spacing: 2px;
-}
-
-/* =========================
-   EMPTY CARD
-========================= */
-
-.empty-v16-card {
-  text-align: center;
-  color: #8aa4c0;
-}
-
-/* =========================
-   RESPONSIVE
-========================= */
-
-@media (max-width: 1200px) {
-  .v16-dashboard-grid {
-    grid-template-columns: 1fr;
-  }
-                    }
-
-  .main-layout {
+.main-layout {
   position: relative;
   min-height: 100vh;
   overflow-x: hidden;
@@ -225,11 +55,9 @@
   left: 5%;
   right: 5%;
   height: 120px;
-  background:
-    radial-gradient(circle, rgba(255,255,255,.9) 0 2px, transparent 4px);
+  background: radial-gradient(circle, rgba(255,255,255,.9) 0 2px, transparent 4px);
   background-size: 48px 24px;
   opacity: .35;
-  filter: blur(.2px);
   pointer-events: none;
   z-index: 0;
 }
@@ -264,7 +92,6 @@
     linear-gradient(rgba(0, 180, 255, .04) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0, 180, 255, .04) 1px, transparent 1px);
   background-size: 48px 48px;
-  mask-image: linear-gradient(to bottom, transparent, black 25%, black 80%, transparent);
   pointer-events: none;
   z-index: 0;
 }
@@ -272,82 +99,156 @@
 .main-content {
   position: relative;
   z-index: 2;
-    }
+}
 
-/* =========================
-   V16 KPI STRIP
-========================= */
+/* COMMAND CENTER */
+
+.v16-command-center {
+  width: 100%;
+  min-height: 100vh;
+  padding: 22px;
+  color: white;
+}
+
+/* KPI STRIP */
 
 .v16-kpi-strip {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
   gap: 12px;
-  margin: 18px 0;
+  margin: 18px 0 16px;
 }
 
 .v16-kpi {
-  background: rgba(5, 15, 30, 0.82);
-  border: 1px solid rgba(0, 170, 255, 0.18);
+  background: rgba(5, 15, 30, 0.88);
+  border: 1px solid rgba(0, 180, 255, 0.25);
   border-radius: 14px;
-  padding: 12px 14px;
+  padding: 12px;
   text-align: center;
   box-shadow: inset 0 0 18px rgba(0, 140, 255, 0.08);
 }
 
 .v16-kpi span {
   display: block;
-  font-size: 0.72rem;
-  color: #9fb7d8;
+  color: #8fb4d8;
+  font-size: 11px;
   letter-spacing: 1px;
 }
 
 .v16-kpi strong {
   display: block;
-  margin-top: 6px;
-  font-size: 1.15rem;
   color: #7cff4b;
+  font-size: 18px;
+  margin-top: 5px;
 }
 
-/* =========================
-   V16 NAV
-========================= */
+/* NAV */
 
 .v16-nav {
   display: flex;
   gap: 10px;
-  margin: 14px 0 20px;
+  margin: 14px 0 22px;
   padding: 10px;
-  border-radius: 18px;
-  background: rgba(2, 8, 18, 0.72);
-  border: 1px solid rgba(0, 170, 255, 0.14);
+  border-radius: 16px;
+  background: rgba(3, 10, 22, 0.85);
+  border: 1px solid rgba(0, 180, 255, 0.18);
   overflow-x: auto;
 }
 
 .v16-nav button {
-  border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(255,255,255,0.04);
-  color: #b9c8dc;
-  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #d7e6ff;
   border-radius: 12px;
-  font-weight: 700;
+  padding: 10px 16px;
+  font-weight: 800;
   cursor: pointer;
   white-space: nowrap;
 }
 
-.v16-nav button span {
-  margin-right: 6px;
-}
-
 .v16-nav button.active {
+  background: rgba(124, 255, 75, 0.16);
   color: #7cff4b;
-  border-color: rgba(124,255,75,0.45);
-  background: rgba(124,255,75,0.12);
-  box-shadow: 0 0 18px rgba(124,255,75,0.18);
+  border-color: rgba(124, 255, 75, 0.5);
+  box-shadow: 0 0 18px rgba(124, 255, 75, 0.25);
 }
 
-/* =========================
-   DETAIL BUTTON
-========================= */
+/* STATUS */
+
+.v16-top-status {
+  margin-bottom: 20px;
+}
+
+/* GRID */
+
+.v16-dashboard-grid {
+  display: grid;
+  grid-template-columns: 300px minmax(420px, 1fr) 300px;
+  gap: 18px;
+  align-items: start;
+}
+
+.v16-left-zone,
+.v16-center-zone,
+.v16-right-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* CARDS */
+
+.glass-card {
+  background: rgba(10, 18, 32, 0.88);
+  border: 1px solid rgba(0, 170, 255, 0.18);
+  border-radius: 18px;
+  padding: 18px;
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 0 20px rgba(0, 120, 255, 0.12),
+    inset 0 0 10px rgba(255,255,255,0.03);
+}
+
+.zone-title {
+  color: #63c6ff;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+.empty-v16-card {
+  text-align: center;
+  color: #8aa4c0;
+}
+
+/* OPPORTUNITY */
+
+.v16-opportunity-card {
+  text-align: center;
+}
+
+.v16-opportunity-card span {
+  display: block;
+  font-size: 13px;
+  color: #ffcf40;
+  margin-bottom: 10px;
+  font-weight: 900;
+}
+
+.v16-opportunity-card strong {
+  display: block;
+  font-size: 52px;
+  color: white;
+  margin-bottom: 10px;
+}
+
+.v16-opportunity-card small {
+  color: #55d7ff;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+/* BUTTONS */
 
 .v16-detail-btn,
 .v16-back-btn {
@@ -368,9 +269,7 @@
   box-shadow: 0 0 18px rgba(0, 190, 255, 0.28);
 }
 
-/* =========================
-   FULL SCREENS
-========================= */
+/* SCREENS */
 
 .v16-screen {
   margin-top: 20px;
@@ -395,9 +294,7 @@
   padding: 14px;
 }
 
-/* =========================
-   RESULTS
-========================= */
+/* RESULTS */
 
 .v16-results-grid {
   display: grid;
@@ -425,17 +322,38 @@
   font-size: 2.2rem;
 }
 
-/* =========================
-   RESPONSIVE NAV/KPIS
-========================= */
+/* SYSTEM STABILITY */
 
-@media (max-width: 1100px) {
-  .v16-kpi-strip {
-    grid-template-columns: repeat(3, 1fr);
+.v16-system-stability {
+  text-align: center;
+}
+
+.v16-system-stability span {
+  display: block;
+  color: #66d7ff;
+  margin-bottom: 10px;
+}
+
+.v16-system-stability strong {
+  display: block;
+  font-size: 44px;
+  color: #ffe14a;
+}
+
+.v16-system-stability b {
+  color: #00ff99;
+  letter-spacing: 2px;
+}
+
+/* RESPONSIVE */
+
+@media (max-width: 1200px) {
+  .v16-dashboard-grid {
+    grid-template-columns: 1fr;
   }
 
-  .v16-results-grid {
-    grid-template-columns: 1fr;
+  .v16-kpi-strip {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
@@ -457,68 +375,3 @@
     padding: 9px 11px;
   }
   }
-
-/* FIX VISUAL KPI + NAV */
-
-.v16-kpi-strip {
-  display: grid !important;
-  grid-template-columns: repeat(6, 1fr) !important;
-  gap: 12px !important;
-  margin: 18px 0 20px !important;
-}
-
-.v16-kpi {
-  background: rgba(5, 15, 30, 0.88) !important;
-  border: 1px solid rgba(0, 180, 255, 0.25) !important;
-  border-radius: 14px !important;
-  padding: 12px !important;
-  text-align: center !important;
-}
-
-.v16-kpi span {
-  display: block !important;
-  color: #8fb4d8 !important;
-  font-size: 11px !important;
-  letter-spacing: 1px !important;
-}
-
-.v16-kpi strong {
-  display: block !important;
-  color: #7cff4b !important;
-  font-size: 18px !important;
-  margin-top: 5px !important;
-}
-
-.v16-nav {
-  display: flex !important;
-  gap: 10px !important;
-  margin: 14px 0 22px !important;
-  padding: 10px !important;
-  border-radius: 16px !important;
-  background: rgba(3, 10, 22, 0.85) !important;
-  border: 1px solid rgba(0, 180, 255, 0.18) !important;
-  overflow-x: auto !important;
-}
-
-.v16-nav button {
-  background: rgba(255, 255, 255, 0.06) !important;
-  border: 1px solid rgba(255, 255, 255, 0.12) !important;
-  color: #d7e6ff !important;
-  border-radius: 12px !important;
-  padding: 10px 16px !important;
-  font-weight: 800 !important;
-  cursor: pointer !important;
-}
-
-.v16-nav button.active {
-  background: rgba(124, 255, 75, 0.16) !important;
-  color: #7cff4b !important;
-  border-color: rgba(124, 255, 75, 0.5) !important;
-  box-shadow: 0 0 18px rgba(124, 255, 75, 0.25) !important;
-}
-
-@media (max-width: 900px) {
-  .v16-kpi-strip {
-    grid-template-columns: repeat(2, 1fr) !important;
-  }
-}
