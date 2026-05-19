@@ -18,6 +18,9 @@ from app.services.match_timeline_tracker import MatchTimelineTracker
 from app.services.deep_live_match_analyzer import DeepLiveMatchAnalyzer
 from app.services.player_live_analyzer import PlayerLiveAnalyzer
 from app.services.final_decision_engine import FinalDecisionEngine
+from app.services.league_stability_engine import LeagueStabilityEngine
+from app.services.team_memory_engine import TeamMemoryEngine
+from app.services.next_goal_intelligence_engine import NextGoalIntelligenceEngine
 
 from app.engines.market_engine import MarketEngine
 from app.engines.value_engine import ValueEngine
@@ -25,23 +28,15 @@ from app.engines.risk_engine import RiskEngine
 from app.engines.tactical_engine import TacticalEngine
 from app.engines.match_analyst_engine import MatchAnalystEngine
 from app.engines.next_goal_side_engine import NextGoalSideEngine
+from app.services.sports_ai_agent import SportsAIAgent
+from app.services.tactical_memory_service import TacticalMemoryService
+from app.services.pre_match_intelligence_engine import PreMatchIntelligenceEngine
+from app.services.adaptive_learning_engine import AdaptiveLearningEngine
 
 
 class ScanService:
     """
     Corazón operativo del sistema.
-
-    Ajuste:
-    - No mata por LOW DATA si hay consenso fuerte.
-    - OBSERVE fuerte puede convertirse en señal interna BUENA.
-    - OVER/UNDER_CANDIDATE puede publicarse como INTERNAL si no hay mercado real.
-    - Riesgo alto no publica; manda a observación.
-    - Evita señales internas débiles.
-    - Filtro final tipo analista élite antes de publicar.
-    - Mejora lectura del partido con MatchReadingEnhancer sin bloquear señales.
-    - Agrega lectura auxiliar de próximo gol sin modificar decisiones.
-    - Agrega timeline/análisis profundo/jugadores como lectura auxiliar.
-    - Agrega FinalDecisionEngine como juez maestro antes de publicar.
     """
 
     def __init__(self) -> None:
@@ -66,6 +61,14 @@ class ScanService:
         self.deep_live_analyzer = DeepLiveMatchAnalyzer()
         self.player_live_analyzer = PlayerLiveAnalyzer()
         self.final_decision_engine = FinalDecisionEngine()
+
+        self.league_stability_engine = LeagueStabilityEngine()
+        self.team_memory_engine = TeamMemoryEngine()
+        self.next_goal_intelligence_engine = NextGoalIntelligenceEngine()
+        self.sports_ai_agent = SportsAIAgent()
+        self.tactical_memory_service = TacticalMemoryService()
+        self.pre_match_intelligence_engine = PreMatchIntelligenceEngine()
+        self.adaptive_learning_engine = AdaptiveLearningEngine()
 
     def scan(self, live_matches: List[Dict[str, Any]]) -> Dict[str, Any]:
         candidates: List[Dict[str, Any]] = []
@@ -118,7 +121,12 @@ class ScanService:
         })
 
         if not window.get("allowed", False):
-            return self._block(match, "BLOCK_INVALID_WINDOW", context=context, window=window)
+            return self._block(
+                match,
+                "BLOCK_INVALID_WINDOW",
+                context=context,
+                window=window,
+            )
 
         if match.get("is_scannable") is False:
             ai = self.ai_engine.evaluate(context)
@@ -128,10 +136,12 @@ class ScanService:
                 context=context,
                 ai=ai,
             )
+
             next_goal_context = self.next_goal_helper.interpret(
                 next_goal=next_goal,
                 opportunity={},
             )
+
             match.update(next_goal)
             match.update(next_goal_context)
             self._apply_auxiliary_live_analysis(match, context, ai)
@@ -153,10 +163,12 @@ class ScanService:
                 context=context,
                 ai=ai,
             )
+
             next_goal_context = self.next_goal_helper.interpret(
                 next_goal=next_goal,
                 opportunity={},
             )
+
             match.update(next_goal)
             match.update(next_goal_context)
             self._apply_auxiliary_live_analysis(match, context, ai)
@@ -178,10 +190,12 @@ class ScanService:
             context=context,
             ai=ai,
         )
+
         next_goal_context = self.next_goal_helper.interpret(
             next_goal=next_goal,
             opportunity={},
         )
+
         match.update(next_goal)
         match.update(next_goal_context)
         self._apply_auxiliary_live_analysis(match, context, ai)
@@ -249,6 +263,7 @@ class ScanService:
             next_goal=next_goal,
             opportunity=opportunity,
         )
+
         match.update(next_goal_context)
 
         analyst_pre = self.analyst_engine.evaluate(
@@ -288,7 +303,11 @@ class ScanService:
             )
 
         if opportunity.get("type") == "OBSERVE":
-            if self._should_promote_observe_to_internal_signal(match, context, ai):
+            if self._should_promote_observe_to_internal_signal(
+                match,
+                context,
+                ai,
+            ):
                 promoted_opportunity = {
                     "type": "OVER_CANDIDATE",
                     "rank": "BUENA",
@@ -300,6 +319,7 @@ class ScanService:
                     next_goal=next_goal,
                     opportunity=promoted_opportunity,
                 )
+
                 match.update(promoted_next_goal_context)
 
                 return self._emit_internal_signal(
@@ -347,7 +367,12 @@ class ScanService:
         )
 
         if not market.get("is_valid", False):
-            if self._should_emit_internal_signal(ai, context, opportunity, allow_operable=True):
+            if self._should_emit_internal_signal(
+                ai,
+                context,
+                opportunity,
+                allow_operable=True,
+            ):
                 return self._emit_internal_signal(
                     match=match,
                     context=context,
@@ -382,7 +407,11 @@ class ScanService:
                 market=market,
                 value=None,
             )
-            payload["block_reason"] = market.get("reason", "BLOCK_NO_REAL_MARKET")
+
+            payload["block_reason"] = market.get(
+                "reason",
+                "BLOCK_NO_REAL_MARKET",
+            )
 
             return {
                 "status": "OPPORTUNITY",
@@ -409,7 +438,9 @@ class ScanService:
                 market=market,
                 value=None,
             )
+
             payload["block_reason"] = "BLOCK_RISK_TOO_HIGH"
+
             return {
                 "status": "OPPORTUNITY",
                 "opportunity": payload,
@@ -432,6 +463,7 @@ class ScanService:
             market=market,
             value=value,
         )
+
         match.update(final_decision)
 
         analyst_full = self.analyst_engine.evaluate(
@@ -461,7 +493,12 @@ class ScanService:
             )
 
         if not value.get("is_value", False):
-            if self._should_emit_internal_signal(ai, context, opportunity, allow_operable=True):
+            if self._should_emit_internal_signal(
+                ai,
+                context,
+                opportunity,
+                allow_operable=True,
+            ):
                 return self._emit_internal_signal(
                     match=match,
                     context=context,
@@ -485,7 +522,11 @@ class ScanService:
                 market=market,
                 value=value,
             )
-            payload["block_reason"] = value.get("reason") or value.get("status", "BLOCK_NO_VALUE")
+
+            payload["block_reason"] = (
+                value.get("reason")
+                or value.get("status", "BLOCK_NO_VALUE")
+            )
 
             return {
                 "status": "OPPORTUNITY",
@@ -524,7 +565,12 @@ class ScanService:
             )
 
         if not gate.get("approved", False):
-            if self._should_emit_internal_signal(ai, context, opportunity, allow_operable=True):
+            if self._should_emit_internal_signal(
+                ai,
+                context,
+                opportunity,
+                allow_operable=True,
+            ):
                 return self._emit_internal_signal(
                     match=match,
                     context=context,
@@ -548,7 +594,12 @@ class ScanService:
                 market=market,
                 value=value,
             )
-            payload["block_reason"] = gate.get("reason", "BLOCK_GATE_REJECT")
+
+            payload["block_reason"] = gate.get(
+                "reason",
+                "BLOCK_GATE_REJECT",
+            )
+
             return {
                 "status": "OPPORTUNITY",
                 "opportunity": payload,
@@ -615,6 +666,166 @@ class ScanService:
             ),
         }
 
+    def _apply_auxiliary_live_analysis(
+        self,
+        match: Dict[str, Any],
+        context: Dict[str, Any],
+        ai: Dict[str, Any],
+    ) -> None:
+        timeline = self.timeline_tracker.update(
+            match=match,
+            context=context,
+            ai=ai,
+        )
+
+        deep_analysis = self.deep_live_analyzer.analyze(
+            match=match,
+            context=context,
+            ai=ai,
+            timeline=timeline,
+        )
+
+        player_analysis = self.player_live_analyzer.analyze(
+            match=match,
+            context=context,
+            ai=ai,
+        )
+
+        memory_context = self.tactical_memory_service.build_memory_context(match)
+
+        league_stability = self.league_stability_engine.evaluate(
+            league=match.get("league"),
+            country=match.get("country"),
+            data_quality=context.get("data_quality"),
+            history_items=memory_context.get("league_history", [])
+        )
+
+        next_goal_ai = self.next_goal_intelligence_engine.analyze(
+            match=match,
+            context=context,
+            ai=ai,
+        )
+
+        team_memory_home = self.team_memory_engine.get_memory(
+            str(
+                match.get("home_name")
+                or match.get("home_team")
+                or match.get("home")
+                or "HOME"
+            )
+        )
+
+        team_memory_away = self.team_memory_engine.get_memory(
+            str(
+                match.get("away_name")
+                or match.get("away_team")
+                or match.get("away")
+                or "AWAY"
+            )
+        )
+
+        pre_match_ai = self.pre_match_intelligence_engine.analyze(
+    match=match,
+    home_history=memory_context.get("home_history", []),
+    away_history=memory_context.get("away_history", []),
+    league_history=memory_context.get("league_history", []),
+  )
+
+        adaptive_learning = self.adaptive_learning_engine.analyze(
+        history=memory_context.get("league_history", []),
+        match=match,
+     )
+
+        sports_ai_agent = self.sports_ai_agent.think(
+           match=match,
+           context=context,
+           ai=ai,
+           league_stability=league_stability,
+           next_goal_ai=next_goal_ai,
+           deep_analysis=deep_analysis,
+           team_memory_home=team_memory_home,
+           team_memory_away=team_memory_away,
+        )
+
+        sports_ai_context = {
+            "sports_ai_context_enabled": True,
+            "sports_ai_layer": "LIVE_CONTEXTUAL_AUXILIARY",
+            "sports_ai_advice": self._sports_ai_advice(
+                league_stability=league_stability,
+                next_goal_ai=next_goal_ai,
+                deep_analysis=deep_analysis,
+            ),
+        }
+
+        match.update(timeline)
+        match.update(deep_analysis)
+        match.update(player_analysis)
+        match.update(league_stability)
+        match.update(next_goal_ai)
+        match["team_memory_home"] = team_memory_home
+        match["team_memory_away"] = team_memory_away
+        match.update(adaptive_learning)
+        match.update(sports_ai_agent)
+        match.update(sports_ai_context)
+        match.update(memory_context.get("memory_summary", {}))
+        match.update(pre_match_ai)
+
+    def _sports_ai_advice(
+        self,
+        league_stability: Dict[str, Any],
+        next_goal_ai: Dict[str, Any],
+        deep_analysis: Dict[str, Any],
+    ) -> str:
+        stability = str(
+            league_stability.get("league_stability_level")
+            or league_stability.get("stability_level")
+            or ""
+        ).upper()
+
+        danger = str(
+            league_stability.get("danger_level")
+            or ""
+        ).upper()
+
+        next_goal_bias = str(
+            next_goal_ai.get("next_goal_bias_ai")
+            or ""
+        ).upper()
+
+        next_goal_confidence = self._safe_float(
+            next_goal_ai.get("next_goal_confidence_ai")
+        )
+
+        fake_pressure = bool(
+            next_goal_ai.get("next_goal_fake_pressure")
+        )
+
+        deep_bias = str(
+            deep_analysis.get("deep_projection_bias")
+            or ""
+        ).upper()
+
+        deep_confidence = self._safe_float(
+            deep_analysis.get("deep_projection_confidence")
+        )
+
+        if stability in {"PELIGROSA", "INESTABLE"} or danger in {"ALTO", "EXTREMO"}:
+            return "IA contextual: liga riesgosa. Requiere confirmación live fuerte antes de operar."
+
+        if fake_pressure:
+            return "IA contextual: posible presión falsa. No confiar sin tiros claros, xG o eventos ofensivos reales."
+
+        if deep_bias in {"OVER", "OVER_WATCH"} and deep_confidence >= 70:
+            return "IA contextual: lectura ofensiva favorable, pero mantener validación por riesgo y ventana."
+
+        if deep_bias == "UNDER" and deep_confidence >= 70:
+            return "IA contextual: partido con tendencia de retención. Vigilar enfriamiento y baja profundidad."
+
+        if next_goal_bias in {"HOME", "AWAY"} and next_goal_confidence >= 70:
+            return f"IA contextual: sesgo de próximo gol hacia {next_goal_bias}, confirmar con momentum reciente."
+
+        return "IA contextual: sin ventaja fuerte. Mantener observación."
+
     def _should_hold_by_final_decision(self, final_decision: Dict[str, Any]) -> bool:
         decision = str(final_decision.get("final_decision") or "").upper()
         return decision in {"OBSERVE", "WAIT", "NO_REENTRY", "AVOID"}
@@ -645,7 +856,11 @@ class ScanService:
             market=market,
             value=value,
         )
-        payload["block_reason"] = final_decision.get("final_decision_reason", "FINAL_DECISION_HOLD")
+
+        payload["block_reason"] = final_decision.get(
+            "final_decision_reason",
+            "FINAL_DECISION_HOLD",
+        )
         payload["final_decision_status"] = final_decision.get("final_decision")
         payload.update(final_decision)
 
@@ -708,6 +923,7 @@ class ScanService:
             market=market,
             value=value,
         )
+
         payload["block_reason"] = reason or "ELITE_ANALYST_FILTER_REJECT"
         payload["elite_analyst_status"] = action or "REJECT"
 
@@ -768,6 +984,7 @@ class ScanService:
             market=fake_market,
             value=fake_value,
         )
+
         match.update(final_decision)
 
         if self._should_hold_by_final_decision(final_decision):
@@ -876,35 +1093,6 @@ class ScanService:
             "risk_level": ai.get("risk_level"),
             "risk_flags": [],
         }
-
-    def _apply_auxiliary_live_analysis(
-        self,
-        match: Dict[str, Any],
-        context: Dict[str, Any],
-        ai: Dict[str, Any],
-    ) -> None:
-        timeline = self.timeline_tracker.update(
-            match=match,
-            context=context,
-            ai=ai,
-        )
-
-        deep_analysis = self.deep_live_analyzer.analyze(
-            match=match,
-            context=context,
-            ai=ai,
-            timeline=timeline,
-        )
-
-        player_analysis = self.player_live_analyzer.analyze(
-            match=match,
-            context=context,
-            ai=ai,
-        )
-
-        match.update(timeline)
-        match.update(deep_analysis)
-        match.update(player_analysis)
 
     def _should_continue_despite_low_data(
         self,
@@ -1100,10 +1288,54 @@ class ScanService:
             "next_goal_support": match.get("next_goal_support"),
             "next_goal_helper_advice": match.get("next_goal_helper_advice"),
             "next_goal_helper_warning": match.get("next_goal_helper_warning"),
+            "next_goal_ai_enabled": match.get("next_goal_ai_enabled"),
+            "next_goal_bias_ai": match.get("next_goal_bias_ai"),
+            "next_goal_confidence_ai": match.get("next_goal_confidence_ai"),
+            "home_next_goal_power": match.get("home_next_goal_power"),
+            "away_next_goal_power": match.get("away_next_goal_power"),
+            "home_pressure_power": match.get("home_pressure_power"),
+            "away_pressure_power": match.get("away_pressure_power"),
+            "home_momentum_power": match.get("home_momentum_power"),
+            "away_momentum_power": match.get("away_momentum_power"),
+            "home_need_factor": match.get("home_need_factor"),
+            "away_need_factor": match.get("away_need_factor"),
+            "next_goal_fake_pressure": match.get("next_goal_fake_pressure"),
+            "next_goal_window_ai": match.get("next_goal_window_ai"),
+            "next_goal_advice_ai": match.get("next_goal_advice_ai"),
+            "next_goal_summary_ai": match.get("next_goal_summary_ai"),
+        }
+
+    def _sports_ai_fields(self, match: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "sports_ai_context_enabled": match.get("sports_ai_context_enabled"),
+            "sports_ai_layer": match.get("sports_ai_layer"),
+            "sports_ai_advice": match.get("sports_ai_advice"),
+            "league_stability_enabled": match.get("league_stability_enabled"),
+            "league_stability_score": match.get("league_stability_score"),
+            "league_stability_level": match.get("league_stability_level"),
+            "league_stability_warnings": match.get("league_stability_warnings"),
+            "league_stability_positive_factors": match.get("league_stability_positive_factors"),
+            "league_history_profile": match.get("league_history_profile"),
+            "league_operational_advice": match.get("league_operational_advice"),
+            "volatility_score": match.get("volatility_score"),
+            "chaos_score": match.get("chaos_score"),
+            "consistency_score": match.get("consistency_score"),
+            "danger_level": match.get("danger_level"),
+            "recommendation": match.get("recommendation"),
+            "analysis_summary": match.get("analysis_summary"),
+            "team_memory_home": match.get("team_memory_home"),
+            "team_memory_away": match.get("team_memory_away"),
+            "adaptive_learning_enabled": match.get("adaptive_learning_enabled"),
+            "adaptive_confidence_adjustment": match.get("adaptive_confidence_adjustment"),
+            "adaptive_warning_flags": match.get("adaptive_warning_flags"),
+            "adaptive_league_profile": match.get("adaptive_league_profile"),
+            "adaptive_market_profile": match.get("adaptive_market_profile"),
+            "adaptive_global_profile": match.get("adaptive_global_profile"),
+            "adaptive_learning_summary": match.get("adaptive_learning_summary"),
         }
 
     def _auxiliary_live_fields(self, match: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+        fields = {
             "timeline_ready": match.get("timeline_ready"),
             "timeline_snapshots": match.get("timeline_snapshots"),
             "delta_3m": match.get("delta_3m"),
@@ -1154,6 +1386,9 @@ class ScanService:
             "key_live_players": match.get("key_live_players"),
             "player_analysis_summary": match.get("player_analysis_summary"),
         }
+
+        fields.update(self._sports_ai_fields(match))
+        return fields
 
     def _build_signal(
         self,
@@ -1389,6 +1624,7 @@ class ScanService:
             + self._safe_float(home.get("corners"))
             + self._safe_float(away.get("corners"))
         )
+
         possession_home = self._safe_float(home.get("possession")) or self._safe_float(match.get("possession_home"))
         possession_away = self._safe_float(away.get("possession")) or self._safe_float(match.get("possession_away"))
 
@@ -1444,6 +1680,7 @@ class ScanService:
             or match.get("match_minute")
             or 0
         )
+
         try:
             return int(float(raw))
         except (TypeError, ValueError):
@@ -1459,12 +1696,14 @@ class ScanService:
             or match.get("home")
             or "HOME"
         )
+
         away_name = (
             match.get("away_name")
             or match.get("away_team")
             or match.get("away")
             or "AWAY"
         )
+
         return f"{home_name} vs {away_name}"
 
     def _calculate_signal_score(
