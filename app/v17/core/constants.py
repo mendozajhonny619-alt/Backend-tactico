@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+from typing import Dict, List, Set
+
+
+MAX_PUBLISHED_SIGNALS = 6
+
+MIN_CONFIDENCE_TO_ENTER = 75
+MIN_CONFIDENCE_TO_OPERABLE = 68
+MIN_CONFIDENCE_TO_OBSERVE = 55
+
+MAX_DATA_AGE_SECONDS_FOR_ENTER = 90
+MAX_CLOCK_FREEZE_SCANS = 3
+
+FRESH_SIGNAL_MINUTES = 3
+VALIDATING_SIGNAL_MINUTES = 7
+AGING_SIGNAL_MINUTES = 12
+HIGH_RISK_SIGNAL_MINUTES = 20
+
+CRITICAL_FINAL_DECISIONS: Set[str] = {
+    "AVOID",
+    "NO_REENTRY",
+    "BLOCKED",
+    "REJECTED",
+}
+
+SOFT_FINAL_DECISIONS: Set[str] = {
+    "WAIT",
+    "OBSERVE",
+    "WAIT_CONFIRMATION",
+    "UNDER_WATCH",
+    "SCORE_HOLD",
+}
+
+ENTER_FINAL_DECISIONS: Set[str] = {
+    "ENTER",
+    "STRONG_ENTER",
+    "PREMIUM_ENTER",
+}
+
+VALID_MARKETS: Set[str] = {
+    "OVER",
+    "UNDER",
+    "OBSERVE",
+    "NO_BET",
+}
+
+PUBLISHABLE_MARKETS: Set[str] = {
+    "OVER",
+    "UNDER",
+}
+
+MAIN_CATEGORIES: Set[str] = {
+    "OVER_CANDIDATE",
+    "UNDER_CANDIDATE",
+    "OBSERVE",
+    "NO_BET",
+    "BLOCKED",
+}
+
+CRITICAL_BLOCKERS: Set[str] = {
+    "CLOCK_STALE",
+    "CLOCK_FROZEN",
+    "MINUTE_LAG_DETECTED",
+    "DATA_TOO_OLD",
+    "INVALID_SCORE",
+    "INVALID_MINUTE",
+    "AVOID",
+    "NO_REENTRY",
+    "EXTREME_RISK",
+    "CRITICAL_CONTRADICTION",
+}
+
+SECONDARY_FILTERS: Set[str] = {
+    "RHYTHM",
+    "PRESSURE",
+    "VALUE",
+    "RECENT_SHOTS",
+    "MARKET_CONFIRMATION",
+    "LEAGUE_CONFIRMATION",
+    "TACTICAL_DEPTH",
+    "MOMENTUM",
+    "GOAL_NEED",
+}
+
+CONMEBOL_KEYWORDS: List[str] = [
+    "CONMEBOL",
+    "LIBERTADORES",
+    "SUDAMERICANA",
+    "RECOPA",
+    "BOLIVIA",
+    "ARGENTINA",
+    "BRASIL",
+    "BRAZIL",
+    "CHILE",
+    "COLOMBIA",
+    "ECUADOR",
+    "PARAGUAY",
+    "PERU",
+    "URUGUAY",
+    "VENEZUELA",
+]
+
+LEAGUE_EXTRA_CONFIRMATION_MINUTE = 70
+
+RANK_WEIGHTS: Dict[str, int] = {
+    "PREMIUM": 5,
+    "FUERTE": 4,
+    "BUENA": 3,
+    "OPERABLE": 2,
+    "OBSERVE": 1,
+    "NO_BET": 0,
+    "BLOCKED": -1,
+}
