@@ -12,7 +12,7 @@ class MatchPredictionAI:
     No reemplaza SignalPromotionAI.
     """
 
-    VERSION = "V17_MATCH_PREDICTION_AI_5_PRESSURE_QUALITY"
+    VERSION = "V17_MATCH_PREDICTION_AI_6_AUTONOMOUS_SCENARIOS"
 
     def evaluate(self, signal: Dict[str, Any]) -> Dict[str, Any]:
         signal = signal or {}
@@ -269,6 +269,63 @@ class MatchPredictionAI:
             attack_depth_level=pressure_attack_depth,
         )
 
+        # V17.6: escenario autónomo controlado.
+        # Este bloque no decide la señal; proyecta futuros posibles para que
+        # RiskAI, ContradictionJudge y MasterDecisionAI tengan una lectura más
+        # parecida a un analista profesional.
+        team_goal_probabilities = self._team_goal_probabilities(
+            home_score=home_score,
+            away_score=away_score,
+            home_danger=home_danger,
+            away_danger=away_danger,
+            home_shots=home_shots,
+            away_shots=away_shots,
+            home_sot=home_sot,
+            away_sot=away_sot,
+            attacking_side=attacking_side,
+            dominant_team=pressure_dominant_team,
+            pressure_type=pressure_type,
+            pressure_game_state=pressure_game_state,
+            real_goal_threat=pressure_real_goal_threat,
+            false_pressure_risk=pressure_false_risk,
+            next_goal_probability=next_goal_probability,
+            minute=minute,
+        )
+
+        scoreline_distribution = self._scoreline_distribution(
+            home_score=home_score,
+            away_score=away_score,
+            predicted_score=predicted_score,
+            alternative_score=alternative_score,
+            final_score=final_score,
+            goal_probabilities=goal_probabilities,
+            team_goal_probabilities=team_goal_probabilities,
+            scenario=scenario,
+            minute=minute,
+        )
+
+        scoreline_stability = self._scoreline_stability(
+            scoreline_distribution=scoreline_distribution,
+            goal_probabilities=goal_probabilities,
+            pressure_game_state=pressure_game_state,
+            false_pressure_risk=pressure_false_risk,
+        )
+
+        breakout_analysis = self._breakout_analysis(
+            home_score=home_score,
+            away_score=away_score,
+            home_team=home_team,
+            away_team=away_team,
+            attacking_side=attacking_side,
+            dominant_team=pressure_dominant_team,
+            team_goal_probabilities=team_goal_probabilities,
+            pressure_game_state=pressure_game_state,
+            pressure_type=pressure_type,
+            real_goal_threat=pressure_real_goal_threat,
+            false_pressure_risk=pressure_false_risk,
+            minute=minute,
+        )
+
         conflict_level, conflict_reasons = self._prediction_conflict_level(
             projected_market=projected_market,
             market_alignment=market_alignment,
@@ -310,6 +367,18 @@ class MatchPredictionAI:
             pressure_game_state=pressure_game_state,
             real_goal_threat=pressure_real_goal_threat,
             false_pressure_risk=pressure_false_risk,
+        )
+
+        final_market_recommendation, final_prediction_reason, conflict_level, conflict_reasons = self._apply_autonomous_scenario_guard(
+            projected_market=projected_market,
+            final_market_recommendation=final_market_recommendation,
+            final_prediction_reason=final_prediction_reason,
+            conflict_level=conflict_level,
+            conflict_reasons=conflict_reasons,
+            scoreline_distribution=scoreline_distribution,
+            scoreline_stability=scoreline_stability,
+            breakout_analysis=breakout_analysis,
+            goal_probabilities=goal_probabilities,
         )
 
         prediction_confidence = self._apply_prediction_coherence_guard(
@@ -367,6 +436,14 @@ class MatchPredictionAI:
             pressure_reading=pressure_reading,
         )
 
+        support_points = self._append_autonomous_support_points(
+            support_points=support_points,
+            scoreline_distribution=scoreline_distribution,
+            scoreline_stability=scoreline_stability,
+            breakout_analysis=breakout_analysis,
+            team_goal_probabilities=team_goal_probabilities,
+        )
+
         caution_points = self._caution_points(
             minute=minute,
             risk=risk,
@@ -391,6 +468,13 @@ class MatchPredictionAI:
             real_goal_threat=pressure_real_goal_threat,
             false_pressure_risk=pressure_false_risk,
             pressure_reading=pressure_reading,
+        )
+
+        caution_points = self._append_autonomous_caution_points(
+            caution_points=caution_points,
+            scoreline_distribution=scoreline_distribution,
+            scoreline_stability=scoreline_stability,
+            breakout_analysis=breakout_analysis,
         )
 
         panel_message = self._panel_message(
@@ -420,6 +504,14 @@ class MatchPredictionAI:
             real_goal_threat=pressure_real_goal_threat,
             false_pressure_risk=pressure_false_risk,
             pressure_reading=pressure_reading,
+        )
+
+        panel_message = self._append_autonomous_panel_message(
+            panel_message=panel_message,
+            scoreline_distribution=scoreline_distribution,
+            scoreline_stability=scoreline_stability,
+            breakout_analysis=breakout_analysis,
+            team_goal_probabilities=team_goal_probabilities,
         )
 
         return {
@@ -454,6 +546,15 @@ class MatchPredictionAI:
             "prediction_one_goal_probability": goal_probabilities.get("one_goal", 0),
             "prediction_two_plus_goal_probability": goal_probabilities.get("two_plus_goals", 0),
             "prediction_goal_probabilities": goal_probabilities,
+            "prediction_team_goal_probabilities": team_goal_probabilities,
+            "prediction_home_goal_probability": team_goal_probabilities.get("home_goal", 0),
+            "prediction_away_goal_probability": team_goal_probabilities.get("away_goal", 0),
+            "prediction_no_team_goal_probability": team_goal_probabilities.get("no_team_goal", 0),
+            "prediction_scoreline_distribution": scoreline_distribution,
+            "prediction_scoreline_stability": scoreline_stability,
+            "prediction_breakout_analysis": breakout_analysis,
+            "prediction_breakout_risk": breakout_analysis.get("breakout_risk", "LOW"),
+            "prediction_breakout_side": breakout_analysis.get("breakout_side", "NONE"),
             "prediction_next_goal_probability": next_goal_probability,
             "prediction_attacking_team": attacking_team,
             "prediction_attacking_side": attacking_side,
@@ -467,6 +568,388 @@ class MatchPredictionAI:
                 "STRONG_PREDICTION",
             },
         }
+
+
+    def _team_goal_probabilities(
+        self,
+        home_score: float,
+        away_score: float,
+        home_danger: float,
+        away_danger: float,
+        home_shots: float,
+        away_shots: float,
+        home_sot: float,
+        away_sot: float,
+        attacking_side: str,
+        dominant_team: str = "",
+        pressure_type: str = "",
+        pressure_game_state: str = "",
+        real_goal_threat: str = "",
+        false_pressure_risk: str = "",
+        next_goal_probability: str = "",
+        minute: int = 0,
+    ) -> Dict[str, int]:
+        """
+        Estima quién tiene mayor probabilidad de anotar el próximo cambio real del partido.
+
+        Autonomía controlada: no decide ENTER/NO_BET. Solo proyecta el reparto de amenaza
+        entre local, visitante y conservación del marcador.
+        """
+        home_force = home_danger * 0.35 + home_shots * 1.5 + home_sot * 5.0
+        away_force = away_danger * 0.35 + away_shots * 1.5 + away_sot * 5.0
+
+        if attacking_side == "HOME":
+            home_force += 10
+        elif attacking_side == "AWAY":
+            away_force += 10
+
+        dominant = self._txt(dominant_team)
+        if dominant in {"HOME", "LOCAL"}:
+            home_force += 6
+        elif dominant in {"AWAY", "VISITANTE"}:
+            away_force += 6
+
+        # Necesidad del marcador: el equipo que pierde debe tener más peso de ruptura,
+        # incluso cuando no domina territorialmente.
+        if home_score < away_score:
+            home_force += 8
+        elif away_score < home_score:
+            away_force += 8
+
+        if pressure_type in {"REAL_PRESSURE", "HIGH_THREAT_PRESSURE"} or real_goal_threat == "HIGH":
+            if attacking_side == "HOME":
+                home_force += 8
+            elif attacking_side == "AWAY":
+                away_force += 8
+            else:
+                home_force += 3
+                away_force += 3
+
+        if pressure_type in {"FALSE_PRESSURE", "LATERAL_PRESSURE", "DOMINANCE_WITHOUT_DEPTH"}:
+            if attacking_side == "HOME":
+                home_force -= 5
+            elif attacking_side == "AWAY":
+                away_force -= 5
+
+        if false_pressure_risk in {"HIGH", "MEDIUM_HIGH"}:
+            # La presión del dominador pierde peso y sube la conservación.
+            if attacking_side == "HOME":
+                home_force -= 4
+            elif attacking_side == "AWAY":
+                away_force -= 4
+
+        if pressure_game_state in {"OPEN_GAME", "BROKEN_GAME", "PANIC_GAME"}:
+            home_force += 4
+            away_force += 4
+        elif pressure_game_state in {"LOW_ACTIVITY_GAME", "CONTROLLED_GAME", "DEAD_GAME"}:
+            home_force -= 3
+            away_force -= 3
+
+        # Probabilidad total de que exista próximo gol.
+        goal_mass = {
+            "HIGH": 76,
+            "MEDIUM_HIGH": 64,
+            "MEDIUM": 52,
+            "LOW_MEDIUM": 40,
+            "LOW": 28,
+        }.get(self._txt(next_goal_probability), 45)
+
+        if minute >= 82 and pressure_game_state not in {"BROKEN_GAME", "PANIC_GAME"}:
+            goal_mass -= 8
+
+        home_force = max(1.0, home_force)
+        away_force = max(1.0, away_force)
+        total_force = home_force + away_force
+
+        home_goal = round(goal_mass * home_force / total_force)
+        away_goal = round(goal_mass * away_force / total_force)
+        no_team_goal = max(0, 100 - home_goal - away_goal)
+
+        return {
+            "home_goal": int(max(0, min(100, home_goal))),
+            "away_goal": int(max(0, min(100, away_goal))),
+            "no_team_goal": int(max(0, min(100, no_team_goal))),
+            "home_force": int(round(home_force)),
+            "away_force": int(round(away_force)),
+        }
+
+    def _scoreline_distribution(
+        self,
+        home_score: float,
+        away_score: float,
+        predicted_score: str,
+        alternative_score: str,
+        final_score: str,
+        goal_probabilities: Dict[str, int],
+        team_goal_probabilities: Dict[str, int],
+        scenario: str,
+        minute: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Construye top de marcadores probables con porcentajes normalizados."""
+        candidates: Dict[str, float] = {}
+
+        def add(score: str, weight: float, label: str) -> None:
+            score = self._clean_score(score, int(home_score), int(away_score))
+            candidates[score] = candidates.get(score, 0.0) + max(0.0, float(weight))
+
+        no_goal = int(goal_probabilities.get("no_goal", 0))
+        one_goal = int(goal_probabilities.get("one_goal", 0))
+        two_plus = int(goal_probabilities.get("two_plus_goals", 0))
+        home_goal = int(team_goal_probabilities.get("home_goal", 0))
+        away_goal = int(team_goal_probabilities.get("away_goal", 0))
+
+        current = f"{int(home_score)}-{int(away_score)}"
+        home_plus = f"{int(home_score) + 1}-{int(away_score)}"
+        away_plus = f"{int(home_score)}-{int(away_score) + 1}"
+
+        add(current, no_goal * 1.15, "conservative")
+        add(home_plus, max(1, one_goal) * max(0.25, home_goal / max(1, home_goal + away_goal)), "home_next")
+        add(away_plus, max(1, one_goal) * max(0.25, away_goal / max(1, home_goal + away_goal)), "away_next")
+        add(predicted_score, 28, "main")
+        add(alternative_score, 20, "alternative")
+        add(final_score, 16, "final")
+
+        if two_plus >= 22:
+            if home_goal >= away_goal:
+                add(f"{int(home_score) + 2}-{int(away_score)}", two_plus * 0.55, "offensive")
+                add(f"{int(home_score) + 1}-{int(away_score) + 1}", two_plus * 0.45, "rupture")
+            else:
+                add(f"{int(home_score)}-{int(away_score) + 2}", two_plus * 0.55, "offensive")
+                add(f"{int(home_score) + 1}-{int(away_score) + 1}", two_plus * 0.45, "rupture")
+
+        total = max(1.0, sum(candidates.values()))
+        rows = []
+        for score, weight in candidates.items():
+            rows.append({"score": score, "probability": int(round(weight * 100 / total))})
+
+        rows.sort(key=lambda x: x["probability"], reverse=True)
+        top = rows[:5]
+        # Ajuste para que el top no supere 100 por redondeos.
+        total_top = sum(x["probability"] for x in top)
+        if total_top > 100 and top:
+            top[0]["probability"] -= total_top - 100
+        return top
+
+    def _scoreline_stability(
+        self,
+        scoreline_distribution: List[Dict[str, Any]],
+        goal_probabilities: Dict[str, int],
+        pressure_game_state: str = "",
+        false_pressure_risk: str = "",
+    ) -> str:
+        if not scoreline_distribution:
+            return "UNKNOWN"
+        top = int(scoreline_distribution[0].get("probability", 0))
+        second = int(scoreline_distribution[1].get("probability", 0)) if len(scoreline_distribution) > 1 else 0
+        gap = top - second
+        no_goal = int(goal_probabilities.get("no_goal", 0))
+        two_plus = int(goal_probabilities.get("two_plus_goals", 0))
+
+        if pressure_game_state in {"BROKEN_GAME", "PANIC_GAME"} or two_plus >= 32:
+            return "HIGHLY_UNSTABLE"
+        if gap <= 6:
+            return "UNSTABLE"
+        if no_goal >= 58 and top >= 34:
+            return "STABLE"
+        if false_pressure_risk in {"HIGH", "MEDIUM_HIGH"} and no_goal >= 48:
+            return "MODERATELY_STABLE"
+        if gap <= 14:
+            return "MODERATELY_UNSTABLE"
+        return "MODERATELY_STABLE"
+
+    def _breakout_analysis(
+        self,
+        home_score: float,
+        away_score: float,
+        home_team: str,
+        away_team: str,
+        attacking_side: str,
+        dominant_team: str,
+        team_goal_probabilities: Dict[str, int],
+        pressure_game_state: str = "",
+        pressure_type: str = "",
+        real_goal_threat: str = "",
+        false_pressure_risk: str = "",
+        minute: int = 0,
+    ) -> Dict[str, Any]:
+        home_goal = int(team_goal_probabilities.get("home_goal", 0))
+        away_goal = int(team_goal_probabilities.get("away_goal", 0))
+        dominant = self._txt(dominant_team)
+
+        breakout_side = "NONE"
+        breakout_team = "Sin ruptura clara"
+        risk_points = 0
+        reasons: List[str] = []
+
+        # Rival que pierde pero tiene probabilidad relevante de gol.
+        if home_score > away_score and away_goal >= 26:
+            breakout_side = "AWAY"
+            breakout_team = away_team
+            risk_points += 28
+            reasons.append("El visitante puede romper el dominio con empate o transición.")
+        elif away_score > home_score and home_goal >= 26:
+            breakout_side = "HOME"
+            breakout_team = home_team
+            risk_points += 28
+            reasons.append("El local puede romper el dominio con empate o transición.")
+
+        # Dominio del equipo A, pero amenaza del otro lado.
+        if dominant in {"HOME", "LOCAL"} and away_goal >= home_goal - 5 and away_goal >= 24:
+            breakout_side = "AWAY"
+            breakout_team = away_team
+            risk_points += 20
+            reasons.append("El rival del dominador mantiene probabilidad de gol competitiva.")
+        elif dominant in {"AWAY", "VISITANTE"} and home_goal >= away_goal - 5 and home_goal >= 24:
+            breakout_side = "HOME"
+            breakout_team = home_team
+            risk_points += 20
+            reasons.append("El rival del dominador mantiene probabilidad de gol competitiva.")
+
+        if pressure_game_state in {"BROKEN_GAME", "PANIC_GAME", "OPEN_GAME"}:
+            risk_points += 18
+            reasons.append("El estado del partido favorece ruptura o cambio de escenario.")
+
+        if pressure_type in {"FALSE_PRESSURE", "DOMINANCE_WITHOUT_DEPTH", "LATERAL_PRESSURE"} and false_pressure_risk in {"HIGH", "MEDIUM_HIGH"}:
+            risk_points += 12
+            reasons.append("La presión del dominador puede ser falsa y dejar transición al rival.")
+
+        if real_goal_threat == "HIGH":
+            risk_points += 8
+
+        if minute >= 75 and abs(home_score - away_score) <= 1:
+            risk_points += 8
+            reasons.append("Tramo final con diferencia corta: aumenta riesgo de episodio decisivo.")
+
+        if risk_points >= 55:
+            risk = "HIGH"
+        elif risk_points >= 35:
+            risk = "MEDIUM_HIGH"
+        elif risk_points >= 20:
+            risk = "MEDIUM"
+        else:
+            risk = "LOW"
+
+        return {
+            "breakout_risk": risk,
+            "breakout_score": int(min(100, risk_points)),
+            "breakout_side": breakout_side,
+            "breakout_team": breakout_team,
+            "breakout_reasons": reasons[:5],
+        }
+
+    def _apply_autonomous_scenario_guard(
+        self,
+        projected_market: str,
+        final_market_recommendation: str,
+        final_prediction_reason: str,
+        conflict_level: str,
+        conflict_reasons: List[str],
+        scoreline_distribution: List[Dict[str, Any]],
+        scoreline_stability: str,
+        breakout_analysis: Dict[str, Any],
+        goal_probabilities: Dict[str, int],
+    ) -> Tuple[str, str, str, List[str]]:
+        recommendation = final_market_recommendation
+        reason = final_prediction_reason
+        conflict = conflict_level
+        reasons = list(conflict_reasons or [])
+
+        no_goal = int(goal_probabilities.get("no_goal", 0))
+        one_goal = int(goal_probabilities.get("one_goal", 0))
+        two_plus = int(goal_probabilities.get("two_plus_goals", 0))
+        goal_risk = one_goal + two_plus
+        breakout_risk = str((breakout_analysis or {}).get("breakout_risk") or "LOW")
+
+        if projected_market == "UNDER" and scoreline_stability in {"UNSTABLE", "HIGHLY_UNSTABLE"} and goal_risk >= 48:
+            reasons.append("UNDER contradice una distribución de marcador inestable.")
+            recommendation = "OBSERVE_OVER_RISK"
+            reason = "UNDER queda en observación: los escenarios alternativos muestran riesgo real de ruptura."
+            conflict = self._raise_conflict(conflict, "MEDIUM_CONFLICT")
+
+        if projected_market == "OVER" and no_goal >= 55 and scoreline_stability in {"STABLE", "MODERATELY_STABLE"}:
+            reasons.append("OVER contradice una distribución estable de conservación del marcador.")
+            recommendation = "OBSERVE_UNDER_RISK"
+            reason = "OVER queda en observación: el escenario conservador domina por encima de la ruptura."
+            conflict = self._raise_conflict(conflict, "MEDIUM_CONFLICT")
+
+        if breakout_risk in {"HIGH", "MEDIUM_HIGH"}:
+            reasons.append("Existe escenario alternativo de ruptura por el rival o por transición.")
+            if projected_market == "UNDER":
+                recommendation = "OBSERVE_OVER_RISK"
+                reason = "UNDER requiere confirmación: el rival puede romper la conservación del marcador."
+                conflict = self._raise_conflict(conflict, "HIGH_CONFLICT" if breakout_risk == "HIGH" else "MEDIUM_CONFLICT")
+            else:
+                conflict = self._raise_conflict(conflict, "LOW_CONFLICT")
+
+        return recommendation, reason, conflict, reasons[:8]
+
+    def _append_autonomous_support_points(
+        self,
+        support_points: List[str],
+        scoreline_distribution: List[Dict[str, Any]],
+        scoreline_stability: str,
+        breakout_analysis: Dict[str, Any],
+        team_goal_probabilities: Dict[str, int],
+    ) -> List[str]:
+        points = list(support_points or [])
+        if scoreline_distribution:
+            top = scoreline_distribution[0]
+            points.append(f"Escenario principal: {top.get('score')} ({top.get('probability')}%).")
+        points.append(f"Estabilidad del marcador: {scoreline_stability}.")
+        points.append(
+            f"Prob. gol local/visitante: {team_goal_probabilities.get('home_goal', 0)}% / {team_goal_probabilities.get('away_goal', 0)}%."
+        )
+        if breakout_analysis.get("breakout_risk") in {"MEDIUM_HIGH", "HIGH"}:
+            points.append(f"Ruptura posible por {breakout_analysis.get('breakout_team')}." )
+        return points[:8]
+
+    def _append_autonomous_caution_points(
+        self,
+        caution_points: List[str],
+        scoreline_distribution: List[Dict[str, Any]],
+        scoreline_stability: str,
+        breakout_analysis: Dict[str, Any],
+    ) -> List[str]:
+        cautions = list(caution_points or [])
+        if len(scoreline_distribution) >= 2:
+            top = int(scoreline_distribution[0].get("probability", 0))
+            second = int(scoreline_distribution[1].get("probability", 0))
+            if abs(top - second) <= 8:
+                cautions.append("El escenario alternativo está demasiado cerca del principal; no elevar confianza sin confirmación.")
+        if scoreline_stability in {"UNSTABLE", "HIGHLY_UNSTABLE"}:
+            cautions.append("Marcador inestable: existe riesgo de que el partido cambie de lectura rápidamente.")
+        for reason in (breakout_analysis or {}).get("breakout_reasons", [])[:2]:
+            cautions.append(str(reason))
+        return cautions[:8]
+
+    def _append_autonomous_panel_message(
+        self,
+        panel_message: str,
+        scoreline_distribution: List[Dict[str, Any]],
+        scoreline_stability: str,
+        breakout_analysis: Dict[str, Any],
+        team_goal_probabilities: Dict[str, int],
+    ) -> str:
+        if not scoreline_distribution:
+            return panel_message
+        top_items = ", ".join(f"{x.get('score')} {x.get('probability')}%" for x in scoreline_distribution[:3])
+        suffix = (
+            f" Escenarios autónomos: {top_items}. "
+            f"Estabilidad: {scoreline_stability}. "
+            f"Gol local/visitante: {team_goal_probabilities.get('home_goal', 0)}%/{team_goal_probabilities.get('away_goal', 0)}%."
+        )
+        if breakout_analysis.get("breakout_risk") in {"MEDIUM_HIGH", "HIGH"}:
+            suffix += f" Ruptura posible: {breakout_analysis.get('breakout_team')} ({breakout_analysis.get('breakout_risk')})."
+        return f"{panel_message}{suffix}"
+
+    def _clean_score(self, score: str, home_score: int, away_score: int) -> str:
+        try:
+            left, right = str(score or "").split("-")[:2]
+            h = max(home_score, int(float(left)))
+            a = max(away_score, int(float(right)))
+            return f"{h}-{a}"
+        except Exception:
+            return f"{home_score}-{away_score}"
 
     def _apply_pressure_quality_to_goal_probabilities(
         self,
