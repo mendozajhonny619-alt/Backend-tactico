@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 
 class MatchPredictionAI:
@@ -10,17 +10,9 @@ class MatchPredictionAI:
     No decide entrada.
     No reemplaza SignalActivationAI.
     No reemplaza SignalPromotionAI.
-
-    Su función es responder:
-    - Qué escenario parece más probable.
-    - Si hay riesgo de próximo gol.
-    - Qué equipo amenaza más.
-    - Qué resultado probable se proyecta.
-    - Qué mercado se beneficia.
-    - Qué tan confiable es la predicción.
     """
 
-    VERSION = "V17_MATCH_PREDICTION_AI_1"
+    VERSION = "V17_MATCH_PREDICTION_AI_5_PRESSURE_QUALITY"
 
     def evaluate(self, signal: Dict[str, Any]) -> Dict[str, Any]:
         signal = signal or {}
@@ -47,6 +39,10 @@ class MatchPredictionAI:
         )
         risk = self._num(signal.get("risk_score"))
         maturity = self._num(signal.get("match_maturity_score"))
+
+        activation_score = self._num(signal.get("activation_score"))
+        promotion_score = self._num(signal.get("promotion_score"))
+
         confidence = self._num(
             signal.get("activation_score")
             or signal.get("promotion_score")
@@ -54,23 +50,60 @@ class MatchPredictionAI:
             or signal.get("football_confidence")
         )
 
-        home_danger = self._num(signal.get("home_dangerous_attacks"))
-        away_danger = self._num(signal.get("away_dangerous_attacks"))
-        home_shots = self._num(signal.get("home_shots"))
-        away_shots = self._num(signal.get("away_shots"))
-        home_sot = self._num(signal.get("home_shots_on_target"))
-        away_sot = self._num(signal.get("away_shots_on_target"))
+        home_danger = self._num(
+            signal.get("home_dangerous_attacks")
+            or signal.get("dangerous_attacks_home")
+            or signal.get("attacks_home")
+        )
+        away_danger = self._num(
+            signal.get("away_dangerous_attacks")
+            or signal.get("dangerous_attacks_away")
+            or signal.get("attacks_away")
+        )
+        home_shots = self._num(signal.get("home_shots") or signal.get("shots_home"))
+        away_shots = self._num(signal.get("away_shots") or signal.get("shots_away"))
+        home_sot = self._num(signal.get("home_shots_on_target") or signal.get("sot_home"))
+        away_sot = self._num(signal.get("away_shots_on_target") or signal.get("sot_away"))
 
         activation_level = self._txt(signal.get("activation_level"))
+        activation_market = self._txt(signal.get("activation_market"))
         promotion_level = self._txt(signal.get("promotion_level"))
+        promotion_market = self._txt(signal.get("promotion_market"))
         panel_section = self._txt(signal.get("panel_section"))
         football_reading = self._txt(signal.get("football_dominant_reading"))
         alternative_reading = self._txt(signal.get("football_alternative_reading"))
 
-        over_watch = self._has_over_watch(signal, market)
-        under_watch = market == "UNDER" or "UNDER" in football_reading
+        # Competition intelligence propagated from LeagueFilter / SnapshotStore.
+        # It does not decide entries by itself; it only calibrates live prediction
+        # for elite international tournaments such as World Cup, Euro, Copa America, etc.
+        competition_tier = self._txt(signal.get("competition_tier"))
+        competition_weight = self._num(signal.get("competition_weight"))
+        world_cup_flag = self._bool(signal.get("world_cup_flag"))
+        national_team_flag = self._bool(signal.get("national_team_flag"))
+        major_tournament_flag = self._bool(signal.get("major_tournament_flag"))
 
-        attacking_team = self._detect_attacking_team(
+        # PressureQualityAI: lectura de presión real, falsa, lateral y dominio.
+        # Mantiene compatibilidad si estos campos todavía no llegan al signal.
+        pressure_type = self._txt(signal.get("pressure_type"))
+        pressure_game_state = self._txt(signal.get("pressure_game_state") or signal.get("game_state"))
+        pressure_real_goal_threat = self._txt(signal.get("real_goal_threat"))
+        pressure_false_risk = self._txt(
+            signal.get("pressure_false_pressure_risk")
+            or signal.get("pressure_false_risk_level")
+            or signal.get("false_pressure_risk_level")
+        )
+        pressure_attack_depth = self._txt(signal.get("attack_depth_level"))
+        pressure_dominant_team = self._txt(signal.get("dominant_team"))
+        pressure_reading = str(signal.get("pressure_reading") or "")
+
+        over_watch = self._has_over_watch(signal, market)
+        under_watch = self._has_under_watch(
+            signal=signal,
+            market=market,
+            football_reading=football_reading,
+        )
+
+        attacking_team, attacking_side = self._detect_attacking_context(
             home_team=home_team,
             away_team=away_team,
             home_danger=home_danger,
@@ -87,6 +120,8 @@ class MatchPredictionAI:
             minute=minute,
             total_goals=total_goals,
             market=market,
+            activation_market=activation_market,
+            promotion_market=promotion_market,
             over_watch=over_watch,
             under_watch=under_watch,
             pressure=pressure,
@@ -94,8 +129,15 @@ class MatchPredictionAI:
             volume=volume,
             risk=risk,
             activation_level=activation_level,
+            activation_score=activation_score,
             promotion_level=promotion_level,
+            promotion_score=promotion_score,
             panel_section=panel_section,
+            competition_tier=competition_tier,
+            competition_weight=competition_weight,
+            world_cup_flag=world_cup_flag,
+            national_team_flag=national_team_flag,
+            major_tournament_flag=major_tournament_flag,
         )
 
         next_goal_probability = self._next_goal_probability(
@@ -110,12 +152,19 @@ class MatchPredictionAI:
             over_score=over_score,
             under_score=under_score,
             maturity=maturity,
+            activation_level=activation_level,
+            activation_score=activation_score,
+            competition_tier=competition_tier,
+            competition_weight=competition_weight,
+            world_cup_flag=world_cup_flag,
+            national_team_flag=national_team_flag,
+            major_tournament_flag=major_tournament_flag,
         )
 
         predicted_score = self._predict_score(
             home_score=home_score,
             away_score=away_score,
-            attacking_team=attacking_team,
+            attacking_side=attacking_side,
             next_goal_probability=next_goal_probability,
             scenario=scenario,
             minute=minute,
@@ -135,6 +184,8 @@ class MatchPredictionAI:
             over_watch=over_watch,
             under_watch=under_watch,
             market=market,
+            activation_market=activation_market,
+            promotion_market=promotion_market,
             over_score=over_score,
             under_score=under_score,
         )
@@ -149,8 +200,134 @@ class MatchPredictionAI:
             maturity=maturity,
             confidence=confidence,
             activation_level=activation_level,
+            activation_score=activation_score,
             promotion_level=promotion_level,
+            promotion_score=promotion_score,
             scenario=scenario,
+            competition_tier=competition_tier,
+            competition_weight=competition_weight,
+            world_cup_flag=world_cup_flag,
+            national_team_flag=national_team_flag,
+            major_tournament_flag=major_tournament_flag,
+        )
+
+        halftime_score = self._predict_halftime_score(
+            minute=minute,
+            home_score=home_score,
+            away_score=away_score,
+            predicted_score=predicted_score,
+        )
+
+        final_score = self._predict_final_score(
+            minute=minute,
+            home_score=home_score,
+            away_score=away_score,
+            predicted_score=predicted_score,
+            alternative_score=alternative_score,
+            scenario=scenario,
+        )
+
+        score_scenarios = self._score_scenarios(
+            home_score=home_score,
+            away_score=away_score,
+            predicted_score=predicted_score,
+            alternative_score=alternative_score,
+            final_score=final_score,
+            next_goal_probability=next_goal_probability,
+            scenario=scenario,
+        )
+
+        market_alignment = self._market_alignment(
+            projected_market=projected_market,
+            predicted_score=predicted_score,
+            alternative_score=alternative_score,
+            final_score=final_score,
+            current_total_goals=total_goals,
+        )
+
+        goal_probabilities = self._goal_count_probabilities(
+            minute=minute,
+            phase=phase,
+            scenario=scenario,
+            projected_market=projected_market,
+            next_goal_probability=next_goal_probability,
+            pressure=pressure,
+            rhythm=rhythm,
+            volume=volume,
+            risk=risk,
+            over_score=over_score,
+            under_score=under_score,
+            current_total_goals=total_goals,
+        )
+
+        goal_probabilities = self._apply_pressure_quality_to_goal_probabilities(
+            goal_probabilities=goal_probabilities,
+            pressure_type=pressure_type,
+            pressure_game_state=pressure_game_state,
+            real_goal_threat=pressure_real_goal_threat,
+            false_pressure_risk=pressure_false_risk,
+            attack_depth_level=pressure_attack_depth,
+        )
+
+        conflict_level, conflict_reasons = self._prediction_conflict_level(
+            projected_market=projected_market,
+            market_alignment=market_alignment,
+            predicted_score=predicted_score,
+            alternative_score=alternative_score,
+            final_score=final_score,
+            current_total_goals=total_goals,
+            next_goal_probability=next_goal_probability,
+            goal_probabilities=goal_probabilities,
+            pressure=pressure,
+            rhythm=rhythm,
+            volume=volume,
+            over_score=over_score,
+            under_score=under_score,
+            over_watch=over_watch,
+            under_watch=under_watch,
+        )
+
+        final_market_recommendation, final_prediction_reason = self._final_market_recommendation(
+            projected_market=projected_market,
+            market_alignment=market_alignment,
+            conflict_level=conflict_level,
+            conflict_reasons=conflict_reasons,
+            goal_probabilities=goal_probabilities,
+            over_score=over_score,
+            under_score=under_score,
+            next_goal_probability=next_goal_probability,
+            scenario=scenario,
+        )
+
+        final_market_recommendation, final_prediction_reason, conflict_level, conflict_reasons = self._apply_pressure_quality_guard(
+            projected_market=projected_market,
+            final_market_recommendation=final_market_recommendation,
+            final_prediction_reason=final_prediction_reason,
+            conflict_level=conflict_level,
+            conflict_reasons=conflict_reasons,
+            goal_probabilities=goal_probabilities,
+            pressure_type=pressure_type,
+            pressure_game_state=pressure_game_state,
+            real_goal_threat=pressure_real_goal_threat,
+            false_pressure_risk=pressure_false_risk,
+        )
+
+        prediction_confidence = self._apply_prediction_coherence_guard(
+            prediction_confidence=prediction_confidence,
+            projected_market=projected_market,
+            final_market_recommendation=final_market_recommendation,
+            market_alignment=market_alignment,
+            conflict_level=conflict_level,
+            goal_probabilities=goal_probabilities,
+        )
+
+        prediction_confidence = self._apply_pressure_quality_confidence(
+            prediction_confidence=prediction_confidence,
+            pressure_type=pressure_type,
+            pressure_game_state=pressure_game_state,
+            real_goal_threat=pressure_real_goal_threat,
+            false_pressure_risk=pressure_false_risk,
+            conflict_level=conflict_level,
         )
 
         prediction_mode = self._prediction_mode(
@@ -172,6 +349,22 @@ class MatchPredictionAI:
             volume=volume,
             over_watch=over_watch,
             under_watch=under_watch,
+            activation_level=activation_level,
+            activation_score=activation_score,
+            competition_tier=competition_tier,
+            competition_weight=competition_weight,
+            world_cup_flag=world_cup_flag,
+            national_team_flag=national_team_flag,
+            major_tournament_flag=major_tournament_flag,
+        )
+
+        support_points = self._append_pressure_support_points(
+            support_points=support_points,
+            pressure_type=pressure_type,
+            pressure_game_state=pressure_game_state,
+            real_goal_threat=pressure_real_goal_threat,
+            false_pressure_risk=pressure_false_risk,
+            pressure_reading=pressure_reading,
         )
 
         caution_points = self._caution_points(
@@ -182,6 +375,22 @@ class MatchPredictionAI:
             over_watch=over_watch,
             under_watch=under_watch,
             alternative_reading=alternative_reading,
+            competition_tier=competition_tier,
+            competition_weight=competition_weight,
+            world_cup_flag=world_cup_flag,
+            national_team_flag=national_team_flag,
+            major_tournament_flag=major_tournament_flag,
+            conflict_level=conflict_level,
+            conflict_reasons=conflict_reasons,
+        )
+
+        caution_points = self._append_pressure_caution_points(
+            caution_points=caution_points,
+            pressure_type=pressure_type,
+            pressure_game_state=pressure_game_state,
+            real_goal_threat=pressure_real_goal_threat,
+            false_pressure_risk=pressure_false_risk,
+            pressure_reading=pressure_reading,
         )
 
         panel_message = self._panel_message(
@@ -193,18 +402,61 @@ class MatchPredictionAI:
             projected_market=projected_market,
             attacking_team=attacking_team,
             prediction_mode=prediction_mode,
+            competition_tier=competition_tier,
+            competition_weight=competition_weight,
+            world_cup_flag=world_cup_flag,
+            national_team_flag=national_team_flag,
+            major_tournament_flag=major_tournament_flag,
+            market_alignment=market_alignment,
+            conflict_level=conflict_level,
+            final_market_recommendation=final_market_recommendation,
+            goal_probabilities=goal_probabilities,
+        )
+
+        panel_message = self._append_pressure_panel_message(
+            panel_message=panel_message,
+            pressure_type=pressure_type,
+            pressure_game_state=pressure_game_state,
+            real_goal_threat=pressure_real_goal_threat,
+            false_pressure_risk=pressure_false_risk,
+            pressure_reading=pressure_reading,
         )
 
         return {
             "match_prediction_version": self.VERSION,
+            "prediction_competition_tier": competition_tier,
+            "prediction_competition_weight": competition_weight,
+            "prediction_world_cup_flag": world_cup_flag,
+            "prediction_national_team_flag": national_team_flag,
+            "prediction_major_tournament_flag": major_tournament_flag,
+            "prediction_pressure_type": pressure_type,
+            "prediction_pressure_game_state": pressure_game_state,
+            "prediction_real_goal_threat": pressure_real_goal_threat,
+            "prediction_false_pressure_risk": pressure_false_risk,
+            "prediction_attack_depth_level": pressure_attack_depth,
+            "prediction_pressure_dominant_team": pressure_dominant_team,
+            "prediction_pressure_reading": pressure_reading,
             "prediction_phase": phase,
             "prediction_mode": prediction_mode,
             "prediction_scenario": scenario,
             "prediction_market": projected_market,
             "prediction_score": predicted_score,
             "prediction_alternative_score": alternative_score,
+            "prediction_halftime_score": halftime_score,
+            "prediction_final_score": final_score,
+            "prediction_score_scenarios": score_scenarios,
+            "prediction_market_alignment": market_alignment,
+            "prediction_conflict_level": conflict_level,
+            "prediction_conflict_reasons": conflict_reasons,
+            "prediction_final_market_recommendation": final_market_recommendation,
+            "prediction_final_reason": final_prediction_reason,
+            "prediction_no_goal_probability": goal_probabilities.get("no_goal", 0),
+            "prediction_one_goal_probability": goal_probabilities.get("one_goal", 0),
+            "prediction_two_plus_goal_probability": goal_probabilities.get("two_plus_goals", 0),
+            "prediction_goal_probabilities": goal_probabilities,
             "prediction_next_goal_probability": next_goal_probability,
             "prediction_attacking_team": attacking_team,
+            "prediction_attacking_side": attacking_side,
             "prediction_confidence": prediction_confidence,
             "prediction_panel_message": panel_message,
             "prediction_support_points": support_points,
@@ -215,6 +467,240 @@ class MatchPredictionAI:
                 "STRONG_PREDICTION",
             },
         }
+
+    def _apply_pressure_quality_to_goal_probabilities(
+        self,
+        goal_probabilities: Dict[str, int],
+        pressure_type: str = "",
+        pressure_game_state: str = "",
+        real_goal_threat: str = "",
+        false_pressure_risk: str = "",
+        attack_depth_level: str = "",
+    ) -> Dict[str, int]:
+        """
+        Ajusta escenarios de goles usando PressureQualityAI.
+
+        Objetivo: no confundir actividad ofensiva con peligro real.
+        Ejemplo: 8 remates, 0 al arco, 5 corners y 0 ataques peligrosos
+        puede ser presión lateral, no necesariamente OVER fuerte.
+        """
+        no_goal = int(goal_probabilities.get("no_goal", 0))
+        one_goal = int(goal_probabilities.get("one_goal", 0))
+        two_plus = int(goal_probabilities.get("two_plus_goals", 0))
+
+        if pressure_type in {"REAL_PRESSURE", "HIGH_THREAT_PRESSURE"} or real_goal_threat == "HIGH":
+            no_goal -= 10
+            one_goal += 6
+            two_plus += 4
+
+        elif pressure_type in {"FALSE_PRESSURE", "LATERAL_PRESSURE", "DOMINANCE_WITHOUT_DEPTH"}:
+            if real_goal_threat in {"LOW", "MEDIUM_LOW", ""}:
+                no_goal += 12
+                one_goal -= 6
+                two_plus -= 6
+
+        if false_pressure_risk in {"HIGH", "MEDIUM_HIGH"}:
+            no_goal += 8
+            two_plus -= 5
+
+        if pressure_game_state in {"OPEN_GAME", "BROKEN_GAME", "PANIC_GAME"}:
+            no_goal -= 5
+            one_goal += 3
+            two_plus += 2
+
+        if pressure_game_state in {"LOW_ACTIVITY_GAME", "CONTROLLED_GAME", "DEAD_GAME"}:
+            no_goal += 6
+            two_plus -= 4
+
+        if attack_depth_level in {"HIGH", "VERY_HIGH"}:
+            no_goal -= 5
+            one_goal += 3
+            two_plus += 2
+        elif attack_depth_level in {"LOW", "NONE"}:
+            no_goal += 4
+            two_plus -= 2
+
+        values = [max(1, no_goal), max(1, one_goal), max(1, two_plus)]
+        total = max(1, sum(values))
+
+        new_no_goal = round(values[0] * 100 / total)
+        new_one_goal = round(values[1] * 100 / total)
+        new_two_plus = max(0, 100 - new_no_goal - new_one_goal)
+
+        return {
+            "no_goal": int(new_no_goal),
+            "one_goal": int(new_one_goal),
+            "two_plus_goals": int(new_two_plus),
+        }
+
+    def _apply_pressure_quality_guard(
+        self,
+        projected_market: str,
+        final_market_recommendation: str,
+        final_prediction_reason: str,
+        conflict_level: str,
+        conflict_reasons: List[str],
+        goal_probabilities: Dict[str, int],
+        pressure_type: str = "",
+        pressure_game_state: str = "",
+        real_goal_threat: str = "",
+        false_pressure_risk: str = "",
+    ) -> Tuple[str, str, str, List[str]]:
+        reasons = list(conflict_reasons or [])
+        recommendation = final_market_recommendation
+        reason = final_prediction_reason
+        conflict = conflict_level
+
+        no_goal = int(goal_probabilities.get("no_goal", 0))
+        one_goal = int(goal_probabilities.get("one_goal", 0))
+        two_plus = int(goal_probabilities.get("two_plus_goals", 0))
+        goal_risk = one_goal + two_plus
+
+        false_or_lateral = pressure_type in {
+            "FALSE_PRESSURE",
+            "LATERAL_PRESSURE",
+            "DOMINANCE_WITHOUT_DEPTH",
+        }
+        real_pressure = pressure_type in {"REAL_PRESSURE", "HIGH_THREAT_PRESSURE"} or real_goal_threat == "HIGH"
+
+        if projected_market == "OVER" and false_or_lateral and real_goal_threat in {"LOW", "MEDIUM_LOW", ""}:
+            reasons.append("OVER basado en presión lateral o falsa: falta profundidad real de gol.")
+            if no_goal >= 42 or two_plus <= 24:
+                recommendation = "OBSERVE_OVER_RISK"
+                reason = (
+                    "OVER queda en observación: hay actividad ofensiva, pero la calidad de presión "
+                    "no confirma peligro real suficiente."
+                )
+                conflict = self._raise_conflict(conflict, "MEDIUM_CONFLICT")
+
+        if projected_market == "UNDER" and real_pressure:
+            reasons.append("UNDER contradice presión real o amenaza alta de gol.")
+            if goal_risk >= 48:
+                recommendation = "OBSERVE_OVER_RISK"
+                reason = "UNDER queda en observación porque la presión real mantiene riesgo de gol."
+                conflict = self._raise_conflict(conflict, "MEDIUM_CONFLICT")
+
+        if false_pressure_risk in {"HIGH", "MEDIUM_HIGH"} and projected_market == "OVER":
+            reasons.append("Riesgo de presión falsa contra lectura OVER.")
+            conflict = self._raise_conflict(conflict, "LOW_CONFLICT")
+
+        return recommendation, reason, conflict, reasons[:6]
+
+    def _apply_pressure_quality_confidence(
+        self,
+        prediction_confidence: int,
+        pressure_type: str = "",
+        pressure_game_state: str = "",
+        real_goal_threat: str = "",
+        false_pressure_risk: str = "",
+        conflict_level: str = "",
+    ) -> int:
+        confidence = int(prediction_confidence)
+
+        if pressure_type == "REAL_PRESSURE" or real_goal_threat == "HIGH":
+            confidence += 7
+        elif pressure_type == "HIGH_THREAT_PRESSURE":
+            confidence += 5
+        elif pressure_type in {"FALSE_PRESSURE", "LATERAL_PRESSURE", "DOMINANCE_WITHOUT_DEPTH"}:
+            if real_goal_threat in {"LOW", "MEDIUM_LOW", ""}:
+                confidence -= 8
+
+        if false_pressure_risk in {"HIGH", "MEDIUM_HIGH"}:
+            confidence -= 5
+
+        if pressure_game_state in {"OPEN_GAME", "BROKEN_GAME", "PANIC_GAME"}:
+            confidence += 4
+        elif pressure_game_state in {"LOW_ACTIVITY_GAME", "CONTROLLED_GAME", "DEAD_GAME"}:
+            confidence -= 2
+
+        if conflict_level in {"HIGH_CONFLICT", "CRITICAL_CONFLICT"}:
+            confidence -= 6
+
+        return max(0, min(100, int(confidence)))
+
+    def _append_pressure_support_points(
+        self,
+        support_points: List[str],
+        pressure_type: str = "",
+        pressure_game_state: str = "",
+        real_goal_threat: str = "",
+        false_pressure_risk: str = "",
+        pressure_reading: str = "",
+    ) -> List[str]:
+        points = list(support_points or [])
+
+        if pressure_type:
+            points.append(f"Calidad de presión: {pressure_type}.")
+        if pressure_game_state:
+            points.append(f"Estado del partido por presión: {pressure_game_state}.")
+        if real_goal_threat:
+            points.append(f"Amenaza real de gol: {real_goal_threat}.")
+        if pressure_reading:
+            points.append(str(pressure_reading))
+
+        return points[:8]
+
+    def _append_pressure_caution_points(
+        self,
+        caution_points: List[str],
+        pressure_type: str = "",
+        pressure_game_state: str = "",
+        real_goal_threat: str = "",
+        false_pressure_risk: str = "",
+        pressure_reading: str = "",
+    ) -> List[str]:
+        cautions = list(caution_points or [])
+
+        if pressure_type in {"FALSE_PRESSURE", "LATERAL_PRESSURE", "DOMINANCE_WITHOUT_DEPTH"}:
+            cautions.append("La presión puede ser territorial o lateral; no confirma peligro real por sí sola.")
+        if false_pressure_risk in {"HIGH", "MEDIUM_HIGH"}:
+            cautions.append("Riesgo de presión falsa: no elevar OVER sin tiros al arco o ataques peligrosos.")
+        if pressure_reading:
+            cautions.append(str(pressure_reading))
+
+        return cautions[:8]
+
+    def _append_pressure_panel_message(
+        self,
+        panel_message: str,
+        pressure_type: str = "",
+        pressure_game_state: str = "",
+        real_goal_threat: str = "",
+        false_pressure_risk: str = "",
+        pressure_reading: str = "",
+    ) -> str:
+        extras = []
+
+        if pressure_type:
+            extras.append(f"Presión: {pressure_type}")
+        if real_goal_threat:
+            extras.append(f"amenaza real: {real_goal_threat}")
+        if false_pressure_risk:
+            extras.append(f"riesgo de presión falsa: {false_pressure_risk}")
+        if pressure_game_state:
+            extras.append(f"estado: {pressure_game_state}")
+
+        if not extras:
+            return panel_message
+
+        suffix = " Lectura de presión: " + "; ".join(extras) + "."
+        if pressure_reading:
+            suffix += f" {pressure_reading}"
+
+        return f"{panel_message}{suffix}"
+
+    def _raise_conflict(self, current: str, target: str) -> str:
+        order = {
+            "NO_CONFLICT": 0,
+            "LOW_CONFLICT": 1,
+            "MEDIUM_CONFLICT": 2,
+            "HIGH_CONFLICT": 3,
+            "CRITICAL_CONFLICT": 4,
+        }
+        current_level = order.get(str(current or "NO_CONFLICT"), 0)
+        target_level = order.get(str(target or "NO_CONFLICT"), 0)
+        reverse = {value: key for key, value in order.items()}
+        return reverse.get(max(current_level, target_level), "NO_CONFLICT")
 
     def _detect_phase(self, minute: int) -> str:
         if minute <= 10:
@@ -238,6 +724,8 @@ class MatchPredictionAI:
         minute: int,
         total_goals: float,
         market: str,
+        activation_market: str,
+        promotion_market: str,
         over_watch: bool,
         under_watch: bool,
         pressure: float,
@@ -245,16 +733,64 @@ class MatchPredictionAI:
         volume: float,
         risk: float,
         activation_level: str,
+        activation_score: float,
         promotion_level: str,
+        promotion_score: float,
         panel_section: str,
+        competition_tier: str = "",
+        competition_weight: float = 0.0,
+        world_cup_flag: bool = False,
+        national_team_flag: bool = False,
+        major_tournament_flag: bool = False,
     ) -> str:
         live_force = max(pressure, rhythm, volume)
+        elite_international = self._is_elite_international(
+            competition_tier=competition_tier,
+            competition_weight=competition_weight,
+            world_cup_flag=world_cup_flag,
+            national_team_flag=national_team_flag,
+            major_tournament_flag=major_tournament_flag,
+        )
 
         if activation_level == "BLOCKED" or "BLOCKED" in promotion_level:
             return "BLOCKED_SCENARIO"
 
+        strong_over_activation = (
+            activation_level in {
+                "EARLY_OVER_CANDIDATE",
+                "STRONG_CANDIDATE",
+                "MAIN_SIGNAL",
+                "TOP_SIGNAL",
+            }
+            and activation_market == "OVER"
+            and activation_score >= 74
+        )
+
+        early_over_panel = (
+            "OVER_EARLY" in panel_section
+            or "OVER_HIGH" in panel_section
+            or panel_section == "OVER_HIGH_OBSERVATION"
+        )
+
+        if strong_over_activation and risk < 80:
+            if live_force >= 55:
+                return "GOAL_RISK_ALIVE"
+            return "OVER_WATCH_RISK"
+
+        if over_watch and activation_score >= 82 and risk < 80:
+            if live_force >= 50:
+                return "GOAL_RISK_ALIVE"
+            return "OVER_WATCH_RISK"
+
+        if early_over_panel and over_watch and risk < 80:
+            if live_force >= 55:
+                return "GOAL_RISK_ALIVE"
+            return "BALANCED_OVER_WATCH"
+
         if over_watch and live_force >= 68 and risk <= 72:
             if minute >= 70:
+                if elite_international and live_force < 76:
+                    return "ELITE_LATE_OVER_REQUIRES_CONFIRMATION"
                 return "LATE_GOAL_POSSIBLE"
             return "OPEN_BREAKING_SCENARIO"
 
@@ -264,11 +800,13 @@ class MatchPredictionAI:
         if market == "OVER" and live_force >= 55:
             return "OPEN_MATCH"
 
+        if under_watch and over_watch:
+            if live_force >= 45 or activation_market == "OVER":
+                return "UNDER_WITH_RUPTURE_RISK"
+            return "BALANCED_OBSERVATION"
+
         if under_watch and live_force < 48 and total_goals <= 2:
             return "UNDER_CONSERVATION"
-
-        if under_watch and over_watch:
-            return "UNDER_WITH_RUPTURE_RISK"
 
         if live_force >= 75 and risk >= 70:
             return "CHAOTIC_MATCH"
@@ -291,13 +829,27 @@ class MatchPredictionAI:
         over_score: float,
         under_score: float,
         maturity: float,
+        activation_level: str,
+        activation_score: float,
+        competition_tier: str = "",
+        competition_weight: float = 0.0,
+        world_cup_flag: bool = False,
+        national_team_flag: bool = False,
+        major_tournament_flag: bool = False,
     ) -> str:
         live_force = max(pressure, rhythm, volume)
-
         score = 30
 
         if over_watch:
             score += 14
+        if activation_level == "EARLY_OVER_CANDIDATE":
+            score += 12
+        if activation_level in {"STRONG_CANDIDATE", "MAIN_SIGNAL", "TOP_SIGNAL"}:
+            score += 10
+        if activation_score >= 75:
+            score += 6
+        if activation_score >= 88:
+            score += 6
 
         if live_force >= 55:
             score += 12
@@ -320,24 +872,42 @@ class MatchPredictionAI:
 
         if phase in {"FIRST_HALF_PREDICTION_ZONE", "STRONG_LIVE_PREDICTION_ZONE"}:
             score += 8
-
         if phase == "LATE_GOAL_OPPORTUNITY_ZONE":
             score += 5
-
         if phase == "HIGH_RISK_FINAL_ZONE":
             score -= 12
 
         if risk >= 78:
             score -= 12
 
-        if scenario in {"OPEN_BREAKING_SCENARIO", "LATE_GOAL_POSSIBLE"}:
+        if scenario in {"OPEN_BREAKING_SCENARIO", "LATE_GOAL_POSSIBLE", "GOAL_RISK_ALIVE"}:
             score += 10
+
+        if scenario == "ELITE_LATE_OVER_REQUIRES_CONFIRMATION":
+            score += 3
+
+        if scenario in {"OVER_WATCH_RISK", "BALANCED_OVER_WATCH", "UNDER_WITH_RUPTURE_RISK"}:
+            score += 6
 
         if scenario in {"UNDER_CONSERVATION", "LATE_CONTROLLED_CLOSING"}:
             score -= 15
 
         if under_score >= 70 and not over_watch:
             score -= 10
+
+        # Elite national-team tournaments are less tolerant of late false OVERs.
+        # Do not block prediction, only calibrate it down unless live force is truly strong.
+        if self._is_elite_international(
+            competition_tier=competition_tier,
+            competition_weight=competition_weight,
+            world_cup_flag=world_cup_flag,
+            national_team_flag=national_team_flag,
+            major_tournament_flag=major_tournament_flag,
+        ):
+            if minute >= 70 and live_force < 72 and scenario not in {"LATE_GOAL_POSSIBLE", "OPEN_BREAKING_SCENARIO"}:
+                score -= 8
+            elif minute >= 70 and live_force >= 78:
+                score += 3
 
         score = max(0, min(100, int(score)))
 
@@ -351,7 +921,7 @@ class MatchPredictionAI:
             return "LOW_MEDIUM"
         return "LOW"
 
-    def _detect_attacking_team(
+    def _detect_attacking_context(
         self,
         home_team: str,
         away_team: str,
@@ -363,29 +933,27 @@ class MatchPredictionAI:
         away_sot: float,
         home_score: float,
         away_score: float,
-    ) -> str:
+    ) -> Tuple[str, str]:
         home_force = home_danger * 0.45 + home_shots * 1.2 + home_sot * 2.2
         away_force = away_danger * 0.45 + away_shots * 1.2 + away_sot * 2.2
 
         if home_score < away_score:
             home_force += 6
-
         if away_score < home_score:
             away_force += 6
 
         if home_force > away_force + 5:
-            return home_team
-
+            return home_team, "HOME"
         if away_force > home_force + 5:
-            return away_team
+            return away_team, "AWAY"
 
-        return "Sin amenaza clara"
+        return "Sin amenaza clara", "NONE"
 
     def _predict_score(
         self,
         home_score: float,
         away_score: float,
-        attacking_team: str,
+        attacking_side: str,
         next_goal_probability: str,
         scenario: str,
         minute: int,
@@ -395,31 +963,23 @@ class MatchPredictionAI:
 
         goal_likely = next_goal_probability in {"HIGH", "MEDIUM_HIGH"}
 
-        if not goal_likely:
-            return f"{h}-{a}"
-
         if scenario in {"UNDER_CONSERVATION", "LATE_CONTROLLED_CLOSING"}:
             return f"{h}-{a}"
 
-        if attacking_team == "Local":
+        if not goal_likely:
+            return f"{h}-{a}"
+
+        if attacking_side == "HOME":
             return f"{h + 1}-{a}"
-
-        if attacking_team == "Visitante":
+        if attacking_side == "AWAY":
             return f"{h}-{a + 1}"
-
-        if attacking_team not in {"Sin amenaza clara", ""}:
-            return f"{h + 1}-{a}" if h <= a else f"{h}-{a + 1}"
 
         if h < a:
             return f"{h + 1}-{a}"
-
         if a < h:
             return f"{h}-{a + 1}"
 
-        if minute >= 70:
-            return f"{h + 1}-{a}"
-
-        return f"{h}-{a}"
+        return f"{h + 1}-{a}"
 
     def _alternative_score(
         self,
@@ -438,10 +998,397 @@ class MatchPredictionAI:
         if scenario == "LATE_GOAL_POSSIBLE":
             return f"{h + 1}-{a}" if h <= a else f"{h}-{a + 1}"
 
+        if scenario in {
+            "OVER_WATCH_RISK",
+            "BALANCED_OVER_WATCH",
+            "UNDER_WITH_RUPTURE_RISK",
+            "GOAL_RISK_ALIVE",
+        }:
+            return f"{h + 1}-{a}" if h <= a else f"{h}-{a + 1}"
+
         if scenario in {"UNDER_CONSERVATION", "LATE_CONTROLLED_CLOSING"}:
             return f"{h}-{a}"
 
         return predicted_score
+
+    def _predict_halftime_score(
+        self,
+        minute: int,
+        home_score: float,
+        away_score: float,
+        predicted_score: str,
+    ) -> str:
+        if minute <= 45:
+            return predicted_score
+
+        return f"{int(home_score)}-{int(away_score)}"
+
+    def _predict_final_score(
+        self,
+        minute: int,
+        home_score: float,
+        away_score: float,
+        predicted_score: str,
+        alternative_score: str,
+        scenario: str,
+    ) -> str:
+        if scenario in {"UNDER_CONSERVATION", "LATE_CONTROLLED_CLOSING"}:
+            return f"{int(home_score)}-{int(away_score)}"
+
+        if minute >= 86:
+            return predicted_score
+
+        if scenario in {
+            "OPEN_BREAKING_SCENARIO",
+            "LATE_GOAL_POSSIBLE",
+            "GOAL_RISK_ALIVE",
+            "OVER_WATCH_RISK",
+            "BALANCED_OVER_WATCH",
+            "UNDER_WITH_RUPTURE_RISK",
+            "ELITE_LATE_OVER_REQUIRES_CONFIRMATION",
+        }:
+            return alternative_score
+
+        return predicted_score
+
+    def _score_scenarios(
+        self,
+        home_score: float,
+        away_score: float,
+        predicted_score: str,
+        alternative_score: str,
+        final_score: str,
+        next_goal_probability: str,
+        scenario: str,
+    ) -> List[Dict[str, Any]]:
+        current_score = f"{int(home_score)}-{int(away_score)}"
+
+        if scenario in {"UNDER_CONSERVATION", "LATE_CONTROLLED_CLOSING"}:
+            return [
+                {"score": current_score, "weight": 55, "label": "SCORE_HOLD"},
+                {"score": predicted_score, "weight": 30, "label": "CONTROLLED_VARIANT"},
+                {"score": alternative_score, "weight": 15, "label": "LOW_RUPTURE"},
+            ]
+
+        if next_goal_probability in {"HIGH", "MEDIUM_HIGH"}:
+            return [
+                {"score": final_score, "weight": 45, "label": "MAIN_LIVE_SCENARIO"},
+                {"score": alternative_score, "weight": 32, "label": "OFFENSIVE_VARIANT"},
+                {"score": current_score, "weight": 23, "label": "SCORE_HOLD_RISK"},
+            ]
+
+        return [
+            {"score": current_score, "weight": 42, "label": "CURRENT_HOLD"},
+            {"score": predicted_score, "weight": 35, "label": "SINGLE_GOAL_VARIANT"},
+            {"score": alternative_score, "weight": 23, "label": "ALTERNATIVE_VARIANT"},
+        ]
+
+    def _market_alignment(
+        self,
+        projected_market: str,
+        predicted_score: str,
+        alternative_score: str,
+        final_score: str,
+        current_total_goals: float,
+    ) -> str:
+        final_goals = self._score_total(final_score)
+        predicted_goals = self._score_total(predicted_score)
+        alternative_goals = self._score_total(alternative_score)
+
+        if projected_market == "OVER":
+            if max(final_goals, predicted_goals, alternative_goals) > current_total_goals:
+                return "ALIGNED_WITH_OVER"
+            return "OVER_NEEDS_REACTIVATION"
+
+        if projected_market == "UNDER":
+            if final_goals <= current_total_goals + 1:
+                return "ALIGNED_WITH_UNDER"
+            return "UNDER_HAS_RUPTURE_RISK"
+
+        return "NEUTRAL_ALIGNMENT"
+
+    def _score_total(self, score: str) -> int:
+        try:
+            left, right = str(score or "0-0").split("-")[:2]
+            return int(left) + int(right)
+        except Exception:
+            return 0
+
+    def _goal_count_probabilities(
+        self,
+        minute: int,
+        phase: str,
+        scenario: str,
+        projected_market: str,
+        next_goal_probability: str,
+        pressure: float,
+        rhythm: float,
+        volume: float,
+        risk: float,
+        over_score: float,
+        under_score: float,
+        current_total_goals: float,
+    ) -> Dict[str, int]:
+        """
+        Simula escenarios simples de goles restantes.
+
+        Esta capa no intenta adivinar con exactitud matemática. Su objetivo es
+        evitar incoherencias: si el sistema dice UNDER, la probabilidad de no gol
+        debe dominar; si dice OVER, debe existir soporte real para 1 o 2+ goles.
+        """
+        live_force = max(pressure, rhythm, volume)
+
+        base_no_goal = 40
+        base_one_goal = 38
+        base_two_plus = 22
+
+        if next_goal_probability == "HIGH":
+            base_no_goal -= 20
+            base_one_goal += 12
+            base_two_plus += 8
+        elif next_goal_probability == "MEDIUM_HIGH":
+            base_no_goal -= 12
+            base_one_goal += 8
+            base_two_plus += 4
+        elif next_goal_probability == "MEDIUM":
+            base_no_goal -= 5
+            base_one_goal += 4
+            base_two_plus += 1
+        elif next_goal_probability == "LOW":
+            base_no_goal += 18
+            base_one_goal -= 10
+            base_two_plus -= 8
+
+        if live_force >= 75:
+            base_no_goal -= 12
+            base_one_goal += 6
+            base_two_plus += 6
+        elif live_force >= 62:
+            base_no_goal -= 7
+            base_one_goal += 5
+            base_two_plus += 2
+        elif live_force <= 35:
+            base_no_goal += 10
+            base_one_goal -= 5
+            base_two_plus -= 5
+
+        if scenario in {
+            "OPEN_BREAKING_SCENARIO",
+            "LATE_GOAL_POSSIBLE",
+            "GOAL_RISK_ALIVE",
+            "UNDER_WITH_RUPTURE_RISK",
+            "OVER_WATCH_RISK",
+        }:
+            base_no_goal -= 10
+            base_one_goal += 6
+            base_two_plus += 4
+
+        if scenario in {"UNDER_CONSERVATION", "LATE_CONTROLLED_CLOSING"}:
+            base_no_goal += 18
+            base_one_goal -= 10
+            base_two_plus -= 8
+
+        if projected_market == "UNDER":
+            base_no_goal += 8
+            base_two_plus -= 6
+        elif projected_market == "OVER":
+            base_no_goal -= 8
+            base_one_goal += 4
+            base_two_plus += 4
+
+        if under_score >= over_score + 18:
+            base_no_goal += 10
+            base_two_plus -= 6
+        elif over_score >= under_score + 12:
+            base_no_goal -= 10
+            base_one_goal += 5
+            base_two_plus += 5
+
+        if risk >= 78:
+            base_no_goal += 4
+            base_two_plus -= 4
+
+        # Late game naturally compresses 2+ goal probability unless match is truly open.
+        if minute >= 80 and live_force < 70:
+            base_two_plus -= 8
+            base_no_goal += 5
+            base_one_goal += 3
+
+        values = [max(1, base_no_goal), max(1, base_one_goal), max(1, base_two_plus)]
+        total = max(1, sum(values))
+
+        no_goal = round(values[0] * 100 / total)
+        one_goal = round(values[1] * 100 / total)
+        two_plus = max(0, 100 - no_goal - one_goal)
+
+        return {
+            "no_goal": int(no_goal),
+            "one_goal": int(one_goal),
+            "two_plus_goals": int(two_plus),
+        }
+
+    def _prediction_conflict_level(
+        self,
+        projected_market: str,
+        market_alignment: str,
+        predicted_score: str,
+        alternative_score: str,
+        final_score: str,
+        current_total_goals: float,
+        next_goal_probability: str,
+        goal_probabilities: Dict[str, int],
+        pressure: float,
+        rhythm: float,
+        volume: float,
+        over_score: float,
+        under_score: float,
+        over_watch: bool,
+        under_watch: bool,
+    ) -> Tuple[str, List[str]]:
+        reasons: List[str] = []
+        live_force = max(pressure, rhythm, volume)
+        final_goals = self._score_total(final_score)
+        predicted_goals = self._score_total(predicted_score)
+        alternative_goals = self._score_total(alternative_score)
+        max_projected_goals = max(final_goals, predicted_goals, alternative_goals)
+
+        no_goal = int(goal_probabilities.get("no_goal", 0))
+        one_goal = int(goal_probabilities.get("one_goal", 0))
+        two_plus = int(goal_probabilities.get("two_plus_goals", 0))
+        goal_risk = one_goal + two_plus
+
+        if projected_market == "UNDER":
+            if next_goal_probability in {"HIGH", "MEDIUM_HIGH"}:
+                reasons.append("UNDER contradice una probabilidad alta de próximo gol.")
+            if max_projected_goals > current_total_goals:
+                reasons.append("UNDER contradice un marcador proyectado con más goles.")
+            if goal_risk >= 58:
+                reasons.append("UNDER contradice escenarios futuros con alto riesgo de gol.")
+            if live_force >= 65:
+                reasons.append("UNDER contradice presión, ritmo o volumen ofensivo relevante.")
+            if over_watch and over_score >= under_score - 10:
+                reasons.append("UNDER convive con OVER WATCH competitivo.")
+
+        elif projected_market == "OVER":
+            if next_goal_probability in {"LOW", "LOW_MEDIUM"} and no_goal >= 52:
+                reasons.append("OVER contradice una probabilidad alta de conservación del marcador.")
+            if max_projected_goals <= current_total_goals and no_goal >= 50:
+                reasons.append("OVER contradice marcador probable sin goles adicionales.")
+            if live_force <= 35 and two_plus <= 18:
+                reasons.append("OVER contradice bajo volumen ofensivo real.")
+            if under_watch and under_score >= over_score + 15:
+                reasons.append("OVER contradice ventaja clara de UNDER.")
+
+        if market_alignment in {"UNDER_HAS_RUPTURE_RISK", "OVER_NEEDS_REACTIVATION"}:
+            reasons.append(f"Alineación de mercado advierte {market_alignment}.")
+
+        if len(reasons) >= 4:
+            return "CRITICAL_CONFLICT", reasons
+        if len(reasons) >= 3:
+            return "HIGH_CONFLICT", reasons
+        if len(reasons) >= 2:
+            return "MEDIUM_CONFLICT", reasons
+        if len(reasons) == 1:
+            return "LOW_CONFLICT", reasons
+        return "NO_CONFLICT", reasons
+
+    def _final_market_recommendation(
+        self,
+        projected_market: str,
+        market_alignment: str,
+        conflict_level: str,
+        conflict_reasons: List[str],
+        goal_probabilities: Dict[str, int],
+        over_score: float,
+        under_score: float,
+        next_goal_probability: str,
+        scenario: str,
+    ) -> Tuple[str, str]:
+        no_goal = int(goal_probabilities.get("no_goal", 0))
+        one_goal = int(goal_probabilities.get("one_goal", 0))
+        two_plus = int(goal_probabilities.get("two_plus_goals", 0))
+        goal_risk = one_goal + two_plus
+
+        if conflict_level in {"HIGH_CONFLICT", "CRITICAL_CONFLICT"}:
+            if projected_market == "UNDER" and goal_risk >= 58:
+                return (
+                    "OBSERVE_OVER_RISK",
+                    "La lectura UNDER queda en observación porque los escenarios futuros muestran riesgo real de otro gol.",
+                )
+            if projected_market == "OVER" and no_goal >= 52:
+                return (
+                    "OBSERVE_UNDER_RISK",
+                    "La lectura OVER queda en observación porque el escenario de conservación del marcador domina.",
+                )
+            return (
+                "OBSERVE_CONFLICT",
+                "La predicción detecta conflicto interno entre mercado, marcador probable y próximos goles.",
+            )
+
+        if projected_market == "UNDER":
+            if no_goal >= 54 and next_goal_probability in {"LOW", "LOW_MEDIUM", "MEDIUM"}:
+                return (
+                    "UNDER",
+                    "UNDER se sostiene porque domina el escenario de conservación y no hay ruptura ofensiva fuerte.",
+                )
+            if goal_risk >= 55:
+                return (
+                    "OBSERVE_OVER_RISK",
+                    "UNDER no se promueve porque el riesgo de un gol adicional sigue vivo.",
+                )
+
+        if projected_market == "OVER":
+            if goal_risk >= 56 and next_goal_probability in {"MEDIUM", "MEDIUM_HIGH", "HIGH"}:
+                return (
+                    "OVER",
+                    "OVER se sostiene porque los escenarios futuros favorecen al menos un gol adicional.",
+                )
+            if no_goal >= 55:
+                return (
+                    "OBSERVE_UNDER_RISK",
+                    "OVER no se promueve porque el marcador tiene probabilidad relevante de conservarse.",
+                )
+
+        if market_alignment in {"ALIGNED_WITH_OVER", "ALIGNED_WITH_UNDER"}:
+            return projected_market, "Mercado y predicción están alineados sin conflicto crítico."
+
+        return "OBSERVE", "No existe alineación suficiente para emitir una lectura operativa limpia."
+
+    def _apply_prediction_coherence_guard(
+        self,
+        prediction_confidence: int,
+        projected_market: str,
+        final_market_recommendation: str,
+        market_alignment: str,
+        conflict_level: str,
+        goal_probabilities: Dict[str, int],
+    ) -> int:
+        confidence = int(prediction_confidence)
+
+        if conflict_level == "LOW_CONFLICT":
+            confidence -= 5
+        elif conflict_level == "MEDIUM_CONFLICT":
+            confidence -= 12
+        elif conflict_level == "HIGH_CONFLICT":
+            confidence -= 22
+        elif conflict_level == "CRITICAL_CONFLICT":
+            confidence -= 32
+
+        if final_market_recommendation.startswith("OBSERVE"):
+            confidence -= 8
+
+        if market_alignment in {"ALIGNED_WITH_OVER", "ALIGNED_WITH_UNDER"} and conflict_level == "NO_CONFLICT":
+            confidence += 5
+
+        # If future scenarios are clear, give a small confidence reward.
+        no_goal = int(goal_probabilities.get("no_goal", 0))
+        goal_risk = int(goal_probabilities.get("one_goal", 0)) + int(goal_probabilities.get("two_plus_goals", 0))
+        if projected_market == "UNDER" and no_goal >= 60 and conflict_level == "NO_CONFLICT":
+            confidence += 4
+        if projected_market == "OVER" and goal_risk >= 62 and conflict_level == "NO_CONFLICT":
+            confidence += 4
+
+        return max(0, min(100, int(confidence)))
 
     def _projected_market(
         self,
@@ -450,13 +1397,29 @@ class MatchPredictionAI:
         over_watch: bool,
         under_watch: bool,
         market: str,
+        activation_market: str,
+        promotion_market: str,
         over_score: float,
         under_score: float,
     ) -> str:
-        if scenario in {"OPEN_BREAKING_SCENARIO", "LATE_GOAL_POSSIBLE", "GOAL_RISK_ALIVE"}:
+        if scenario in {
+            "OPEN_BREAKING_SCENARIO",
+            "LATE_GOAL_POSSIBLE",
+            "GOAL_RISK_ALIVE",
+            "OVER_WATCH_RISK",
+            "BALANCED_OVER_WATCH",
+            "UNDER_WITH_RUPTURE_RISK",
+            "ELITE_LATE_OVER_REQUIRES_CONFIRMATION",
+        }:
             return "OVER"
 
         if next_goal_probability in {"HIGH", "MEDIUM_HIGH"} and over_watch:
+            return "OVER"
+
+        if activation_market == "OVER" and over_watch:
+            return "OVER"
+
+        if promotion_market == "OVER" and over_watch:
             return "OVER"
 
         if scenario in {"UNDER_CONSERVATION", "LATE_CONTROLLED_CLOSING"}:
@@ -481,8 +1444,15 @@ class MatchPredictionAI:
         maturity: float,
         confidence: float,
         activation_level: str,
+        activation_score: float,
         promotion_level: str,
+        promotion_score: float,
         scenario: str,
+        competition_tier: str = "",
+        competition_weight: float = 0.0,
+        world_cup_flag: bool = False,
+        national_team_flag: bool = False,
+        major_tournament_flag: bool = False,
     ) -> int:
         score = 35
 
@@ -518,11 +1488,40 @@ class MatchPredictionAI:
         }:
             score += 10
 
+        if activation_score >= 80:
+            score += 6
+
         if promotion_level in {"STRONG_CANDIDATE", "MAIN_SIGNAL", "TOP_SIGNAL"}:
             score += 7
 
-        if scenario in {"OPEN_BREAKING_SCENARIO", "UNDER_CONSERVATION", "LATE_GOAL_POSSIBLE"}:
+        if promotion_score >= 75:
+            score += 4
+
+        if scenario in {
+            "OPEN_BREAKING_SCENARIO",
+            "UNDER_CONSERVATION",
+            "LATE_GOAL_POSSIBLE",
+            "OVER_WATCH_RISK",
+            "GOAL_RISK_ALIVE",
+        }:
             score += 7
+
+        if scenario == "ELITE_LATE_OVER_REQUIRES_CONFIRMATION":
+            score -= 5
+
+        if self._is_elite_international(
+            competition_tier=competition_tier,
+            competition_weight=competition_weight,
+            world_cup_flag=world_cup_flag,
+            national_team_flag=national_team_flag,
+            major_tournament_flag=major_tournament_flag,
+        ):
+            # Elite competitions add credibility when data is strong, but reduce
+            # confidence in late weak-pressure readings.
+            if max(pressure, rhythm, volume) >= 72 and risk < 72:
+                score += 4
+            if minute >= 75 and max(pressure, rhythm, volume) < 62:
+                score -= 7
 
         if risk >= 78:
             score -= 14
@@ -551,7 +1550,11 @@ class MatchPredictionAI:
         if promotion_level in {"STRONG_CANDIDATE", "MAIN_SIGNAL", "TOP_SIGNAL"}:
             return "OPERATIVE_PREDICTION"
 
-        if panel_section in {"HIGH_OBSERVATION", "OVER_EARLY_CANDIDATE"}:
+        if panel_section in {
+            "HIGH_OBSERVATION",
+            "OVER_EARLY_CANDIDATE",
+            "OVER_HIGH_OBSERVATION",
+        }:
             return "PANORAMIC_PREDICTION"
 
         if minute <= 10:
@@ -571,6 +1574,13 @@ class MatchPredictionAI:
         volume: float,
         over_watch: bool,
         under_watch: bool,
+        activation_level: str,
+        activation_score: float,
+        competition_tier: str = "",
+        competition_weight: float = 0.0,
+        world_cup_flag: bool = False,
+        national_team_flag: bool = False,
+        major_tournament_flag: bool = False,
     ) -> List[str]:
         points = []
 
@@ -578,6 +1588,15 @@ class MatchPredictionAI:
         points.append(f"Escenario live detectado: {scenario}.")
         points.append(f"Mercado proyectado: {projected_market}.")
         points.append(f"Probabilidad de próximo gol: {next_goal_probability}.")
+
+        if self._is_elite_international(
+            competition_tier=competition_tier,
+            competition_weight=competition_weight,
+            world_cup_flag=world_cup_flag,
+            national_team_flag=national_team_flag,
+            major_tournament_flag=major_tournament_flag,
+        ):
+            points.append(f"Contexto competitivo elite: {competition_tier or 'INTERNATIONAL'}.")
 
         if attacking_team != "Sin amenaza clara":
             points.append(f"Mayor amenaza ofensiva: {attacking_team}.")
@@ -587,6 +1606,9 @@ class MatchPredictionAI:
 
         if under_watch:
             points.append("Existe lectura UNDER o tendencia de conservación.")
+
+        if activation_level == "EARLY_OVER_CANDIDATE":
+            points.append(f"SignalActivationAI elevó OVER temprano con puntaje {int(activation_score)}.")
 
         if max(pressure, rhythm, volume) >= 65:
             points.append("La presión, ritmo o volumen ofensivo sostienen la predicción.")
@@ -602,8 +1624,16 @@ class MatchPredictionAI:
         over_watch: bool,
         under_watch: bool,
         alternative_reading: str,
+        competition_tier: str = "",
+        competition_weight: float = 0.0,
+        world_cup_flag: bool = False,
+        national_team_flag: bool = False,
+        major_tournament_flag: bool = False,
+        conflict_level: str = "",
+        conflict_reasons: List[str] | None = None,
     ) -> List[str]:
         cautions = []
+        conflict_reasons = conflict_reasons or []
 
         if minute <= 10:
             cautions.append("Minuto temprano. La predicción todavía es panorámica.")
@@ -626,6 +1656,23 @@ class MatchPredictionAI:
         if scenario == "CHAOTIC_MATCH":
             cautions.append("Partido caótico. Puede favorecer gol, pero aumenta incertidumbre.")
 
+        if scenario == "ELITE_LATE_OVER_REQUIRES_CONFIRMATION":
+            cautions.append("Torneo elite en tramo tardío: OVER requiere confirmación real adicional.")
+
+        if self._is_elite_international(
+            competition_tier=competition_tier,
+            competition_weight=competition_weight,
+            world_cup_flag=world_cup_flag,
+            national_team_flag=national_team_flag,
+            major_tournament_flag=major_tournament_flag,
+        ) and minute >= 70:
+            cautions.append("Competición internacional elite: evitar entrada tardía sin presión profunda.")
+
+        if conflict_level in {"MEDIUM_CONFLICT", "HIGH_CONFLICT", "CRITICAL_CONFLICT"}:
+            cautions.append(f"Conflicto predictivo detectado: {conflict_level}.")
+            for reason in conflict_reasons[:2]:
+                cautions.append(str(reason))
+
         return cautions[:8]
 
     def _panel_message(
@@ -638,14 +1685,41 @@ class MatchPredictionAI:
         projected_market: str,
         attacking_team: str,
         prediction_mode: str,
+        competition_tier: str = "",
+        competition_weight: float = 0.0,
+        world_cup_flag: bool = False,
+        national_team_flag: bool = False,
+        major_tournament_flag: bool = False,
+        market_alignment: str = "",
+        conflict_level: str = "",
+        final_market_recommendation: str = "",
+        goal_probabilities: Dict[str, int] | None = None,
     ) -> str:
+        competition_note = ""
+        goal_probabilities = goal_probabilities or {}
+        if self._is_elite_international(
+            competition_tier=competition_tier,
+            competition_weight=competition_weight,
+            world_cup_flag=world_cup_flag,
+            national_team_flag=national_team_flag,
+            major_tournament_flag=major_tournament_flag,
+        ):
+            competition_note = f" Contexto elite: {competition_tier or 'INTERNATIONAL'}."
+
         return (
             f"Predicción {prediction_mode}: escenario {scenario}. "
-            f"Resultado probable {predicted_score}, alternativa {alternative_score}. "
+            f"Resultado probable {predicted_score}; alternativa {alternative_score}. "
             f"Próximo gol: {next_goal_probability}. "
             f"Mercado proyectado: {projected_market}. "
+            f"Recomendación final: {final_market_recommendation or projected_market}. "
+            f"Probabilidades: sin gol {goal_probabilities.get('no_goal', 0)}%, "
+            f"un gol {goal_probabilities.get('one_goal', 0)}%, "
+            f"dos o más goles {goal_probabilities.get('two_plus_goals', 0)}%. "
+            f"Alineación: {market_alignment or 'NEUTRAL_ALIGNMENT'}. "
+            f"Conflicto: {conflict_level or 'NO_CONFLICT'}. "
             f"Amenaza principal: {attacking_team}. "
             f"Fase: {phase}."
+            f"{competition_note}"
         )
 
     def _detect_market(self, signal: Dict[str, Any]) -> str:
@@ -691,9 +1765,74 @@ class MatchPredictionAI:
             signal.get("narrative_alternative_message"),
             signal.get("activation_label"),
             signal.get("panel_activation_label"),
+            signal.get("activation_market"),
+            signal.get("promotion_market"),
+            signal.get("master_action"),
+            signal.get("master_reason"),
         ]
 
         return any("OVER" in self._txt(value) for value in values)
+
+    def _has_under_watch(
+        self,
+        signal: Dict[str, Any],
+        market: str,
+        football_reading: str,
+    ) -> bool:
+        if market == "UNDER":
+            return True
+
+        values = [
+            football_reading,
+            signal.get("activation_market"),
+            signal.get("promotion_market"),
+            signal.get("panel_signal_type"),
+            signal.get("panel_promotion_label"),
+            signal.get("panel_activation_label"),
+            signal.get("master_reason"),
+            signal.get("recommended_panel_message"),
+        ]
+
+        return any("UNDER" in self._txt(value) for value in values)
+
+    def _is_elite_international(
+        self,
+        competition_tier: str = "",
+        competition_weight: float = 0.0,
+        world_cup_flag: bool = False,
+        national_team_flag: bool = False,
+        major_tournament_flag: bool = False,
+    ) -> bool:
+        tier = self._txt(competition_tier)
+        return (
+            world_cup_flag
+            or major_tournament_flag
+            or competition_weight >= 88
+            or tier in {
+                "WORLD_CUP_ELITE",
+                "NATIONAL_TEAM_ELITE",
+                "INTERNATIONAL_CLUB_ELITE",
+                "ELITE",
+            }
+            or (national_team_flag and competition_weight >= 75)
+        )
+
+    def _bool(self, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+
+        text = self._txt(value)
+
+        if text in {"1", "TRUE", "YES", "SI", "SÍ", "Y"}:
+            return True
+
+        if text in {"0", "FALSE", "NO", "N"}:
+            return False
+
+        try:
+            return float(value) > 0
+        except Exception:
+            return False
 
     def _minute(self, signal: Dict[str, Any]) -> int:
         for key in ["display_minute", "api_minute", "estimated_minute", "minute"]:
