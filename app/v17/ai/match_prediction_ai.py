@@ -12,7 +12,7 @@ class MatchPredictionAI:
     No reemplaza SignalPromotionAI.
     """
 
-    VERSION = "V17_MATCH_PREDICTION_AI_5_PRESSURE_QUALITY"
+    VERSION = "V17_MATCH_PREDICTION_AI_6_LIVE_OVER_UNDER_SCENARIOS"
 
     def evaluate(self, signal: Dict[str, Any]) -> Dict[str, Any]:
         signal = signal or {}
@@ -269,6 +269,19 @@ class MatchPredictionAI:
             attack_depth_level=pressure_attack_depth,
         )
 
+        goal_probabilities = self._attach_live_over_under_probabilities(goal_probabilities)
+
+        scenario_package = self._scenario_package(
+            home_score=home_score,
+            away_score=away_score,
+            predicted_score=predicted_score,
+            alternative_score=alternative_score,
+            final_score=final_score,
+            attacking_side=attacking_side,
+            goal_probabilities=goal_probabilities,
+            scenario=scenario,
+        )
+
         conflict_level, conflict_reasons = self._prediction_conflict_level(
             projected_market=projected_market,
             market_alignment=market_alignment,
@@ -411,6 +424,7 @@ class MatchPredictionAI:
             conflict_level=conflict_level,
             final_market_recommendation=final_market_recommendation,
             goal_probabilities=goal_probabilities,
+            scenario_package=scenario_package,
         )
 
         panel_message = self._append_pressure_panel_message(
@@ -445,6 +459,11 @@ class MatchPredictionAI:
             "prediction_halftime_score": halftime_score,
             "prediction_final_score": final_score,
             "prediction_score_scenarios": score_scenarios,
+            "prediction_scenario_package": scenario_package,
+            "prediction_main_score": scenario_package.get("main_score"),
+            "prediction_offensive_score": scenario_package.get("offensive_score"),
+            "prediction_break_score": scenario_package.get("break_score"),
+            "prediction_conservative_score": scenario_package.get("conservative_score"),
             "prediction_market_alignment": market_alignment,
             "prediction_conflict_level": conflict_level,
             "prediction_conflict_reasons": conflict_reasons,
@@ -453,6 +472,13 @@ class MatchPredictionAI:
             "prediction_no_goal_probability": goal_probabilities.get("no_goal", 0),
             "prediction_one_goal_probability": goal_probabilities.get("one_goal", 0),
             "prediction_two_plus_goal_probability": goal_probabilities.get("two_plus_goals", 0),
+            # LIVE OVER/UNDER:
+            # OVER live significa probabilidad de al menos un gol adicional.
+            # No debe confundirse con "dos o más goles".
+            "prediction_live_over_probability": goal_probabilities.get("live_over", 0),
+            "prediction_live_under_probability": goal_probabilities.get("live_under", 0),
+            "prediction_over_probability": goal_probabilities.get("live_over", 0),
+            "prediction_under_probability": goal_probabilities.get("live_under", 0),
             "prediction_goal_probabilities": goal_probabilities,
             "prediction_next_goal_probability": next_goal_probability,
             "prediction_attacking_team": attacking_team,
@@ -554,7 +580,9 @@ class MatchPredictionAI:
         no_goal = int(goal_probabilities.get("no_goal", 0))
         one_goal = int(goal_probabilities.get("one_goal", 0))
         two_plus = int(goal_probabilities.get("two_plus_goals", 0))
-        goal_risk = one_goal + two_plus
+        live_over = int(goal_probabilities.get("live_over", one_goal + two_plus))
+        live_under = int(goal_probabilities.get("live_under", no_goal))
+        goal_risk = live_over
 
         false_or_lateral = pressure_type in {
             "FALSE_PRESSURE",
@@ -989,27 +1017,71 @@ class MatchPredictionAI:
         scenario: str,
         minute: int,
     ) -> str:
+        """
+        Devuelve una alternativa real, no una repetición del resultado probable.
+
+        En V17 la alternativa debe ayudar a leer el partido:
+        - variante ofensiva del equipo que puede anotar;
+        - ruptura del rival;
+        - conservación del marcador cuando aplica.
+
+        Evita salidas pobres como:
+            Resultado probable = 1-1
+            Alternativa = 1-1
+        """
         h = int(home_score)
         a = int(away_score)
+        current = f"{h}-{a}"
 
-        if scenario in {"OPEN_BREAKING_SCENARIO", "CHAOTIC_MATCH"}:
-            return f"{h + 1}-{a + 1}"
+        candidates: List[str] = []
 
-        if scenario == "LATE_GOAL_POSSIBLE":
-            return f"{h + 1}-{a}" if h <= a else f"{h}-{a + 1}"
+        if scenario in {"UNDER_CONSERVATION", "LATE_CONTROLLED_CLOSING"}:
+            # En lectura UNDER, la alternativa útil no es repetir el marcador,
+            # sino mostrar la posible ruptura mínima.
+            candidates.extend([
+                current,
+                f"{h}-{a + 1}" if h > a else f"{h + 1}-{a}",
+                f"{h + 1}-{a}" if h >= a else f"{h}-{a + 1}",
+            ])
 
-        if scenario in {
+        elif scenario in {"OPEN_BREAKING_SCENARIO", "CHAOTIC_MATCH"}:
+            candidates.extend([
+                f"{h + 1}-{a + 1}",
+                f"{h + 1}-{a}",
+                f"{h}-{a + 1}",
+            ])
+
+        elif scenario == "LATE_GOAL_POSSIBLE":
+            candidates.extend([
+                f"{h + 1}-{a}" if h <= a else f"{h}-{a + 1}",
+                f"{h}-{a + 1}" if h <= a else f"{h + 1}-{a}",
+                current,
+            ])
+
+        elif scenario in {
             "OVER_WATCH_RISK",
             "BALANCED_OVER_WATCH",
             "UNDER_WITH_RUPTURE_RISK",
             "GOAL_RISK_ALIVE",
         }:
-            return f"{h + 1}-{a}" if h <= a else f"{h}-{a + 1}"
+            candidates.extend([
+                f"{h + 1}-{a}" if h <= a else f"{h}-{a + 1}",
+                f"{h}-{a + 1}" if h <= a else f"{h + 1}-{a}",
+                f"{h + 1}-{a + 1}",
+            ])
 
-        if scenario in {"UNDER_CONSERVATION", "LATE_CONTROLLED_CLOSING"}:
-            return f"{h}-{a}"
+        candidates.extend([
+            f"{h + 1}-{a}",
+            f"{h}-{a + 1}",
+            f"{h + 1}-{a + 1}",
+            current,
+        ])
 
-        return predicted_score
+        for candidate in candidates:
+            if candidate != predicted_score:
+                return candidate
+
+        return current
 
     def _predict_halftime_score(
         self,
@@ -1227,6 +1299,113 @@ class MatchPredictionAI:
             "two_plus_goals": int(two_plus),
         }
 
+
+    def _attach_live_over_under_probabilities(self, goal_probabilities: Dict[str, int]) -> Dict[str, int]:
+        """
+        Añade probabilidades live coherentes para el panel.
+
+        En lectura live:
+        - OVER = probabilidad de al menos un gol adicional.
+        - UNDER = probabilidad de que no haya más goles.
+
+        Esto evita confundir "dos o más goles" con OVER.
+        Ejemplo:
+            sin gol 16%, un gol 61%, dos o más 23%
+            OVER live = 84%, UNDER live = 16%
+        """
+        probs = dict(goal_probabilities or {})
+        no_goal = int(probs.get("no_goal", 0))
+        one_goal = int(probs.get("one_goal", 0))
+        two_plus = int(probs.get("two_plus_goals", 0))
+
+        live_over = max(0, min(100, one_goal + two_plus))
+        live_under = max(0, min(100, no_goal))
+
+        # Normaliza por seguridad si algún redondeo dejó desbalance.
+        if live_over + live_under > 100:
+            live_over = max(0, 100 - live_under)
+
+        probs["live_over"] = int(live_over)
+        probs["live_under"] = int(live_under)
+        return probs
+
+    def _scenario_package(
+        self,
+        home_score: float,
+        away_score: float,
+        predicted_score: str,
+        alternative_score: str,
+        final_score: str,
+        attacking_side: str,
+        goal_probabilities: Dict[str, int],
+        scenario: str,
+    ) -> Dict[str, Any]:
+        """
+        Construye escenarios alternativos para que el sistema piense como analista:
+        principal, ofensivo, ruptura rival y conservación.
+        """
+        h = int(home_score)
+        a = int(away_score)
+        current = f"{h}-{a}"
+
+        if attacking_side == "HOME":
+            offensive = f"{h + 1}-{a}"
+            rival_break = f"{h}-{a + 1}"
+        elif attacking_side == "AWAY":
+            offensive = f"{h}-{a + 1}"
+            rival_break = f"{h + 1}-{a}"
+        else:
+            if h > a:
+                offensive = f"{h + 1}-{a}"
+                rival_break = f"{h}-{a + 1}"
+            elif a > h:
+                offensive = f"{h}-{a + 1}"
+                rival_break = f"{h + 1}-{a}"
+            else:
+                offensive = f"{h + 1}-{a}"
+                rival_break = f"{h}-{a + 1}"
+
+        open_score = self._combine_score_variants(offensive, rival_break)
+        main_score = final_score or predicted_score or current
+
+        # Evita que todos los escenarios terminen iguales.
+        if alternative_score == main_score:
+            alternative_score = self._first_different_score(
+                base_score=main_score,
+                candidates=[offensive, rival_break, open_score, current],
+            )
+
+        no_goal = int(goal_probabilities.get("live_under", goal_probabilities.get("no_goal", 0)))
+        live_over = int(goal_probabilities.get("live_over", 0))
+        two_plus = int(goal_probabilities.get("two_plus_goals", 0))
+
+        return {
+            "main_score": main_score,
+            "offensive_score": self._first_different_score(main_score, [offensive, alternative_score, open_score]),
+            "break_score": self._first_different_score(main_score, [rival_break, alternative_score, open_score]),
+            "conservative_score": current,
+            "open_score": self._first_different_score(main_score, [open_score, offensive, rival_break]),
+            "main_probability": max(20, min(65, no_goal if main_score == current else live_over)),
+            "offensive_probability": max(8, min(55, live_over - two_plus // 2)),
+            "break_probability": max(5, min(45, 100 - no_goal - two_plus)),
+            "conservative_probability": max(5, min(65, no_goal)),
+            "scenario_type": scenario,
+        }
+
+    def _combine_score_variants(self, first_score: str, second_score: str) -> str:
+        try:
+            h1, a1 = [int(x) for x in str(first_score).split("-")[:2]]
+            h2, a2 = [int(x) for x in str(second_score).split("-")[:2]]
+            return f"{max(h1, h2)}-{max(a1, a2)}"
+        except Exception:
+            return first_score
+
+    def _first_different_score(self, base_score: str, candidates: List[str]) -> str:
+        for candidate in candidates:
+            if candidate and candidate != base_score:
+                return candidate
+        return base_score
+
     def _prediction_conflict_level(
         self,
         projected_market: str,
@@ -1255,7 +1434,9 @@ class MatchPredictionAI:
         no_goal = int(goal_probabilities.get("no_goal", 0))
         one_goal = int(goal_probabilities.get("one_goal", 0))
         two_plus = int(goal_probabilities.get("two_plus_goals", 0))
-        goal_risk = one_goal + two_plus
+        live_over = int(goal_probabilities.get("live_over", one_goal + two_plus))
+        live_under = int(goal_probabilities.get("live_under", no_goal))
+        goal_risk = live_over
 
         if projected_market == "UNDER":
             if next_goal_probability in {"HIGH", "MEDIUM_HIGH"}:
@@ -1268,6 +1449,8 @@ class MatchPredictionAI:
                 reasons.append("UNDER contradice presión, ritmo o volumen ofensivo relevante.")
             if over_watch and over_score >= under_score - 10:
                 reasons.append("UNDER convive con OVER WATCH competitivo.")
+            if live_over >= live_under + 25:
+                reasons.append("UNDER contradice probabilidad live OVER claramente superior.")
 
         elif projected_market == "OVER":
             if next_goal_probability in {"LOW", "LOW_MEDIUM"} and no_goal >= 52:
@@ -1278,6 +1461,8 @@ class MatchPredictionAI:
                 reasons.append("OVER contradice bajo volumen ofensivo real.")
             if under_watch and under_score >= over_score + 15:
                 reasons.append("OVER contradice ventaja clara de UNDER.")
+            if live_under >= live_over + 25:
+                reasons.append("OVER contradice probabilidad live UNDER claramente superior.")
 
         if market_alignment in {"UNDER_HAS_RUPTURE_RISK", "OVER_NEEDS_REACTIVATION"}:
             reasons.append(f"Alineación de mercado advierte {market_alignment}.")
@@ -1307,7 +1492,9 @@ class MatchPredictionAI:
         no_goal = int(goal_probabilities.get("no_goal", 0))
         one_goal = int(goal_probabilities.get("one_goal", 0))
         two_plus = int(goal_probabilities.get("two_plus_goals", 0))
-        goal_risk = one_goal + two_plus
+        live_over = int(goal_probabilities.get("live_over", one_goal + two_plus))
+        live_under = int(goal_probabilities.get("live_under", no_goal))
+        goal_risk = live_over
 
         if conflict_level in {"HIGH_CONFLICT", "CRITICAL_CONFLICT"}:
             if projected_market == "UNDER" and goal_risk >= 58:
@@ -1694,9 +1881,13 @@ class MatchPredictionAI:
         conflict_level: str = "",
         final_market_recommendation: str = "",
         goal_probabilities: Dict[str, int] | None = None,
+        scenario_package: Dict[str, Any] | None = None,
     ) -> str:
         competition_note = ""
         goal_probabilities = goal_probabilities or {}
+        scenario_package = scenario_package or {}
+        live_over = goal_probabilities.get("live_over", 0)
+        live_under = goal_probabilities.get("live_under", goal_probabilities.get("no_goal", 0))
         if self._is_elite_international(
             competition_tier=competition_tier,
             competition_weight=competition_weight,
@@ -1709,10 +1900,15 @@ class MatchPredictionAI:
         return (
             f"Predicción {prediction_mode}: escenario {scenario}. "
             f"Resultado probable {predicted_score}; alternativa {alternative_score}. "
+            f"Escenarios: principal {scenario_package.get('main_score', predicted_score)}, "
+            f"ofensivo {scenario_package.get('offensive_score', alternative_score)}, "
+            f"ruptura {scenario_package.get('break_score', alternative_score)}, "
+            f"conservador {scenario_package.get('conservative_score', predicted_score)}. "
             f"Próximo gol: {next_goal_probability}. "
             f"Mercado proyectado: {projected_market}. "
             f"Recomendación final: {final_market_recommendation or projected_market}. "
-            f"Probabilidades: sin gol {goal_probabilities.get('no_goal', 0)}%, "
+            f"Probabilidades live: OVER {live_over}%, UNDER {live_under}%. "
+            f"Detalle: sin gol {goal_probabilities.get('no_goal', 0)}%, "
             f"un gol {goal_probabilities.get('one_goal', 0)}%, "
             f"dos o más goles {goal_probabilities.get('two_plus_goals', 0)}%. "
             f"Alineación: {market_alignment or 'NEUTRAL_ALIGNMENT'}. "
