@@ -323,6 +323,11 @@ class LiveSignalEngineV17:
 
         base_signal = self._safe_apply_match_prediction(base_signal)
 
+        # Normalización final V17: si ActivationAI y MatchPredictionAI corrigen
+        # el mercado operativo, la identidad de la señal debe acompañar esa lectura.
+        # Esto evita señales con key UNDER pero panel/predicción OVER, y viceversa.
+        base_signal = self._normalize_final_market_identity(base_signal)
+
         # Guardia final V17: evita que módulos posteriores publiquen si reloj,
         # datos, contradicción o vida útil no permiten operar.
         base_signal = self._apply_v17_authority_guard(base_signal)
@@ -407,6 +412,155 @@ class LiveSignalEngineV17:
         }
 
         return final_signal
+
+    def _normalize_final_market_identity(self, signal: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normaliza la identidad final del mercado sin cambiar la decisión táctica.
+
+        V17 puede construir inicialmente una señal UNDER y, después, detectar mediante
+        ActivationAI/MatchPredictionAI que la lectura operativa real es OVER WATCH.
+        Si la identidad no se corrige, el panel, PowerShell, historial y signal_key
+        terminan hablando idiomas distintos.
+
+        Esta función NO promueve señales, NO publica señales y NO elimina señales.
+        Solo alinea campos de identidad cuando existe consenso suficiente entre:
+        - activation_market
+        - prediction_market
+        - probabilidades visuales OVER/UNDER
+        """
+        guarded = dict(signal)
+
+        allowed = {"OVER", "UNDER"}
+
+        def _market(value: Any) -> str:
+            market = str(value or "").upper().strip()
+            return market if market in allowed else ""
+
+        def _num(value: Any, default: float = 0.0) -> float:
+            try:
+                if value is None or value == "":
+                    return default
+                return float(value)
+            except Exception:
+                return default
+
+        original_market = _market(
+            guarded.get("market")
+            or guarded.get("market_direction")
+            or guarded.get("suggested_market")
+        )
+        activation_market = _market(guarded.get("activation_market"))
+        prediction_market = _market(guarded.get("prediction_market"))
+        promotion_market = _market(guarded.get("promotion_market"))
+        panel_market = _market(guarded.get("panel_market"))
+
+        visual_over = _num(
+            guarded.get("visual_over_probability"),
+            _num(guarded.get("prediction_live_over_probability"), _num(guarded.get("over_score"), 0.0)),
+        )
+        visual_under = _num(
+            guarded.get("visual_under_probability"),
+            _num(guarded.get("prediction_live_under_probability"), _num(guarded.get("under_score"), 0.0)),
+        )
+
+        final_market = ""
+        source = ""
+
+        # Caso fuerte: ActivationAI y MatchPredictionAI coinciden.
+        if activation_market and activation_market == prediction_market:
+            if activation_market == "OVER" and visual_over >= visual_under:
+                final_market = "OVER"
+                source = "ACTIVATION_PREDICTION_VISUAL_ALIGNMENT"
+            elif activation_market == "UNDER" and visual_under >= visual_over:
+                final_market = "UNDER"
+                source = "ACTIVATION_PREDICTION_VISUAL_ALIGNMENT"
+            elif max(visual_over, visual_under) <= 0:
+                final_market = activation_market
+                source = "ACTIVATION_PREDICTION_ALIGNMENT"
+
+        # Caso moderado: Activation corrige mercado y las probabilidades visuales acompañan.
+        if not final_market and activation_market:
+            if activation_market == "OVER" and visual_over >= visual_under + 5:
+                final_market = "OVER"
+                source = "ACTIVATION_VISUAL_ALIGNMENT"
+            elif activation_market == "UNDER" and visual_under >= visual_over + 5:
+                final_market = "UNDER"
+                source = "ACTIVATION_VISUAL_ALIGNMENT"
+
+        # Caso predictivo: Prediction trae mercado y las probabilidades visuales son claras.
+        if not final_market and prediction_market:
+            if prediction_market == "OVER" and visual_over >= visual_under + 10:
+                final_market = "OVER"
+                source = "PREDICTION_VISUAL_ALIGNMENT"
+            elif prediction_market == "UNDER" and visual_under >= visual_over + 10:
+                final_market = "UNDER"
+                source = "PREDICTION_VISUAL_ALIGNMENT"
+
+        # Caso de soporte visual fuerte sin activación explícita.
+        if not final_market:
+            if visual_over >= 65 and visual_over >= visual_under + 15:
+                final_market = "OVER"
+                source = "STRONG_VISUAL_OVER_ALIGNMENT"
+            elif visual_under >= 65 and visual_under >= visual_over + 15:
+                final_market = "UNDER"
+                source = "STRONG_VISUAL_UNDER_ALIGNMENT"
+
+        # Si no hay consenso, mantener la identidad original.
+        if not final_market:
+            guarded["final_market"] = original_market or panel_market or promotion_market or prediction_market or activation_market or "OBSERVE"
+            guarded["market_identity_status"] = "UNCHANGED"
+            return guarded
+
+        previous_key = str(guarded.get("signal_key") or guarded.get("signal_id") or "")
+        changed = bool(original_market and final_market != original_market)
+
+        if changed:
+            guarded["original_market"] = original_market
+            guarded["original_signal_key"] = previous_key
+            guarded["market_identity_normalized"] = True
+            guarded["market_identity_status"] = "NORMALIZED"
+            guarded["market_identity_reason"] = source
+        else:
+            guarded["market_identity_normalized"] = False
+            guarded["market_identity_status"] = "ALIGNED"
+            guarded["market_identity_reason"] = source
+
+        guarded["final_market"] = final_market
+        guarded["market"] = final_market
+        guarded["market_direction"] = final_market
+        guarded["suggested_market"] = final_market
+        guarded["panel_market"] = final_market
+
+        # No forzamos master_market para preservar auditoría de la decisión original,
+        # pero dejamos claro cuál es el mercado operativo final.
+        guarded["final_market_source"] = source
+
+        if promotion_market and promotion_market != final_market and source.startswith("ACTIVATION"):
+            guarded["promotion_market"] = final_market
+        elif not promotion_market:
+            guarded["promotion_market"] = final_market
+
+        category = str(guarded.get("market_category") or "").upper()
+        if final_market == "OVER" and "UNDER" in category:
+            guarded["market_category"] = "OVER_CANDIDATE"
+        elif final_market == "UNDER" and "OVER" in category:
+            guarded["market_category"] = "UNDER_CANDIDATE"
+        elif not category or category in {"NO_BET", "OBSERVE"}:
+            guarded["market_category"] = f"{final_market}_CANDIDATE"
+
+        match_id = str(guarded.get("match_id") or guarded.get("fixture_id") or "")
+        api_minute = safe_int(guarded.get("api_minute") or guarded.get("display_minute"), 0)
+        if match_id:
+            new_key = self._make_signal_key(match_id=match_id, market=final_market, minute=api_minute)
+            guarded["signal_key"] = new_key
+            guarded["signal_id"] = new_key
+
+        warnings = list(guarded.get("soft_warnings", []) or [])
+        if changed:
+            warnings.append(f"MARKET_IDENTITY_NORMALIZED:{original_market}_TO_{final_market}")
+        guarded["soft_warnings"] = sorted(set(str(w) for w in warnings if w))
+
+        return guarded
 
     def _apply_v17_authority_guard(self, signal: Dict[str, Any]) -> Dict[str, Any]:
         """
