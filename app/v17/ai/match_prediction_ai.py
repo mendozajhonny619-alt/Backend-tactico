@@ -40,6 +40,10 @@ class MatchPredictionAI:
         risk = self._num(signal.get("risk_score"))
         maturity = self._num(signal.get("match_maturity_score"))
 
+        real_goal_threat = self._num(signal.get("real_goal_threat_score") or signal.get("football_real_goal_threat_score"))
+        false_pressure_risk = self._num(signal.get("false_pressure_risk_score") or signal.get("football_false_pressure_risk_score"))
+        pressure_state = self._txt(signal.get("pressure_state"))
+
         activation_score = self._num(signal.get("activation_score"))
         promotion_score = self._num(signal.get("promotion_score"))
 
@@ -767,11 +771,21 @@ class MatchPredictionAI:
         panel_section: str,
         competition_tier: str = "",
         competition_weight: float = 0.0,
+        real_goal_threat: float = 0.0,
+        false_pressure_risk: float = 0.0,
+        pressure_state: str = "",
         world_cup_flag: bool = False,
         national_team_flag: bool = False,
         major_tournament_flag: bool = False,
     ) -> str:
-        live_force = max(pressure, rhythm, volume)
+        live_force = (
+            pressure * 0.25 +
+            rhythm * 0.20 +
+            volume * 0.20 +
+            max(real_goal_threat, volume) * 0.35
+        )
+        if false_pressure_risk >= 70 or pressure_state in {"FALSE_PRESSURE","LATERAL_PRESSURE","DOMINANCE_WITHOUT_DEPTH"}:
+            live_force -= 15
         elite_international = self._is_elite_international(
             competition_tier=competition_tier,
             competition_weight=competition_weight,
