@@ -442,6 +442,54 @@ class LiveSignalEngineV17:
 
         return final_signal
 
+
+    @staticmethod
+    def _capture_official_decision(master: Dict[str, Any]) -> Dict[str, Any]:
+        """Captura una copia profunda de la decisión oficial emitida por MasterDecisionAI."""
+        if not isinstance(master, dict):
+            return {}
+
+        return {
+            field: deepcopy(master.get(field))
+            for field in OFFICIAL_DECISION_FIELDS
+        }
+
+    @staticmethod
+    def _verify_official_decision_integrity(
+        signal: Dict[str, Any],
+        official_decision: Dict[str, Any],
+    ) -> bool:
+        """Verifica que ningún módulo posterior haya modificado official_* sin romper ejecución."""
+        if (
+            not isinstance(signal, dict)
+            or not isinstance(official_decision, dict)
+        ):
+            logger.warning(
+                "V17_OFFICIAL_DECISION_INTEGRITY_WARNING "
+                "| invalid_payload=true"
+            )
+            return False
+
+        modified_fields = {
+            field: {
+                "expected": official_decision.get(field),
+                "actual": signal.get(field),
+            }
+            for field in OFFICIAL_DECISION_FIELDS
+            if signal.get(field) != official_decision.get(field)
+        }
+
+        if modified_fields:
+            logger.warning(
+                "V17_OFFICIAL_DECISION_INTEGRITY_WARNING "
+                "| decision_id=%s | modified_fields=%s",
+                official_decision.get("decision_id"),
+                modified_fields,
+            )
+            return False
+
+        return True
+
     def _normalize_final_market_identity(self, signal: Dict[str, Any]) -> Dict[str, Any]:
         """
         Normaliza la identidad final del mercado sin cambiar la decisión táctica.
