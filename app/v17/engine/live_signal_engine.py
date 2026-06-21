@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -33,6 +35,23 @@ from app.v17.services.pre_match_data_service import PreMatchDataService
 from app.v17.services.signal_history_service import SignalHistoryService
 from app.v17.signals.signal_lifecycle import SignalLifecycle
 from app.v17.signals.signal_ranker import SignalRanker
+
+
+logger = logging.getLogger(__name__)
+
+OFFICIAL_DECISION_FIELDS = (
+    "official_market",
+    "official_status",
+    "official_confidence",
+    "official_main_scenario",
+    "official_probable_score",
+    "official_next_goal_team",
+    "official_can_publish",
+    "official_reason",
+    "official_risks",
+    "decision_id",
+    "decision_timestamp",
+)
 
 
 def utc_now_iso() -> str:
@@ -207,32 +226,11 @@ class LiveSignalEngineV17:
             over_candidate=over_candidate,
         )
 
-        master = self.master_decision_ai.evaluate(
-            match=match,
-            clock=clock,
-            data_quality=data_quality,
-            context=context,
-            tactical=tactical,
-            market=market,
-            risk=risk,
-            contradiction=contradiction,
-        )
+        # ==========================================================
+        # PRE-MASTER EVIDENCE PIPELINE
+        # ==========================================================
 
-        decision_explanation = self.decision_explainer_ai.explain(
-            match=match,
-            context=context,
-            tactical=tactical,
-            market=market,
-            risk=risk,
-            contradiction=contradiction,
-            master=master,
-        )
-
-        master = self._apply_decision_explainer_guard(
-            master=master,
-            decision_explanation=decision_explanation,
-        )
-
+        # MatchReader entrega lectura futbolística, todavía sin decisión.
         match_reader = self.match_reader_ai.evaluate(
             match=match,
             clock=clock,
@@ -244,7 +242,133 @@ class LiveSignalEngineV17:
             contradiction=contradiction,
             over_candidate=over_candidate,
             league_volatility=league_volatility,
-            decision_explanation=decision_explanation,
+            decision_explanation={},
+        )
+        match_reader = match_reader if isinstance(match_reader, dict) else {}
+
+        base_market = str(
+            market.get("suggested_market")
+            or market.get("market")
+            or "NO_BET"
+        ).upper()
+
+        evidence_signal = {
+            **match,
+            **clock,
+            **data_quality,
+            **context,
+            **tactical,
+            **market,
+            **risk,
+            **contradiction,
+            **over_candidate,
+            **league_volatility,
+            **pre_match_profile,
+            **match_reader,
+            "market": base_market,
+            "suggested_market": base_market,
+            "evidence_mode": True,
+        }
+
+        # Prediction calcula escenarios, pero no decide.
+        prediction = self.match_prediction_ai.evaluate(evidence_signal)
+        prediction = prediction if isinstance(prediction, dict) else {}
+
+        evidence_signal = {
+            **evidence_signal,
+            **prediction,
+        }
+
+        # Madurez evalúa la evidencia predictiva.
+        maturity = self.match_maturity_ai.evaluate(
+            signal=evidence_signal,
+            match_reader=match_reader,
+        )
+        maturity = maturity if isinstance(maturity, dict) else {}
+
+        evidence_signal = {
+            **evidence_signal,
+            **maturity,
+        }
+
+        # Entry timing también es evidencia previa.
+        entry_timing = self.entry_timing_ai.evaluate(
+            signal=evidence_signal,
+            match_reader=match_reader,
+        )
+        entry_timing = entry_timing if isinstance(entry_timing, dict) else {}
+
+        evidence_signal = {
+            **evidence_signal,
+            **entry_timing,
+        }
+
+        # Promotion propone nivel, pero no decide oficialmente.
+        promotion = self.signal_promotion_ai.evaluate(
+            signal=evidence_signal,
+            match_reader=match_reader,
+        )
+        promotion = promotion if isinstance(promotion, dict) else {}
+
+        evidence_signal = {
+            **evidence_signal,
+            **promotion,
+        }
+
+        # Activation mide convergencia, pero no publica.
+        activation = self.signal_activation_ai.evaluate(evidence_signal)
+        activation = activation if isinstance(activation, dict) else {}
+
+        evidence_signal = {
+            **evidence_signal,
+            **activation,
+        }
+
+        # Lifecycle entrega vigencia/revalidación como evidencia.
+        lifecycle = self.signal_lifecycle.evaluate(evidence_signal)
+        lifecycle = lifecycle if isinstance(lifecycle, dict) else {}
+
+        evidence_signal = {
+            **evidence_signal,
+            **lifecycle,
+        }
+
+        pre_master_evidence = {
+            "prediction": prediction,
+            "maturity": maturity,
+            "entry_timing": entry_timing,
+            "promotion": promotion,
+            "activation": activation,
+            "lifecycle": lifecycle,
+        }
+
+        # ==========================================================
+        # SINGLE OFFICIAL DECISION
+        # ==========================================================
+
+        master = self.master_decision_ai.evaluate(
+            match=match,
+            clock=clock,
+            data_quality=data_quality,
+            context=context,
+            tactical=tactical,
+            market=market,
+            risk=risk,
+            contradiction=contradiction,
+            evidence=pre_master_evidence,
+        )
+
+        official_decision = self._capture_official_decision(master)
+
+        # DecisionExplainer explica; no degrada ni modifica Master.
+        decision_explanation = self.decision_explainer_ai.explain(
+            match=match,
+            context=context,
+            tactical=tactical,
+            market=market,
+            risk=risk,
+            contradiction=contradiction,
+            master=master,
         )
 
         base_signal = self._build_signal_object(
@@ -264,143 +388,43 @@ class LiveSignalEngineV17:
             pre_match_profile=pre_match_profile,
         )
 
+        # Adjuntar evidencia sin volver a ejecutar ninguna IA.
+        base_signal = {
+            **base_signal,
+            **prediction,
+            **maturity,
+            **entry_timing,
+            **promotion,
+            **activation,
+            **lifecycle,
+        }
+
+        # Restaurar siempre la decisión oficial después de combinar evidencia.
+        base_signal.update(official_decision)
+
+        # PanelDecisionAI solo traduce visualmente la decisión oficial.
         panel_decision = self.panel_decision_ai.evaluate(base_signal)
+        panel_decision = panel_decision if isinstance(panel_decision, dict) else {}
 
         base_signal = {
             **base_signal,
             **panel_decision,
         }
 
-        match_maturity = self.match_maturity_ai.evaluate(
-            signal=base_signal,
-            match_reader=match_reader,
-        )
-
-        base_signal = {
-            **base_signal,
-            **match_maturity,
-        }
-
-        base_signal = self._apply_match_maturity_guard(base_signal)
-
-        base_signal.update(
-            self.panel_decision_ai.evaluate(base_signal)
-        )
-
-        entry_timing = self.entry_timing_ai.evaluate(
-            signal=base_signal,
-            match_reader=match_reader,
-        )
-
-        base_signal = {
-            **base_signal,
-            **entry_timing,
-        }
-
+        # NarrativeAI solo explica la decisión oficial.
         narrative = self.signal_narrative_ai.build(
             signal=base_signal,
             match_reader=match_reader,
         )
+        narrative = narrative if isinstance(narrative, dict) else {}
 
-        base_signal = {
+        final_signal = {
             **base_signal,
             **narrative,
         }
 
-        promotion = self.signal_promotion_ai.evaluate(
-            signal=base_signal,
-            match_reader=match_reader,
-        )
-
-        base_signal = {
-            **base_signal,
-            **promotion,
-        }
-
-        base_signal = self._apply_signal_promotion_guard(base_signal)
-
-        base_signal = self._safe_apply_signal_activation(base_signal)
-
-        base_signal = self._safe_apply_match_prediction(base_signal)
-
-        # Normalización final V17: si ActivationAI y MatchPredictionAI corrigen
-        # el mercado operativo, la identidad de la señal debe acompañar esa lectura.
-        # Esto evita señales con key UNDER pero panel/predicción OVER, y viceversa.
-        base_signal = self._normalize_final_market_identity(base_signal)
-
-        # Guardia final V17: evita que módulos posteriores publiquen si reloj,
-        # datos, contradicción o vida útil no permiten operar.
-        base_signal = self._apply_v17_authority_guard(base_signal)
-
-        narrative_after_prediction = self.signal_narrative_ai.build(
-            signal=base_signal,
-            match_reader=match_reader,
-        )
-
-        base_signal = {
-            **base_signal,
-            **narrative_after_prediction,
-        }
-
-        lifecycle = self.signal_lifecycle.evaluate(base_signal)
-
-        final_signal = {
-            **base_signal,
-            **lifecycle,
-        }
-
-        # Segunda pasada: ahora incluye la evaluación de vida útil de la señal.
-        final_signal = self._apply_v17_authority_guard(final_signal)
-
-        if lifecycle.get("no_reentry"):
-            final_signal["can_publish"] = False
-            final_signal["should_observe"] = False
-            final_signal["should_block"] = True
-            final_signal["master_status"] = "NO_REENTRY"
-            final_signal["master_rank"] = "BLOCKED"
-            final_signal["master_action"] = "NO_OPERAR"
-            final_signal["master_reason"] = "La señal expiró por vida útil. No se permite reentrada automática."
-            final_signal["promotion_level"] = "BLOCKED"
-            final_signal["activation_level"] = "BLOCKED"
-            final_signal["prediction_mode"] = "BLOCKED_PREDICTION"
-            final_signal["prediction_scenario"] = "SIGNAL_EXPIRED"
-            final_signal["promotion_panel_label"] = "SEÑAL EXPIRADA"
-            final_signal["activation_label"] = "SEÑAL EXPIRADA"
-            final_signal["promotion_action"] = "NO_OPERAR"
-            final_signal["activation_action"] = "NO_OPERAR"
-            final_signal["promotion_can_publish"] = False
-            final_signal["activation_can_publish"] = False
-            final_signal["promotion_should_observe"] = False
-            final_signal["activation_should_observe"] = False
-            final_signal["promotion_is_main_signal"] = False
-            final_signal["promotion_is_top_signal"] = False
-            final_signal["panel_signal_type"] = "SEÑAL EXPIRADA"
-            final_signal["panel_promotion_label"] = "SEÑAL EXPIRADA"
-            final_signal["panel_activation_label"] = "SEÑAL EXPIRADA"
-            final_signal["panel_promotion_reason"] = "La señal expiró por vida útil. No se permite reentrada automática."
-            final_signal["panel_activation_reason"] = "La señal expiró por vida útil. No se permite reentrada automática."
-            final_signal["prediction_panel_message"] = "La señal expiró por vida útil. No se permite reentrada automática."
-            final_signal["hard_blockers"] = list(
-                set(final_signal.get("hard_blockers", []) + ["NO_REENTRY"])
-            )
-
-            final_signal.update(
-                self.panel_decision_ai.evaluate(final_signal)
-            )
-
-            final_signal.update(
-                self.entry_timing_ai.evaluate(
-                    signal=final_signal,
-                    match_reader=match_reader,
-                )
-            )
-
-            final_signal.update(
-                self.signal_narrative_ai.build(
-                    signal=final_signal,
-                    match_reader=match_reader,
-                )
-            )
+        # Garantía final: official_* vuelve a quedar exactamente como lo emitió Master.
+        final_signal.update(official_decision)
 
         self._update_prediction_feature_store(final_signal)
 
@@ -410,6 +434,11 @@ class LiveSignalEngineV17:
             **final_signal,
             **history_result,
         }
+
+        self._verify_official_decision_integrity(
+            signal=final_signal,
+            official_decision=official_decision,
+        )
 
         return final_signal
 
@@ -1614,6 +1643,14 @@ class LiveSignalEngineV17:
             **market,
             **risk,
             **contradiction,
+
+            # La decisión oficial siempre proviene del snapshot de Master.
+            # Se agrega al final para evitar que datos de entrada con nombres
+            # coincidentes la sustituyan durante la construcción de la señal.
+            **{
+                field: deepcopy(master.get(field))
+                for field in OFFICIAL_DECISION_FIELDS
+            },
         }
 
     def _build_main_reading(
