@@ -48,10 +48,11 @@ class MatchPredictionAI:
         promotion_score = self._num(signal.get("promotion_score"))
 
         confidence = self._num(
-            signal.get("activation_score")
-            or signal.get("promotion_score")
-            or signal.get("master_confidence")
+            signal.get("evidence_confidence")
+            or signal.get("market_confidence")
             or signal.get("football_confidence")
+            or signal.get("pressure_confidence")
+            or 0
         )
 
         home_danger = self._num(
@@ -442,6 +443,9 @@ class MatchPredictionAI:
 
         return {
             "match_prediction_version": self.VERSION,
+            "prediction_role": "EVIDENCE_ONLY",
+            "prediction_is_official_decision": False,
+            "prediction_can_publish": False,
             "prediction_competition_tier": competition_tier,
             "prediction_competition_weight": competition_weight,
             "prediction_world_cup_flag": world_cup_flag,
