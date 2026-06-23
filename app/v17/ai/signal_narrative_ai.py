@@ -92,13 +92,9 @@ class SignalNarrativeAI:
         )
 
         official_can_publish = bool(signal.get("official_can_publish"))
-        raw_official_risks = signal.get("official_risks") or []
-        if isinstance(raw_official_risks, list):
-            official_risks = [str(item) for item in raw_official_risks if item]
-        elif raw_official_risks:
-            official_risks = [str(raw_official_risks)]
-        else:
-            official_risks = []
+        official_risks = signal.get("official_risks") or []
+        if not isinstance(official_risks, list):
+            official_risks = [str(official_risks)]
 
         market = official_market
 
@@ -381,13 +377,13 @@ class SignalNarrativeAI:
             game_state=game_state,
             dominant_team=dominant_team,
             threat_team=threat_team,
-            risk_status=risk_status,
-            data_quality=data_quality,
             official_status=official_status,
             official_market=official_market,
             official_can_publish=official_can_publish,
             official_reason=official_reason,
             official_risks=official_risks,
+            risk_status=risk_status,
+            data_quality=data_quality,
             support_points=support_points,
             caution_points=caution_points,
         )
@@ -419,6 +415,8 @@ class SignalNarrativeAI:
             "final_narrative_action": professional_data["action"],
             "final_narrative_scenario_summary": professional_data["scenario_summary"],
             "final_narrative_conflict_detected": professional_data["conflict_detected"],
+            "final_narrative_story_type": professional_data.get("story_type"),
+            "final_narrative_scenario_ladder": professional_data.get("scenario_ladder_text"),
 
             # Campos que puede usar el panel directamente
             "main_reading": professional_data["professional_match_reading"],
@@ -492,18 +490,19 @@ class SignalNarrativeAI:
         game_state: str,
         dominant_team: str,
         threat_team: str,
-        risk_status: str,
-        data_quality: str,
         official_status: str,
         official_market: str,
         official_can_publish: bool,
         official_reason: str,
         official_risks: List[str],
+        risk_status: str,
+        data_quality: str,
         support_points: List[str],
         caution_points: List[str],
     ) -> Dict[str, Any]:
-        # V17 AUDIT FIX:
-        # NarrativeAI no redefine el mercado oficial.
+        # V17 NARRATIVE AUTHORITY FIX:
+        # NarrativeAI no redefine mercado ni autoridad. Cuenta la historia
+        # usando la decisión oficial como fuente de verdad.
         final_market = market
 
         no_goal, one_goal, two_plus = self._resolve_goal_scenarios(
@@ -528,13 +527,11 @@ class SignalNarrativeAI:
             two_plus=two_plus,
         )
 
-        # V17 AUDIT FIX:
-        # Se utiliza la confianza oficial calculada por MasterDecisionAI.
+        # La confianza visible en narrativa se deriva de official_confidence.
         confidence_value = confidence
         confidence_label = self._confidence_label(confidence_value)
 
-        # V17 AUDIT FIX:
-        # Narrativa descriptiva, no decisión alternativa.
+        # NarrativeAI describe el estado oficial; no calcula una segunda decisión.
         decision = operative_state
 
         score_prediction, alternative_score = self._clean_score_prediction(
@@ -544,39 +541,9 @@ class SignalNarrativeAI:
             final_market=final_market,
         )
 
-        scenario_ladder = self._scenario_ladder(
-            score_prediction=score_prediction,
-            alternative_score=alternative_score,
-            signal=signal,
-            no_goal=no_goal,
-            one_goal=one_goal,
-            two_plus=two_plus,
-        )
-        scenario_summary = scenario_ladder["summary"]
-
-        story_type = self._classify_match_story(
-            official_status=official_status,
-            scoreline=scoreline,
-            minute=minute,
-            market=final_market,
-            over_score=over_score,
-            under_score=under_score,
-            live_volume_score=live_volume_score,
-            pressure=pressure,
-            shots=shots,
-            shots_on_target=shots_on_target,
-            dangerous_attacks=dangerous_attacks,
-            xg=xg,
-            risk_status=risk_status,
-            data_quality=data_quality,
-            false_pressure_risk=false_pressure_risk,
-            dominant_team=dominant_team,
-            threat_team=threat_team,
-            game_state=game_state,
-            prediction_next_goal_probability=prediction_next_goal_probability,
-            no_goal=no_goal,
-            one_goal=one_goal,
-            two_plus=two_plus,
+        scenario_summary = (
+            f"Escenarios: sin más goles {no_goal:.0f}%, un gol adicional {one_goal:.0f}%, "
+            f"dos o más goles {two_plus:.0f}%."
         )
 
         dominance_reading = self._dominance_reading(
@@ -610,27 +577,6 @@ class SignalNarrativeAI:
             dangerous_attacks=dangerous_attacks,
         )
 
-        story_sentence = self._story_style_sentence(
-            story_type=story_type,
-            minute=minute,
-            scoreline=scoreline,
-            final_market=final_market,
-            score_prediction=score_prediction,
-            alternative_score=alternative_score,
-            no_goal=no_goal,
-            one_goal=one_goal,
-            two_plus=two_plus,
-            dominant_team=dominant_team,
-            threat_team=threat_team,
-            live_volume_score=live_volume_score,
-            pressure=pressure,
-            shots=shots,
-            shots_on_target=shots_on_target,
-            corners=corners,
-            xg=xg,
-            official_can_publish=official_can_publish,
-        )
-
         reason = self._professional_reason(
             final_market=final_market,
             conflict_detected=conflict_detected,
@@ -654,47 +600,105 @@ class SignalNarrativeAI:
             two_plus=two_plus,
         )
 
+        story_type = self._classify_match_story(
+            signal=signal,
+            official_status=official_status,
+            scoreline=scoreline,
+            minute=minute,
+            market=final_market,
+            over_score=over_score,
+            under_score=under_score,
+            live_volume_score=live_volume_score,
+            pressure=pressure,
+            shots=shots,
+            shots_on_target=shots_on_target,
+            dangerous_attacks=dangerous_attacks,
+            xg=xg,
+            risk_status=risk_status,
+            data_quality=data_quality,
+            false_pressure_risk=false_pressure_risk,
+            dominant_team=dominant_team,
+            threat_team=threat_team,
+            game_state=game_state,
+            prediction_next_goal_probability=prediction_next_goal_probability,
+            no_goal=no_goal,
+            one_goal=one_goal,
+            two_plus=two_plus,
+            conflict_detected=conflict_detected,
+        )
+
+        scenario_ladder = self._scenario_ladder(
+            signal=signal,
+            score_prediction=score_prediction,
+            alternative_score=alternative_score,
+            scoreline=scoreline,
+            no_goal=no_goal,
+            one_goal=one_goal,
+            two_plus=two_plus,
+        )
+
+        story_sentence = self._story_style_sentence(
+            story_type=story_type,
+            signal=signal,
+            minute=minute,
+            scoreline=scoreline,
+            final_market=final_market,
+            score_prediction=score_prediction,
+            scenario_ladder=scenario_ladder,
+            dominance_reading=dominance_reading,
+            pressure_reading=pressure_reading,
+            rhythm_reading=rhythm_reading,
+            confidence_label=confidence_label,
+        )
+
         action = self._official_action_sentence(
             official_status=official_status,
             official_can_publish=official_can_publish,
             official_reason=official_reason,
             official_risks=official_risks,
-        )
-
-        title = self._professional_title(
-            official_status=official_status,
-            official_can_publish=official_can_publish,
-            story_type=story_type,
+            operative_state=operative_state,
             conflict_detected=conflict_detected,
         )
 
-        prediction_text = scenario_ladder["text"]
-        short_decision = self._short_live_commentary(
-            story_type=story_type,
-            minute=minute,
-            scoreline=scoreline,
-            score_prediction=score_prediction,
-            confidence_label=confidence_label,
+        title = self._professional_title(
+            decision=decision,
+            final_market=final_market,
+            conflict_detected=conflict_detected,
             official_status=official_status,
             official_can_publish=official_can_publish,
+            story_type=story_type,
         )
 
-        professional_match_reading = self._compose_live_commentary(
-            minute=minute,
-            scoreline=scoreline,
-            story_sentence=story_sentence,
-            scenario_ladder=scenario_ladder,
-            dominance_reading=dominance_reading,
-            pressure_reading=pressure_reading,
-            rhythm_reading=rhythm_reading,
-            reason=reason,
-            risk=risk,
-            action=action,
-            official_status=official_status,
+        prediction_text = scenario_ladder["text"]
+
+        if official_can_publish and official_status in {"ENTER", "OPERABLE"}:
+            short_decision = (
+                f"Señal operable. Resultado más probable: {score_prediction}. "
+                f"{scenario_ladder['probability_text']}"
+            )
+        elif official_status in {"BLOCKED", "NO_REENTRY"} or operative_state == "BLOCKED":
+            short_decision = (
+                f"No operar. Resultado más probable: {score_prediction}. "
+                f"{self._compact_reason(official_reason or risk)}"
+            )
+        else:
+            short_decision = (
+                f"Lectura en observación. Resultado más probable: {score_prediction}. "
+                f"Sin señal autorizada; esperar confirmación."
+            )
+
+        dominant_text = self._dominant_reading_text(
+            final_market=final_market,
             official_can_publish=official_can_publish,
-            confidence_value=confidence_value,
-            confidence_label=confidence_label,
+            official_status=official_status,
         )
+
+        professional_match_reading = (
+            f"{story_sentence} "
+            f"{scenario_ladder['text']} "
+            f"{dominant_text} "
+            f"{reason} {risk} {action}"
+        ).strip()
 
         return {
             "title": title,
@@ -705,6 +709,8 @@ class SignalNarrativeAI:
             "confidence_label": confidence_label,
             "score_prediction": score_prediction,
             "scenario_summary": scenario_summary,
+            "scenario_ladder_text": scenario_ladder["text"],
+            "story_type": story_type,
             "dominance_reading": dominance_reading,
             "pressure_quality_reading": pressure_reading,
             "reason": reason,
@@ -720,6 +726,7 @@ class SignalNarrativeAI:
 
     def _classify_match_story(
         self,
+        signal: Dict[str, Any],
         official_status: str,
         scoreline: str,
         minute: int,
@@ -742,177 +749,185 @@ class SignalNarrativeAI:
         no_goal: float,
         one_goal: float,
         two_plus: float,
+        conflict_detected: bool,
     ) -> str:
-        status = str(official_status or "").upper()
-        risk = str(risk_status or "").upper()
-        quality = str(data_quality or "").upper()
-        next_goal = str(prediction_next_goal_probability or "").upper()
-        state = str(game_state or "").upper()
+        home_score, away_score = self._parse_scoreline(scoreline)
+        score_diff = abs(home_score - away_score)
+        total_goals = home_score + away_score
 
-        home_goals, away_goals = self._score_parts(scoreline)
-        margin = abs(home_goals - away_goals)
-        total_goals = home_goals + away_goals
-        force = max(live_volume_score, pressure)
-        has_threat_team = bool(str(threat_team or "").strip())
-        has_dominant_team = bool(str(dominant_team or "").strip())
-
-        if status in {"BLOCKED", "NO_REENTRY", "BLOQUEADO"} or risk in {"EXTREME_RISK", "CRITICAL", "ALTO_EXTREMO"}:
+        if official_status in {"BLOCKED", "NO_REENTRY"} or risk_status in {"EXTREME_RISK", "CRITICAL", "INVALID"}:
             return "PARTIDO_BLOQUEADO"
 
-        if margin >= 3 and has_dominant_team and false_pressure_risk < 55:
-            return "DOMINIO_ABSOLUTO"
-
-        if margin >= 2 and has_threat_team and threat_team and dominant_team and str(threat_team).strip() != str(dominant_team).strip() and force >= 55:
-            return "REMONTADA_POSIBLE"
-
-        if force >= 75 and shots_on_target >= 4 and two_plus >= 30:
-            return "CAOS_OFENSIVO"
-
-        if false_pressure_risk >= 65 or "FALSE" in state or "DOMINANCE_WITHOUT_DEPTH" in state:
+        if conflict_detected or false_pressure_risk >= 65:
             return "FAVORITO_EN_RIESGO"
 
-        if next_goal in {"HIGH", "VERY_HIGH", "MEDIUM_HIGH"} or one_goal + two_plus >= 55 or total_goals >= 3:
-            return "PARTIDO_ABIERTO"
+        high_next_goal = prediction_next_goal_probability in {"HIGH", "VERY_HIGH", "MEDIUM_HIGH"}
+        high_rhythm = live_volume_score >= 65 or pressure >= 70 or shots_on_target >= 4 or xg >= 1.4
 
-        if no_goal >= 62 or (str(market).upper() == "UNDER" and force <= 45):
+        if high_rhythm and two_plus >= 28:
+            return "CAOS_OFENSIVO"
+
+        if self._threat_team_is_trailing(signal, threat_team, home_score, away_score) and high_next_goal:
+            return "REMONTADA_POSIBLE"
+
+        if score_diff >= 3 and (dominant_team or market in {"OVER", "UNDER"}):
+            return "DOMINIO_ABSOLUTO"
+
+        if no_goal >= 58 or (market == "UNDER" and live_volume_score <= 40 and pressure <= 45):
             return "CONTROL_DEFENSIVO"
 
-        scenario_gap = max(no_goal, one_goal, two_plus) - sorted([no_goal, one_goal, two_plus])[-2]
-        if scenario_gap <= 12 or abs(over_score - under_score) <= 12:
+        if one_goal + two_plus >= 52 or high_next_goal or live_volume_score >= 45:
+            return "PARTIDO_ABIERTO"
+
+        if total_goals <= 1 and abs(over_score - under_score) <= 15:
             return "PARTIDO_EQUILIBRADO"
 
-        if quality in {"LOW", "BAD", "INVALID", "STALE", "OLD"}:
-            return "PARTIDO_EQUILIBRADO"
-
-        return "PARTIDO_ABIERTO" if force >= 45 else "PARTIDO_EQUILIBRADO"
+        return "PARTIDO_EQUILIBRADO"
 
     def _story_style_sentence(
         self,
         story_type: str,
+        signal: Dict[str, Any],
         minute: int,
         scoreline: str,
         final_market: str,
         score_prediction: str,
-        alternative_score: str,
-        no_goal: float,
-        one_goal: float,
-        two_plus: float,
-        dominant_team: str,
-        threat_team: str,
-        live_volume_score: float,
-        pressure: float,
-        shots: int,
-        shots_on_target: int,
-        corners: int,
-        xg: float,
-        official_can_publish: bool,
+        scenario_ladder: Dict[str, str],
+        dominance_reading: str,
+        pressure_reading: str,
+        rhythm_reading: str,
+        confidence_label: str,
     ) -> str:
-        dominant = str(dominant_team or "").strip()
-        threat = str(threat_team or "").strip()
-        opener = f"Minuto {minute}. Con el marcador {scoreline}, "
+        home = str(signal.get("home_team") or signal.get("home") or "el equipo local")
+        away = str(signal.get("away_team") or signal.get("away") or "el equipo visitante")
+        home_score, away_score = self._parse_scoreline(scoreline)
+        leader = self._leader_name(home, away, home_score, away_score)
+        trailer = self._trailing_name(home, away, home_score, away_score)
+        variant = self._narrative_variant(signal, minute, story_type)
 
         if story_type == "PARTIDO_BLOQUEADO":
-            return (
-                opener
-                + "la lectura pasa a modo auditoría. Aunque existan datos futbolísticos para interpretar, "
-                "hay una condición crítica que impide transformar el análisis en una acción operativa."
-            )
+            options = [
+                f"Minuto {minute}. El partido entre {home} y {away} queda bajo lectura de auditoría. Aunque el marcador va {scoreline}, existe una condición crítica que impide transformar cualquier lectura en operación.",
+                f"Minuto {minute}. La lectura del {scoreline} queda detenida por control de riesgo. El sistema no prioriza la historia futbolística, sino la protección ante una condición no operable.",
+                f"Minuto {minute}. Hay partido, pero no hay vía operativa segura. Con el marcador {scoreline}, la lectura queda bloqueada hasta que desaparezca la condición crítica.",
+            ]
+            return options[variant % len(options)]
 
         if story_type == "DOMINIO_ABSOLUTO":
-            team_text = f"{dominant} tiene el control del encuentro" if dominant else "un equipo maneja el encuentro con claridad"
-            return (
-                opener
-                + f"{team_text}. La sensación del partido es de superioridad sostenida: el rival responde poco "
-                "y la principal incógnita ya no es el dominio, sino si ese control volverá a mover el marcador."
-            )
+            options = [
+                f"Minuto {minute}. {leader} tiene el partido claramente encaminado. El {scoreline} refleja una superioridad sostenida y la gran pregunta ya no es quién manda, sino si la diferencia puede ampliarse.",
+                f"Minuto {minute}. El encuentro tiene un dueño claro. {leader} controla la escena y obliga a {trailer} a jugar más cerca de su área que del empate.",
+                f"Minuto {minute}. La ventaja de {leader} pesa cada vez más. El partido se mueve en una zona de control, con {trailer} necesitando una reacción poco probable para cambiar la historia.",
+            ]
+            return options[variant % len(options)]
 
         if story_type == "CAOS_OFENSIVO":
-            return (
-                opener
-                + "el partido entró en una fase de ida y vuelta. Las transiciones aparecen con frecuencia, "
-                f"el volumen ofensivo es alto y los {shots_on_target} tiros al arco mantienen viva la sensación de otro gol."
-            )
-
-        if story_type == "PARTIDO_ABIERTO":
-            return (
-                opener
-                + "el encuentro sigue abierto. Hay ritmo, espacios y señales suficientes para pensar que el marcador "
-                "todavía puede cambiar si la intensidad actual se sostiene."
-            )
-
-        if story_type == "CONTROL_DEFENSIVO":
-            return (
-                opener
-                + "el partido empieza a cerrarse. La lectura favorece la conservación del marcador porque el ritmo "
-                f"no empuja con claridad hacia una ruptura y el escenario sin más goles pesa {no_goal:.0f}%."
-            )
+            options = [
+                f"Minuto {minute}. El partido está encendido. Las transiciones aparecen con frecuencia, las defensas sufren para acomodarse y el marcador {scoreline} todavía no transmite cierre.",
+                f"Minuto {minute}. El encuentro entró en una fase de ida y vuelta. Cada recuperación puede convertirse en ataque y el sistema mantiene viva la posibilidad de otro golpe en el marcador.",
+                f"Minuto {minute}. La dinámica es de alto voltaje: ritmo, espacios y llegadas sostienen un escenario donde el {scoreline} aún puede moverse.",
+            ]
+            return options[variant % len(options)]
 
         if story_type == "REMONTADA_POSIBLE":
-            team_text = f"{threat} empieza a empujar" if threat else "el equipo que va abajo empieza a empujar"
-            return (
-                opener
-                + f"{team_text}. La ventaja del marcador todavía existe, pero el trámite ya no transmite control absoluto; "
-                "la presión del perseguidor mantiene viva la posibilidad de un giro en el partido."
-            )
+            options = [
+                f"Minuto {minute}. {trailer} no se resigna. Aunque el marcador favorece a {leader}, la amenaza del equipo que va abajo mantiene el partido emocionalmente abierto.",
+                f"Minuto {minute}. El resultado dice ventaja para {leader}, pero la energía reciente del partido deja espacio para una reacción de {trailer}.",
+                f"Minuto {minute}. El encuentro todavía tiene tensión competitiva. {trailer} necesita empujar y el sistema detecta señales de que la historia no está completamente cerrada.",
+            ]
+            return options[variant % len(options)]
+
+        if story_type == "CONTROL_DEFENSIVO":
+            options = [
+                f"Minuto {minute}. El partido empieza a cerrarse. El marcador {scoreline} gana peso como escenario de conservación y el ritmo no muestra una ruptura inmediata.",
+                f"Minuto {minute}. El juego se vuelve más controlado. Los equipos reducen riesgos y el sistema interpreta que la estabilidad del marcador tiene más fuerza que una nueva aceleración.",
+                f"Minuto {minute}. La lectura favorece el control. El {scoreline} se sostiene porque la amenaza ofensiva no alcanza una frecuencia suficiente para cambiar el guion.",
+            ]
+            return options[variant % len(options)]
 
         if story_type == "FAVORITO_EN_RIESGO":
-            team_text = f"{dominant} tiene presencia territorial" if dominant else "hay dominio territorial visible"
-            return (
-                opener
-                + f"{team_text}, pero no toda esa presencia se convierte en peligro real. El sistema detecta una posible "
-                "distancia entre dominio y amenaza, por eso la lectura exige prudencia."
-            )
+            options = [
+                f"Minuto {minute}. La lectura tiene matices. Puede existir dominio territorial, pero no toda posesión se convierte en peligro real; por eso el sistema mantiene cautela con el {scoreline}.",
+                f"Minuto {minute}. El partido engaña si solo se mira quién tiene más iniciativa. La amenaza real no está totalmente alineada con el dominio y eso obliga a leer con prudencia.",
+                f"Minuto {minute}. Hay señales cruzadas en el encuentro. El sistema separa volumen de peligro y evita convertir una lectura incompleta en conclusión fuerte.",
+            ]
+            return options[variant % len(options)]
 
-        return (
-            opener
-            + "el partido se mantiene equilibrado. Ningún escenario se impone con autoridad absoluta y la lectura "
-            "depende de detalles: una pelota parada, una pérdida o una aceleración pueden cambiar el panorama."
-        )
+        if story_type == "PARTIDO_ABIERTO":
+            options = [
+                f"Minuto {minute}. El partido sigue vivo. El {scoreline} no transmite cierre definitivo y todavía hay ritmo suficiente para pensar en movimiento antes del final.",
+                f"Minuto {minute}. El encuentro conserva tensión. El marcador favorece a {leader}, pero la dinámica todavía permite imaginar una acción que cambie el tramo final.",
+                f"Minuto {minute}. El partido mantiene una puerta abierta para nuevos escenarios. No hay dominio absoluto, pero sí actividad suficiente para sostener la atención sobre el marcador.",
+            ]
+            return options[variant % len(options)]
+
+        options = [
+            f"Minuto {minute}. Partido equilibrado entre {home} y {away}. El {scoreline} refleja una lectura sin dueño absoluto y cualquier detalle puede inclinar el desarrollo.",
+            f"Minuto {minute}. El encuentro se mantiene parejo. Ningún equipo consigue imponer una superioridad prolongada y el marcador {scoreline} sigue siendo el punto de referencia principal.",
+            f"Minuto {minute}. La lectura es fina: el partido no está roto ni completamente controlado. El sistema interpreta el {scoreline} con cautela y espera señales más claras.",
+        ]
+        return options[variant % len(options)]
 
     def _scenario_ladder(
         self,
+        signal: Dict[str, Any],
         score_prediction: str,
         alternative_score: str,
-        signal: Dict[str, Any],
+        scoreline: str,
         no_goal: float,
         one_goal: float,
         two_plus: float,
     ) -> Dict[str, str]:
-        main = str(score_prediction or signal.get("official_probable_score") or signal.get("prediction_final_score") or "Marcador en evaluación").strip()
-        candidates: List[str] = []
-        for key in (
-            "prediction_alternative_score",
-            "prediction_offensive_score",
-            "prediction_break_score",
-            "prediction_conservative_score",
-            "prediction_main_score",
-        ):
-            value = str(signal.get(key) or "").strip()
-            if value and value not in candidates and value != main:
-                candidates.append(value)
+        scenarios = self._extract_score_scenarios(signal)
 
-        if alternative_score and alternative_score not in candidates and alternative_score != main:
-            candidates.insert(0, alternative_score)
+        if not scenarios:
+            fallback_scores = [
+                score_prediction,
+                alternative_score,
+                str(signal.get("prediction_offensive_score") or ""),
+                str(signal.get("prediction_break_score") or ""),
+                str(signal.get("prediction_conservative_score") or ""),
+            ]
+            cleaned: List[str] = []
+            for score in fallback_scores:
+                score = str(score or "").strip()
+                if score and score not in cleaned:
+                    cleaned.append(score)
+            weights = [max(no_goal, one_goal, two_plus), 25.0, 15.0]
+            scenarios = [
+                {"score": score, "weight": weights[index] if index < len(weights) else 10.0}
+                for index, score in enumerate(cleaned[:3])
+            ]
 
-        alt1 = candidates[0] if candidates else "sin ruta alternativa clara"
-        alt2 = candidates[1] if len(candidates) > 1 else "no aparece una segunda ruta suficientemente clara"
+        principal = scenarios[0]["score"] if scenarios else (score_prediction or scoreline)
+        principal_weight = scenarios[0].get("weight") if scenarios else None
+        alt1 = scenarios[1]["score"] if len(scenarios) > 1 else (alternative_score or "sin ruta alternativa clara")
+        alt1_weight = scenarios[1].get("weight") if len(scenarios) > 1 else None
+        alt2 = scenarios[2]["score"] if len(scenarios) > 2 else "no aparece una segunda ruta suficientemente clara"
+        alt2_weight = scenarios[2].get("weight") if len(scenarios) > 2 else None
 
-        summary = (
-            f"Escenario principal: {main}. Alternativa principal: {alt1}. "
-            f"Segunda alternativa: {alt2}. Probabilidades: sin más goles {no_goal:.0f}%, "
+        principal_text = self._score_weight_text(principal, principal_weight)
+        alt1_text = self._score_weight_text(alt1, alt1_weight)
+        alt2_text = self._score_weight_text(alt2, alt2_weight)
+        probability_text = (
+            f"Probabilidades de movimiento: sin más goles {no_goal:.0f}%, "
             f"un gol adicional {one_goal:.0f}%, dos o más goles {two_plus:.0f}%."
         )
+
         text = (
-            f"Resultado más probable: {main}. "
-            f"Alternativas: {alt1}; {alt2}. "
-            f"Probabilidades: sin más goles {no_goal:.0f}%, un gol adicional {one_goal:.0f}%, "
-            f"dos o más goles {two_plus:.0f}%."
+            f"El resultado más probable es {principal_text}. "
+            f"Como alternativa principal aparece {alt1_text}. "
+            f"La segunda ruta es {alt2_text}. {probability_text}"
         )
+
         return {
-            "main": main,
-            "alternative_1": alt1,
-            "alternative_2": alt2,
-            "summary": summary,
+            "principal": str(principal),
+            "principal_weight": "" if principal_weight is None else f"{principal_weight:.0f}%",
+            "alternative_1": str(alt1),
+            "alternative_1_weight": "" if alt1_weight is None else f"{alt1_weight:.0f}%",
+            "alternative_2": str(alt2),
+            "alternative_2_weight": "" if alt2_weight is None else f"{alt2_weight:.0f}%",
+            "probability_text": probability_text,
             "text": text,
         }
 
@@ -922,99 +937,119 @@ class SignalNarrativeAI:
         official_can_publish: bool,
         official_reason: str,
         official_risks: List[str],
+        operative_state: str,
+        conflict_detected: bool,
     ) -> str:
-        status = str(official_status or "NO_BET").upper()
-        reason = str(official_reason or "").strip()
-        first_risk = str((official_risks or [""])[0] or "").strip()
-        detail = reason or first_risk
+        reason = self._compact_reason(official_reason or (official_risks[0] if official_risks else ""))
 
-        if status in {"BLOCKED", "NO_REENTRY", "BLOQUEADO"}:
-            return "Acción oficial: no operar." + (f" Motivo oficial: {detail}." if detail else "")
+        if official_status in {"BLOCKED", "NO_REENTRY"} or operative_state == "BLOCKED":
+            return f"Acción oficial: no operar.{(' Motivo oficial: ' + reason) if reason else ''}"
 
-        if status in {"NO_BET", "NO BET"}:
-            return "Acción oficial: no operar; el sistema no encuentra una ventaja suficiente."
+        if official_status == "NO_BET":
+            return f"Acción oficial: no operar; el sistema no encuentra ventaja suficiente.{(' Motivo oficial: ' + reason) if reason else ''}"
 
-        if not official_can_publish or status in {"WAIT_CONFIRMATION", "OBSERVE", "REVALIDATION", "WAIT_REVALIDATION", "OBSERVATION"}:
-            if status in {"WAIT_CONFIRMATION", "REVALIDATION", "WAIT_REVALIDATION"}:
-                return "Acción oficial: esperar confirmación; todavía no hay señal autorizada."
-            return "Acción oficial: observar; todavía no hay señal autorizada."
+        if official_status in {"WAIT_CONFIRMATION", "WAIT_REVALIDATION"}:
+            return f"Acción oficial: esperar confirmación; no hay señal autorizada.{(' Motivo oficial: ' + reason) if reason else ''}"
 
-        if status in {"ENTER", "OPERABLE"} and official_can_publish:
+        if official_status in {"OBSERVE", "OBSERVATION"} or not official_can_publish:
+            return f"Acción oficial: observar; no hay señal autorizada.{(' Motivo oficial: ' + reason) if reason else ''}"
+
+        if official_status in {"ENTER", "OPERABLE"} and official_can_publish:
             return "Acción oficial: señal operable según MasterDecisionAI, siempre con gestión de riesgo."
 
-        return "Acción oficial: mantener seguimiento sin adelantar una entrada."
+        if conflict_detected:
+            return "Acción oficial: observar y esperar revalidación; la lectura tiene conflicto predictivo."
 
-    def _short_live_commentary(
+        return "Acción oficial: mantener seguimiento sin forzar entrada."
+
+    def _dominant_reading_text(
         self,
-        story_type: str,
-        minute: int,
-        scoreline: str,
-        score_prediction: str,
-        confidence_label: str,
-        official_status: str,
+        final_market: str,
         official_can_publish: bool,
+        official_status: str,
     ) -> str:
-        status = str(official_status or "").upper()
-        if status in {"BLOCKED", "NO_REENTRY", "BLOQUEADO"}:
-            return f"Minuto {minute}: lectura bloqueada. Resultado más probable: {score_prediction}. No operar."
-        if official_can_publish and status in {"ENTER", "OPERABLE"}:
-            return f"Minuto {minute}: señal operable. Marcador {scoreline}; resultado más probable {score_prediction}."
+        if final_market in {"NO_BET", "OBSERVE", "OTHER"}:
+            return "La lectura dominante no se convierte todavía en un mercado limpio; el partido sigue bajo interpretación contextual."
+        if official_can_publish and official_status in {"ENTER", "OPERABLE"}:
+            return f"La lectura dominante autorizada por el sistema es {final_market}."
         return (
-            f"Minuto {minute}: {story_type.replace('_', ' ').lower()}. "
-            f"Resultado más probable: {score_prediction}. Sin señal autorizada todavía."
+            f"La lectura dominante se inclina hacia {final_market} como escenario interpretativo, "
+            "pero no debe tratarse como señal autorizada."
         )
 
-    def _compose_live_commentary(
+    def _extract_score_scenarios(self, signal: Dict[str, Any]) -> List[Dict[str, float]]:
+        raw = signal.get("prediction_score_scenarios") or []
+        if not isinstance(raw, list):
+            return []
+
+        scenarios: List[Dict[str, float]] = []
+        seen = set()
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            score = str(item.get("score") or item.get("puntuación") or "").strip()
+            if not score or score in seen:
+                continue
+            weight = safe_float(item.get("weight") or item.get("peso"), 0.0)
+            seen.add(score)
+            scenarios.append({"score": score, "weight": max(0.0, min(100.0, weight))})
+
+        scenarios.sort(key=lambda item: item.get("weight", 0.0), reverse=True)
+        return scenarios[:3]
+
+    def _score_weight_text(self, score: str, weight: Optional[float]) -> str:
+        score = str(score or "").strip() or "marcador en evaluación"
+        if weight is None or weight <= 0:
+            return score
+        return f"{score} ({weight:.0f}%)"
+
+    def _parse_scoreline(self, scoreline: str) -> tuple[int, int]:
+        parts = str(scoreline or "0-0").replace(" ", "").split("-")
+        home = safe_int(parts[0], 0) if len(parts) > 0 else 0
+        away = safe_int(parts[1], 0) if len(parts) > 1 else 0
+        return home, away
+
+    def _leader_name(self, home: str, away: str, home_score: int, away_score: int) -> str:
+        if home_score > away_score:
+            return home
+        if away_score > home_score:
+            return away
+        return "ningún equipo"
+
+    def _trailing_name(self, home: str, away: str, home_score: int, away_score: int) -> str:
+        if home_score > away_score:
+            return away
+        if away_score > home_score:
+            return home
+        return "ambos equipos"
+
+    def _threat_team_is_trailing(
         self,
-        minute: int,
-        scoreline: str,
-        story_sentence: str,
-        scenario_ladder: Dict[str, str],
-        dominance_reading: str,
-        pressure_reading: str,
-        rhythm_reading: str,
-        reason: str,
-        risk: str,
-        action: str,
-        official_status: str,
-        official_can_publish: bool,
-        confidence_value: float,
-        confidence_label: str,
-    ) -> str:
-        status = str(official_status or "NO_BET").upper()
-        if status in {"BLOCKED", "NO_REENTRY", "BLOQUEADO"}:
-            closing = "La lectura queda protegida por el bloqueo oficial; no debe tratarse como oportunidad operativa."
-        elif official_can_publish and status in {"ENTER", "OPERABLE"}:
-            closing = "La lectura está autorizada, pero mantiene gestión de riesgo como cualquier señal live."
-        else:
-            closing = "La lectura puede ser útil para seguimiento, pero no debe tratarse como entrada hasta nueva confirmación."
+        signal: Dict[str, Any],
+        threat_team: str,
+        home_score: int,
+        away_score: int,
+    ) -> bool:
+        threat = str(threat_team or "").strip().lower()
+        if not threat or home_score == away_score:
+            return False
+        home = str(signal.get("home_team") or "").strip().lower()
+        away = str(signal.get("away_team") or "").strip().lower()
+        if home_score < away_score and threat == home:
+            return True
+        if away_score < home_score and threat == away:
+            return True
+        return False
 
-        return (
-            f"{story_sentence} "
-            f"El resultado más probable ahora es {scenario_ladder['main']}. "
-            f"Como alternativas aparecen {scenario_ladder['alternative_1']} y {scenario_ladder['alternative_2']}. "
-            f"En probabilidades de desarrollo: sin más goles {self._extract_pct(scenario_ladder['summary'], 'sin más goles')}%, "
-            f"un gol adicional {self._extract_pct(scenario_ladder['summary'], 'un gol adicional')}% y "
-            f"dos o más goles {self._extract_pct(scenario_ladder['summary'], 'dos o más goles')}%. "
-            f"{dominance_reading} {pressure_reading} {rhythm_reading} "
-            f"{reason} {risk} Estado oficial: {status}. "
-            f"Confianza oficial {confidence_value:.0f}% ({confidence_label}). {action} {closing}"
-        ).strip()
+    def _compact_reason(self, text: str, limit: int = 160) -> str:
+        cleaned = " ".join(str(text or "").replace("_", " ").split())
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[: limit - 3].rstrip() + "..."
 
-    def _extract_pct(self, text: str, label: str) -> str:
-        marker = f"{label} "
-        try:
-            tail = text.split(marker, 1)[1]
-            return tail.split("%", 1)[0].strip()
-        except Exception:
-            return "0"
-
-    def _score_parts(self, scoreline: str) -> tuple[int, int]:
-        try:
-            raw_home, raw_away = str(scoreline or "0-0").split("-", 1)
-            return safe_int(raw_home, 0), safe_int(raw_away, 0)
-        except Exception:
-            return 0, 0
+    def _narrative_variant(self, signal: Dict[str, Any], minute: int, story_type: str) -> int:
+        seed = f"{signal.get('fixture_id') or signal.get('match_id') or ''}:{minute}:{story_type}"
+        return sum(ord(char) for char in seed) % 3
 
     def _clean_score_prediction(
         self,
@@ -1367,23 +1402,24 @@ class SignalNarrativeAI:
 
     def _professional_title(
         self,
-        official_status: str,
-        official_can_publish: bool,
-        story_type: str,
+        decision: str,
+        final_market: str,
         conflict_detected: bool,
+        official_status: str = "",
+        official_can_publish: bool = False,
+        story_type: str = "PARTIDO_EQUILIBRADO",
     ) -> str:
-        label = str(story_type or "PARTIDO_EN_LECTURA").replace("_", " ")
-        status = str(official_status or "").upper()
+        story_label = story_type.replace("_", " ")
 
-        if status in {"BLOCKED", "NO_REENTRY", "BLOQUEADO"}:
+        if official_status in {"BLOCKED", "NO_REENTRY"} or decision == "BLOCKED":
             return "PARTIDO BLOQUEADO - NO OPERAR"
         if conflict_detected:
-            return f"{label} - CONFLICTO PREDICTIVO"
-        if official_can_publish and status in {"ENTER", "OPERABLE"}:
-            return f"{label} - SEÑAL OPERABLE"
-        if status in {"WAIT_CONFIRMATION", "REVALIDATION", "WAIT_REVALIDATION"}:
-            return f"{label} - ESPERANDO CONFIRMACIÓN"
-        return f"{label} - SIN SEÑAL AUTORIZADA"
+            return "LECTURA CON CONFLICTO PREDICTIVO"
+        if official_can_publish and official_status in {"ENTER", "OPERABLE"}:
+            return f"{story_label} - SEÑAL OPERABLE"
+        if official_status in {"WAIT_CONFIRMATION", "WAIT_REVALIDATION"}:
+            return f"{story_label} - ESPERANDO CONFIRMACIÓN"
+        return f"{story_label} - SIN SEÑAL AUTORIZADA"
 
     def _narrative_points(self, first_point: str, original: List[str], limit: int = 6) -> List[str]:
         points = [first_point] if first_point else []
