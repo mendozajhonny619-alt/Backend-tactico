@@ -33,6 +33,16 @@ def _as_list(value: Any) -> List[str]:
     return [str(value)]
 
 
+def _bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if str(value).lower() in {"true", "1", "yes", "y", "active"}:
+        return True
+    return False
+
+
 class SignalPromotionAI:
     """
     Capa promotora V17.
@@ -42,20 +52,20 @@ class SignalPromotionAI:
     Su función es leer el resultado final del análisis y decidir si una señal
     debe quedarse en observación o puede subir a:
 
+    - EARLY_OVER_CANDIDATE
     - STRONG_CANDIDATE
     - MAIN_SIGNAL
     - TOP_SIGNAL
 
-    Jerarquía obligatoria:
-
-    1. No salta bloqueos críticos.
-    2. No ignora reloj bloqueado.
-    3. No promueve datos inválidos o muy pobres.
-    4. No contradice a MatchMaturityAI si exige bloqueo o revalidación fuerte.
-    5. Solo promueve cuando live, riesgo, minuto, madurez y contexto tienen respaldo suficiente.
+    Corrección principal:
+    - Reconoce oficialmente OVER candidato temprano.
+    - Evita mezclar promotion_market OVER con textos UNDER.
+    - Respeta OVER WATCH cuando hay mayoría ofensiva suficiente.
     """
 
-    VERSION = "V17_SIGNAL_PROMOTION_AI_1"
+    VERSION = "V17_SIGNAL_PROMOTION_AI_4"
+
+    TOP_SIGNAL_THRESHOLD = 92.0  # Umbral base para promoción TOP
 
     HARD_BLOCKERS = {
         "NO_REENTRY",
@@ -87,11 +97,6 @@ class SignalPromotionAI:
     STRONG_CONTRADICTIONS = {
         "STRONG_CONTRADICTION",
         "CRITICAL_CONTRADICTION",
-    }
-
-    HIGH_RISK_STATUSES = {
-        "HIGH_RISK",
-        "EXTREME_RISK",
     }
 
     LOW_RISK_STATUSES = {
@@ -162,12 +167,46 @@ class SignalPromotionAI:
         if risk_result.get("support"):
             promotion_support.extend(risk_result["support"])
 
+        # --- COHERENCIA PREDICTIVA V17.3 ---
+        # MatchPredictionAI ya puede detectar conflictos entre mercado, próximo gol
+        # y marcador probable. PromotionAI no debe promover señales limpias cuando
+        # esa capa ve contradicción.
+        prediction_result = self._prediction_coherence_check(signal, market)
+        if prediction_result.get("blockers"):
+            promotion_blockers.extend(prediction_result["blockers"])
+        if prediction_result.get("warnings"):
+            promotion_warnings.extend(prediction_result["warnings"])
+        if prediction_result.get("support"):
+            promotion_support.extend(prediction_result["support"])
+
+        # --- PERFIL DE BLOQUEO GRADUADO V17.3 ---
+        # No todo blocker es crítico. Reloj en warning, descanso o timestamp ausente
+        # debe bajar/promover a revalidación, no matar automáticamente la señal.
+        blocker_profile = self._blocker_profile(signal, promotion_blockers)
+        if blocker_profile.get("soft_blockers"):
+            promotion_warnings.extend(blocker_profile["soft_blockers"])
+        promotion_blockers = blocker_profile.get("critical_blockers", [])
+
+        # --- FILTRO DE CALIDAD DE LIGA (V17.1) ---
+        league_profile = _txt(signal.get("league_goal_profile"))
+        if league_profile in {"UNKNOWN_LEAGUE", "LOW_DATA_LEAGUE", "DESCONOCIDO"}:
+            promotion_warnings.append("Competencia con datos limitados. Nivel de confianza reducido.")
+            # Las ligas inferiores nunca pueden ser TOP_SIGNAL por seguridad
+            is_top_league = False
+        else:
+            is_top_league = True
+
         market_score = self._market_score(signal, market)
         live_score = self._live_confirmation_score(signal, market, minute)
         pre_match_score = self._pre_match_score(signal, market)
         phase_score = self._phase_score(signal, market, minute)
         maturity_score = _num(signal.get("match_maturity_score"), 0)
-        master_confidence = _num(signal.get("master_confidence"), 0)
+        evidence_confidence = max(
+            _num(signal.get("market_confidence"), 0),
+            _num(signal.get("prediction_confidence"), 0),
+            _num(signal.get("football_confidence"), 0),
+            _num(signal.get("pressure_confidence"), 0),
+        )
         football_confidence = _num(signal.get("football_confidence"), 0)
 
         promotion_score = self._calculate_promotion_score(
@@ -176,11 +215,15 @@ class SignalPromotionAI:
             pre_match_score=pre_match_score,
             phase_score=phase_score,
             maturity_score=maturity_score,
-            master_confidence=master_confidence,
+            evidence_confidence=evidence_confidence,
             football_confidence=football_confidence,
             warning_count=len(set(promotion_warnings + soft_warnings + maturity_warnings)),
             blocker_count=len(set(promotion_blockers)),
         )
+
+        promotion_score += _num(prediction_result.get("score_adjustment"), 0)
+        promotion_score -= _num(blocker_profile.get("soft_penalty"), 0)
+        promotion_score = max(0.0, min(100.0, promotion_score))
 
         if market_score >= 70:
             promotion_support.append(f"Lectura {market} con porcentaje competitivo.")
@@ -205,7 +248,22 @@ class SignalPromotionAI:
             pre_match_score=pre_match_score,
             phase_score=phase_score,
             maturity_score=maturity_score,
+            prediction_result=prediction_result,
+            blocker_profile=blocker_profile,
         )
+
+        # Ajuste de rigor para 90% Winrate: Solo promovemos a TOP si es liga de calidad y score > 92
+        if promotion_level == "TOP_SIGNAL":
+            if not is_top_league or promotion_score < self.TOP_SIGNAL_THRESHOLD:
+                promotion_level = "MAIN_SIGNAL"
+
+        # Si existe conflicto predictivo o advertencia operativa seria, no se presenta
+        # como señal limpia. Se queda en candidato/revalidación hasta nueva lectura.
+        if prediction_result.get("conflict") and promotion_level in {"MAIN_SIGNAL", "TOP_SIGNAL"}:
+            promotion_level = "STRONG_CANDIDATE"
+
+        if blocker_profile.get("soft_block") and promotion_level in {"MAIN_SIGNAL", "TOP_SIGNAL"}:
+            promotion_level = "WAIT_REVALIDATION"
 
         panel_label = self._panel_label(
             market=market,
@@ -226,14 +284,18 @@ class SignalPromotionAI:
         )
 
         can_publish = promotion_level in {"MAIN_SIGNAL", "TOP_SIGNAL"}
+
         should_observe = promotion_level in {
             "OBSERVE_ONLY",
             "WAIT_REVALIDATION",
+            "EARLY_OVER_CANDIDATE",
             "STRONG_CANDIDATE",
         }
 
         return {
             "signal_promotion_version": self.VERSION,
+            "promotion_role": "EVIDENCE_ONLY",
+            "promotion_is_official_decision": False,
             "promotion_market": market,
             "promotion_score": round(promotion_score, 2),
             "promotion_level": promotion_level,
@@ -254,9 +316,205 @@ class SignalPromotionAI:
             "panel_promotion_reason": reason,
         }
 
+    def _prediction_coherence_check(self, signal: Dict[str, Any], market: str) -> Dict[str, Any]:
+        """
+        Evalúa si la predicción del partido acompaña o contradice la promoción.
+
+        Regla central:
+        - UNDER no puede promocionarse como limpio si la predicción ve próximo gol alto
+          o recomienda OVER/OBSERVE_OVER_RISK.
+        - OVER no puede promocionarse como limpio si la predicción ve conservación clara
+          o recomienda UNDER/OBSERVE_UNDER_RISK.
+        """
+        warnings: List[str] = []
+        blockers: List[str] = []
+        support: List[str] = []
+
+        prediction_market = _txt(signal.get("prediction_market"))
+        alignment = _txt(signal.get("prediction_market_alignment"))
+        final_recommendation = _txt(signal.get("final_market_recommendation"))
+        conflict_level = _txt(signal.get("prediction_conflict_level"))
+        next_goal_probability = _txt(signal.get("prediction_next_goal_probability"))
+        prediction_confidence = _num(signal.get("prediction_confidence"), 0)
+
+        no_goal_probability = _num(signal.get("prediction_no_goal_probability"), 0)
+        one_goal_probability = _num(signal.get("prediction_one_goal_probability"), 0)
+        two_plus_probability = _num(signal.get("prediction_two_plus_goal_probability"), 0)
+
+        conflict = False
+        critical_conflict = False
+        score_adjustment = 0.0
+
+        if conflict_level in {"HIGH", "CRITICAL"}:
+            conflict = True
+            critical_conflict = conflict_level == "CRITICAL"
+            warnings.append("MatchPredictionAI detecta conflicto fuerte entre mercado y escenario probable.")
+            score_adjustment -= 18 if critical_conflict else 12
+
+        if alignment in {"CONFLICT", "STRONG_CONFLICT"}:
+            conflict = True
+            warnings.append("La predicción no está alineada con el mercado que se intenta promocionar.")
+            score_adjustment -= 12
+
+        if market == "UNDER":
+            if next_goal_probability in {"HIGH", "VERY_HIGH"}:
+                conflict = True
+                warnings.append("UNDER con probabilidad alta de próximo gol. No debe ser señal limpia.")
+                score_adjustment -= 16
+            elif next_goal_probability == "MEDIUM_HIGH":
+                warnings.append("UNDER con riesgo medio-alto de próximo gol. Requiere revalidación.")
+                score_adjustment -= 8
+
+            if final_recommendation in {"OVER", "OBSERVE_OVER_RISK"} or prediction_market == "OVER":
+                conflict = True
+                warnings.append("La predicción futura se inclina hacia OVER o riesgo de ruptura.")
+                score_adjustment -= 14
+
+            if no_goal_probability >= 55 and two_plus_probability <= 22:
+                support.append("La predicción acompaña conservación del marcador para UNDER.")
+                score_adjustment += 6
+
+        elif market == "OVER":
+            if final_recommendation in {"UNDER", "OBSERVE_UNDER_RISK"} or prediction_market == "UNDER":
+                conflict = True
+                warnings.append("La predicción futura se inclina hacia conservación/UNDER.")
+                score_adjustment -= 14
+
+            if next_goal_probability in {"LOW", "LOW_MEDIUM"} and no_goal_probability >= 55:
+                conflict = True
+                warnings.append("OVER con baja probabilidad de próximo gol y alta conservación.")
+                score_adjustment -= 14
+
+            if two_plus_probability >= 38 or next_goal_probability in {"HIGH", "VERY_HIGH"}:
+                support.append("La predicción acompaña riesgo de más goles para OVER.")
+                score_adjustment += 6
+
+        if prediction_confidence >= 70 and not conflict:
+            support.append("MatchPredictionAI acompaña la promoción con confianza útil.")
+            score_adjustment += 4
+
+        return {
+            "blockers": blockers,
+            "warnings": warnings,
+            "support": support,
+            "conflict": conflict,
+            "critical_conflict": critical_conflict,
+            "score_adjustment": score_adjustment,
+        }
+
+    def _blocker_profile(self, signal: Dict[str, Any], blockers: List[str]) -> Dict[str, Any]:
+        """
+        Separa bloqueadores críticos de advertencias operativas.
+        Esto evita que CLOCK_GUARD_NO_ENTER, HALFTIME_WAIT o timestamp faltante
+        maten automáticamente una señal con lectura fuerte.
+        """
+        critical: List[str] = []
+        soft: List[str] = []
+
+        text_items = [str(item) for item in blockers]
+        joined = " ".join(_txt(item) for item in text_items)
+
+        critical_terms = {
+            "NO_REENTRY",
+            "MATCH_ENDED",
+            "INVALID_MINUTE",
+            "DATA_TOO_OLD",
+            "CLOCK_FROZEN",
+            "BLOCKED_CLOCK",
+            "DATA_INVALID",
+            "CRITICAL_CONTRADICTION",
+            "EXTREME_RISK",
+            "RED_CARD_CHAOS",
+            "CORRUPTED_DATA",
+        }
+
+        soft_terms = {
+            "CLOCK_GUARD_NO_ENTER",
+            "EL RELOJ NO AUTORIZA ENTRADA",
+            "HALFTIME_WAIT",
+            "POSSIBLE_HALFTIME_PAUSE",
+            "DATA_TIMESTAMP_MISSING",
+            "CLOCK_WARNING",
+            "WAIT_CONFIRMATION",
+            "MATCHMATURITYAI EXIGE REVALIDACIÓN",
+            "MATCHMATURITYAI DEGRADÓ",
+            "PANORAMA",
+        }
+
+        clock_status = _txt(signal.get("clock_status"))
+        master_status = _txt(signal.get("master_status"))
+        risk_status = _txt(signal.get("risk_status"))
+        contradiction = _txt(signal.get("contradiction_status"))
+
+        for item in text_items:
+            item_text = _txt(item)
+            if any(term in item_text for term in critical_terms):
+                critical.append(item)
+            elif any(term in item_text for term in soft_terms):
+                soft.append(item)
+            else:
+                # Bloqueos genéricos heredados del Master/Panel se tratan como suaves
+                # salvo que el estado real confirme criticidad.
+                soft.append(item)
+
+        if clock_status == "BLOCKED_CLOCK":
+            critical.append("Reloj bloqueado o congelado.")
+
+        if "BLOCKED" in master_status and any(term in joined for term in critical_terms):
+            critical.append("Master mantiene bloqueo crítico real.")
+
+        if risk_status == "EXTREME_RISK":
+            critical.append("Riesgo extremo confirmado.")
+
+        if contradiction in {"CRITICAL_CONTRADICTION", "CRITICAL"}:
+            critical.append("Contradicción crítica confirmada.")
+
+        soft_penalty = min(12.0, len(set(soft)) * 3.0)
+
+        return {
+            "critical_blockers": self._unique(critical),
+            "soft_blockers": self._unique(soft),
+            "soft_block": bool(soft) and not bool(critical),
+            "soft_penalty": soft_penalty,
+        }
+
     def _detect_market(self, signal: Dict[str, Any]) -> str:
+        """
+        Detecta mercado principal para promoción.
+
+        Prioridad corregida:
+        - Si existe OVER WATCH fuerte, se respeta OVER aunque la lectura base venga como UNDER.
+        - Evita que el panel diga UNDER EN OBSERVACIÓN cuando realmente se está viendo OVER temprano.
+        """
+
+        over_candidate_active = _bool(signal.get("over_candidate_active"))
+        over_candidate_level = _txt(signal.get("over_candidate_level"))
+        over_support_score = _num(signal.get("over_support_score"), 0)
+        over_support_ratio = _num(signal.get("over_support_ratio"), 0)
+        panel_section = _txt(signal.get("panel_section"))
+        master_action = _txt(signal.get("master_action"))
+        master_reason = _txt(signal.get("master_reason"))
+        recommended_message = _txt(signal.get("recommended_panel_message"))
+
+        if (
+            over_candidate_active
+            or over_candidate_level in {
+                "OVER_HIGH_OBSERVATION",
+                "OVER_STRONG_CANDIDATE",
+                "EARLY_OVER_CANDIDATE",
+            }
+            or over_support_score >= 15
+            or over_support_ratio >= 0.75
+            or "OVER_HIGH" in panel_section
+            or "OVER WATCH" in master_reason
+            or "OVER_CANDIDATO" in master_action
+            or "OVER" in recommended_message
+        ):
+            return "OVER"
+
         candidates = [
             signal.get("promotion_market"),
+            signal.get("activation_market"),
             signal.get("narrative_reading_name"),
             signal.get("football_dominant_reading"),
             signal.get("panel_market"),
@@ -438,11 +696,18 @@ class SignalPromotionAI:
 
     def _market_score(self, signal: Dict[str, Any], market: str) -> float:
         if market == "OVER":
+            over_support_ratio = _num(signal.get("over_support_ratio"), 0)
+
+            if over_support_ratio <= 1:
+                over_support_ratio *= 100
+
             values = [
                 _num(signal.get("over_score"), 0),
-                _num(signal.get("over_support_ratio"), 0) * 100 if _num(signal.get("over_support_ratio"), 0) <= 1 else _num(signal.get("over_support_ratio"), 0),
+                over_support_ratio,
+                _num(signal.get("over_support_score"), 0) * 5,
                 _num(signal.get("over_pre_match_score"), 0),
             ]
+
             return max(values)
 
         if market == "UNDER":
@@ -450,6 +715,7 @@ class SignalPromotionAI:
                 _num(signal.get("under_score"), 0),
                 _num(signal.get("under_pre_match_score"), 0),
             ]
+
             return max(values)
 
         return 0.0
@@ -479,23 +745,45 @@ class SignalPromotionAI:
         if market == "OVER":
             if offensive_volume >= 65:
                 score += 10
+            elif offensive_volume >= 45:
+                score += 7
+            elif offensive_volume >= 30:
+                score += 4
+
             if pressure >= 60:
                 score += 8
+
             if rhythm >= 55:
                 score += 6
+
             if shots_on_target >= 3:
                 score += 8
             elif shots_on_target >= 2:
                 score += 5
-            if shots >= 8:
+            elif shots_on_target >= 1:
+                score += 3
+
+            if shots >= 12:
+                score += 7
+            elif shots >= 8:
                 score += 5
+            elif shots >= 5:
+                score += 3
+
             if dangerous_attacks >= 35:
                 score += 5
+
             if corners >= 5:
                 score += 3
+            elif corners >= 3:
+                score += 2
+
             if xg >= 1.2:
                 score += 8
             elif xg >= 0.8:
+                score += 4
+
+            if 35 <= minute <= 55 and shots >= 6 and shots_on_target >= 2:
                 score += 4
 
         elif market == "UNDER":
@@ -505,25 +793,36 @@ class SignalPromotionAI:
 
             if offensive_volume <= 40:
                 score += 10
+
             if pressure <= 45:
                 score += 8
+
             if rhythm <= 45:
                 score += 6
+
             if shots_on_target <= 2:
                 score += 6
+
             if xg <= 0.8:
                 score += 6
+
             if dangerous_attacks <= 30:
                 score += 4
+
             if minute >= 65 and total_goals <= 2:
                 score += 8
-            if not over_candidate_active and over_level not in {"OVER_HIGH_OBSERVATION", "OVER_STRONG_CANDIDATE"}:
+
+            if not over_candidate_active and over_level not in {
+                "OVER_HIGH_OBSERVATION",
+                "OVER_STRONG_CANDIDATE",
+            }:
                 score += 6
 
         return min(score, 40.0)
 
     def _pre_match_score(self, signal: Dict[str, Any], market: str) -> float:
         available = bool(signal.get("pre_match_available"))
+
         if not available:
             return 4.0
 
@@ -572,7 +871,9 @@ class SignalPromotionAI:
             if 50 <= minute <= 75:
                 score += 12
             elif 35 <= minute < 50:
-                score += 8
+                score += 10
+            elif 25 <= minute < 35:
+                score += 6
             elif 76 <= minute <= 85:
                 score += 6
             elif minute < 25:
@@ -580,8 +881,9 @@ class SignalPromotionAI:
 
             if total_goals == 0 and minute >= 55:
                 score += 3
-            if total_goals >= 1 and 50 <= minute <= 80:
-                score += 2
+
+            if total_goals >= 1 and 35 <= minute <= 80:
+                score += 3
 
         elif market == "UNDER":
             if 68 <= minute <= 82:
@@ -597,6 +899,7 @@ class SignalPromotionAI:
 
             if total_goals <= 1 and minute >= 65:
                 score += 4
+
             if total_goals >= 3 and minute < 70:
                 score -= 5
 
@@ -609,7 +912,7 @@ class SignalPromotionAI:
         pre_match_score: float,
         phase_score: float,
         maturity_score: float,
-        master_confidence: float,
+        evidence_confidence: float,
         football_confidence: float,
         warning_count: int,
         blocker_count: int,
@@ -621,7 +924,7 @@ class SignalPromotionAI:
         score += pre_match_score
         score += phase_score
         score += min(maturity_score, 100) * 0.15
-        score += min(master_confidence, 100) * 0.08
+        score += min(evidence_confidence, 100) * 0.08
         score += min(football_confidence, 100) * 0.07
 
         score -= warning_count * 4
@@ -642,10 +945,27 @@ class SignalPromotionAI:
         pre_match_score: float,
         phase_score: float,
         maturity_score: float,
+        prediction_result: Dict[str, Any] | None = None,
+        blocker_profile: Dict[str, Any] | None = None,
     ) -> str:
         permission = _txt(signal.get("match_maturity_entry_permission"))
         data_quality = _txt(signal.get("data_quality"))
         risk_status = _txt(signal.get("risk_status"))
+        prediction_result = prediction_result or {}
+        blocker_profile = blocker_profile or {}
+
+        if prediction_result.get("critical_conflict"):
+            return "WAIT_REVALIDATION"
+
+        if blocker_profile.get("soft_block") and promotion_score < 82:
+            return "WAIT_REVALIDATION"
+
+        over_candidate_active = bool(signal.get("over_candidate_active"))
+        over_candidate_level = _txt(signal.get("over_candidate_level"))
+        over_support_score = _num(signal.get("over_support_score"), 0)
+        over_support_ratio = _num(signal.get("over_support_ratio"), 0)
+        over_market_gap = _num(signal.get("over_market_gap"), 0)
+        panel_section = _txt(signal.get("panel_section"))
 
         if market == "NO_BET":
             return "OBSERVE_ONLY"
@@ -656,19 +976,73 @@ class SignalPromotionAI:
         if permission == "BLOCK_ENTRY":
             return "BLOCKED"
 
+        early_over_watch = (
+            market == "OVER"
+            and (
+                over_candidate_active
+                or over_candidate_level in {
+                    "OVER_HIGH_OBSERVATION",
+                    "OVER_STRONG_CANDIDATE",
+                    "EARLY_OVER_CANDIDATE",
+                }
+                or "OVER_HIGH" in panel_section
+            )
+            and (
+                over_support_score >= 15
+                or over_support_ratio >= 0.75
+            )
+            and 25 <= minute <= 55
+        )
+
+        if early_over_watch:
+            if promotion_score >= 62 and live_score >= 18 and maturity_score >= 55:
+                return "STRONG_CANDIDATE"
+
+            if over_support_score >= 16 or over_support_ratio >= 0.80:
+                return "EARLY_OVER_CANDIDATE"
+
+            if over_market_gap > -45:
+                return "EARLY_OVER_CANDIDATE"
+
+            return "OBSERVE_ONLY"
+
         if permission in {"WAIT_REVALIDATION", "PANORAMA_ONLY"}:
             if promotion_score >= 72 and live_score >= 22 and not self._has_strong_warning(promotion_warnings):
                 return "STRONG_CANDIDATE"
+
             return "WAIT_REVALIDATION"
+
+        # --- ASCENSO CONTROLADO V17.4 ---
+        # Si una oportunidad ya llegó a candidato fuerte / observación alta y la
+        # lectura está limpia, no debe quedarse estancada. Esta ruta permite que
+        # las mejores oportunidades del momento suban a señal directa sin volver
+        # agresivo el sistema ni romper la jerarquía de MasterDecision.
+        if self._elite_opportunity_to_main_signal(
+            signal=signal,
+            market=market,
+            promotion_score=promotion_score,
+            promotion_warnings=promotion_warnings,
+            market_score=market_score,
+            live_score=live_score,
+            pre_match_score=pre_match_score,
+            phase_score=phase_score,
+            maturity_score=maturity_score,
+            prediction_result=prediction_result,
+            data_quality=data_quality,
+            risk_status=risk_status,
+        ):
+            return "MAIN_SIGNAL"
 
         if data_quality in {"LOW", "LOW_DATA", "PARTIAL", "MEDIUM_LOW"}:
             if promotion_score >= 82 and live_score >= 28 and maturity_score >= 70:
                 return "STRONG_CANDIDATE"
+
             return "OBSERVE_ONLY"
 
         if risk_status == "HIGH_RISK":
             if promotion_score >= 82 and live_score >= 26 and pre_match_score >= 10:
                 return "STRONG_CANDIDATE"
+
             return "OBSERVE_ONLY"
 
         if promotion_score >= 88 and live_score >= 25 and maturity_score >= 75 and phase_score >= 10:
@@ -685,8 +1059,133 @@ class SignalPromotionAI:
 
         return "OBSERVE_ONLY"
 
+
+    def _elite_opportunity_to_main_signal(
+        self,
+        signal: Dict[str, Any],
+        market: str,
+        promotion_score: float,
+        promotion_warnings: List[str],
+        market_score: float,
+        live_score: float,
+        pre_match_score: float,
+        phase_score: float,
+        maturity_score: float,
+        prediction_result: Dict[str, Any],
+        data_quality: str,
+        risk_status: str,
+    ) -> bool:
+        """
+        Promoción fina para oportunidades élite.
+
+        Objetivo:
+        - Permitir que una oportunidad/candidato fuerte suba a señal directa
+          cuando ya cumple lo importante.
+        - Evitar que todo quede eternamente en CANDIDATO/OPORTUNIDAD.
+        - No saltarse bloqueos críticos, riesgo alto ni conflicto predictivo.
+        """
+        if market not in {"OVER", "UNDER"}:
+            return False
+
+        if prediction_result.get("conflict") or prediction_result.get("critical_conflict"):
+            return False
+
+        if risk_status in {"HIGH_RISK", "EXTREME_RISK"}:
+            return False
+
+        if self._has_strong_warning(promotion_warnings):
+            return False
+
+        clock_status = _txt(signal.get("clock_status"))
+        clock_can_enter = signal.get("clock_can_enter")
+        if clock_status in self.BAD_CLOCK_STATUSES or clock_can_enter is False:
+            return False
+
+        # En datos limitados se permite vivir como candidato fuerte, pero solo
+        # sube directo si el live es especialmente fuerte.
+        low_data = data_quality in {"LOW", "LOW_DATA", "PARTIAL", "MEDIUM_LOW"}
+        if low_data and not (promotion_score >= 82 and live_score >= 30 and maturity_score >= 70):
+            return False
+
+        # Detecta si el sistema ya la trae marcada como oportunidad fuerte.
+        texts = " ".join(
+            _txt(signal.get(key))
+            for key in [
+                "promotion_level",
+                "activation_level",
+                "activation_status",
+                "panel_section",
+                "panel_signal_type",
+                "recommended_panel_message",
+                "narrative_operative_state",
+                "master_action",
+                "master_status",
+                "over_candidate_level",
+            ]
+        )
+
+        opportunity_hint = any(
+            token in texts
+            for token in {
+                "STRONG_CANDIDATE",
+                "CANDIDATO FUERTE",
+                "HIGH_OBSERVATION",
+                "OBSERVACIÓN ALTA",
+                "OPPORTUNITY",
+                "OPORTUNIDAD",
+                "EARLY_OVER_CANDIDATE",
+                "OVER_STRONG_CANDIDATE",
+                "OVER_HIGH_OBSERVATION",
+            }
+        )
+
+        confidence = max(
+            _num(signal.get("master_confidence"), 0),
+            _num(signal.get("football_confidence"), 0),
+            _num(signal.get("prediction_confidence"), 0),
+            _num(signal.get("confidence"), 0),
+        )
+
+        next_goal = _txt(signal.get("prediction_next_goal_probability"))
+        final_recommendation = _txt(signal.get("final_market_recommendation"))
+        prediction_market = _txt(signal.get("prediction_market"))
+
+        prediction_supports_market = (
+            final_recommendation == market
+            or prediction_market == market
+            or (market == "OVER" and next_goal in {"HIGH", "VERY_HIGH", "MEDIUM_HIGH"})
+            or (market == "UNDER" and next_goal in {"LOW", "LOW_MEDIUM", "MEDIUM"})
+        )
+
+        core_clean = (
+            promotion_score >= 70
+            and market_score >= 65
+            and live_score >= 18
+            and maturity_score >= 60
+            and phase_score >= 6
+            and confidence >= 60
+        )
+
+        strong_clean = (
+            promotion_score >= 74
+            and live_score >= 20
+            and maturity_score >= 62
+            and confidence >= 65
+        )
+
+        # Ruta 1: ya venía como oportunidad/candidato fuerte y la predicción acompaña.
+        if opportunity_hint and core_clean and prediction_supports_market:
+            return True
+
+        # Ruta 2: lectura muy limpia aunque no venga etiquetada como candidato fuerte.
+        if strong_clean and market_score >= 70 and not low_data:
+            return True
+
+        return False
+
     def _has_strong_warning(self, warnings: List[str]) -> bool:
         joined = " ".join(_txt(item) for item in warnings)
+
         strong_terms = [
             "CONTRADICCIÓN",
             "CONTRADICTION",
@@ -697,6 +1196,7 @@ class SignalPromotionAI:
             "BLOQUE",
             "BLOCK",
         ]
+
         return any(term in joined for term in strong_terms)
 
     def _panel_label(self, market: str, promotion_level: str) -> str:
@@ -709,14 +1209,20 @@ class SignalPromotionAI:
         if promotion_level == "STRONG_CANDIDATE":
             return f"{market} CANDIDATO FUERTE"
 
+        if promotion_level == "EARLY_OVER_CANDIDATE":
+            return "OVER CANDIDATO TEMPRANO"
+
         if promotion_level == "WAIT_REVALIDATION":
             return f"{market} EN REVALIDACIÓN"
 
         if promotion_level == "BLOCKED":
             return "SEÑAL BLOQUEADA"
 
-        if market in {"OVER", "UNDER"}:
-            return f"{market} EN OBSERVACIÓN"
+        if market == "OVER":
+            return "OVER EN OBSERVACIÓN"
+
+        if market == "UNDER":
+            return "UNDER EN OBSERVACIÓN"
 
         return "OBSERVACIÓN"
 
@@ -729,6 +1235,9 @@ class SignalPromotionAI:
 
         if promotion_level == "STRONG_CANDIDATE":
             return "MOSTRAR_COMO_CANDIDATO_FUERTE"
+
+        if promotion_level == "EARLY_OVER_CANDIDATE":
+            return "MOSTRAR_COMO_OVER_CANDIDATO_TEMPRANO"
 
         if promotion_level == "WAIT_REVALIDATION":
             return "ESPERAR_REVALIDACION"
@@ -769,6 +1278,12 @@ class SignalPromotionAI:
                 "aunque todavía requiere seguimiento antes de considerarse top."
             )
 
+        if promotion_level == "EARLY_OVER_CANDIDATE":
+            return (
+                "La lectura OVER sube a candidato temprano porque existe OVER WATCH activo, "
+                "volumen ofensivo medible y riesgo de ruptura antes de una confirmación tardía."
+            )
+
         if promotion_level == "WAIT_REVALIDATION":
             detail = warnings[0] if warnings else "La señal requiere confirmación adicional."
             return f"La lectura {market} necesita revalidación. {detail}"
@@ -784,27 +1299,43 @@ class SignalPromotionAI:
     def _rank_class(self, promotion_level: str) -> str:
         if promotion_level == "TOP_SIGNAL":
             return "top_signal"
+
         if promotion_level == "MAIN_SIGNAL":
             return "main_signal"
+
         if promotion_level == "STRONG_CANDIDATE":
             return "strong_candidate"
+
+        if promotion_level == "EARLY_OVER_CANDIDATE":
+            return "early_over_candidate"
+
         if promotion_level == "WAIT_REVALIDATION":
             return "revalidation"
+
         if promotion_level == "BLOCKED":
             return "blocked"
+
         return "observe"
 
     def _priority(self, promotion_level: str) -> int:
         if promotion_level == "TOP_SIGNAL":
             return 100
+
         if promotion_level == "MAIN_SIGNAL":
             return 85
+
         if promotion_level == "STRONG_CANDIDATE":
             return 70
+
+        if promotion_level == "EARLY_OVER_CANDIDATE":
+            return 62
+
         if promotion_level == "WAIT_REVALIDATION":
             return 45
+
         if promotion_level == "BLOCKED":
             return 0
+
         return 30
 
     def _unique(self, values: List[str]) -> List[str]:
@@ -813,10 +1344,12 @@ class SignalPromotionAI:
 
         for value in values:
             clean = str(value).strip()
+
             if not clean:
                 continue
 
             key = clean.upper()
+
             if key in seen:
                 continue
 
@@ -828,6 +1361,8 @@ class SignalPromotionAI:
     def _fallback(self, reason: str) -> Dict[str, Any]:
         return {
             "signal_promotion_version": self.VERSION,
+            "promotion_role": "EVIDENCE_ONLY",
+            "promotion_is_official_decision": False,
             "promotion_market": "NO_BET",
             "promotion_score": 0,
             "promotion_level": "OBSERVE_ONLY",
@@ -846,4 +1381,4 @@ class SignalPromotionAI:
             "panel_signal_type": "OBSERVACIÓN",
             "panel_promotion_label": "OBSERVACIÓN",
             "panel_promotion_reason": reason,
-}
+        }
