@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from app.v17.core.constants import CONMEBOL_KEYWORDS, LEAGUE_EXTRA_CONFIRMATION_MINUTE
 
 
 def safe_int(value: Any, default: int = 0) -> int:
@@ -26,329 +23,270 @@ def safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-class ResultResolver:
+class ContextReader:
     """
-    Resuelve el resultado de una señal.
+    Lectura contextual inicial.
 
-    Reglas:
-    - No cerrar señal si el reloj está atrasado.
-    - No cerrar señal si el marcador no es confiable.
-    - OVER gana si aparece un gol adicional después de la entrada.
-    - UNDER gana si pasa la ventana de seguimiento sin gol adicional.
-    - Si hay datos malos, queda pendiente por confirmación.
+    Define:
+    - necesidad del marcador
+    - posible OVER
+    - posible UNDER
+    - liga sensible
+    - contexto CONMEBOL
+    - tendencia de cierre
     """
 
-    def resolve(
-        self,
-        tracked_signal: Dict[str, Any],
-        current_match: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        if not isinstance(tracked_signal, dict) or not isinstance(current_match, dict):
-            return self._pending(
-                tracked_signal=tracked_signal,
-                reason="Datos insuficientes para resolver la señal.",
-                pending_reason="INVALID_RESOLUTION_INPUT",
-            )
+    def evaluate(self, match: Dict[str, Any]) -> Dict[str, Any]:
+        minute = safe_int(match.get("api_minute"), 0)
+        home_score = safe_int(match.get("home_score"), 0)
+        away_score = safe_int(match.get("away_score"), 0)
+        total_goals = home_score + away_score
 
-        market = str(tracked_signal.get("market") or tracked_signal.get("master_market") or "").upper()
+        league = str(match.get("league") or "").upper()
+        country = str(match.get("country") or "").upper()
+        league_text = f"{league} {country}"
 
-        entry_minute = safe_int(tracked_signal.get("entry_minute"), 0)
-        current_minute = safe_int(
-            current_match.get("api_minute")
-            or current_match.get("display_minute")
-            or current_match.get("minute"),
-            0,
+        is_conmebol = any(keyword in league_text for keyword in CONMEBOL_KEYWORDS)
+        conmebol_late = is_conmebol and minute >= LEAGUE_EXTRA_CONFIRMATION_MINUTE
+
+        score_diff = abs(home_score - away_score)
+        is_draw = home_score == away_score
+        one_goal_game = score_diff == 1
+        comfortable_score = score_diff >= 2
+
+        total_dangerous = safe_int(match.get("total_dangerous_attacks"), 0)
+        total_shots = safe_int(match.get("total_shots"), 0)
+        total_shots_on = safe_int(match.get("total_shots_on"), 0)
+        total_corners = safe_int(match.get("total_corners"), 0)
+        total_xg = safe_float(match.get("total_xg"), 0.0)
+
+        offensive_activity = (
+            total_dangerous * 0.35
+            + total_shots * 2.0
+            + total_shots_on * 3.0
+            + total_corners * 1.2
+            + total_xg * 10.0
         )
 
-        entry_home_score = safe_int(tracked_signal.get("entry_home_score"), 0)
-        entry_away_score = safe_int(tracked_signal.get("entry_away_score"), 0)
-        current_home_score = safe_int(current_match.get("home_score"), entry_home_score)
-        current_away_score = safe_int(current_match.get("away_score"), entry_away_score)
+        goal_need_score = 0
 
-        entry_total_goals = safe_int(
-            tracked_signal.get("entry_total_goals"),
-            entry_home_score + entry_away_score,
-        )
-        current_total_goals = current_home_score + current_away_score
+        if is_draw:
+            goal_need_score += 20
 
-        follow_minutes = max(0, current_minute - entry_minute)
+        if one_goal_game:
+            goal_need_score += 15
 
-        clock_status = str(current_match.get("clock_status") or "").upper()
-        clock_can_enter = bool(current_match.get("clock_can_enter", True))
-        data_age_seconds = safe_int(current_match.get("data_age_seconds"), 0)
+        if minute >= 60 and (is_draw or one_goal_game):
+            goal_need_score += 15
 
-        if clock_status in {"BLOCKED_CLOCK", "CLOCK_WARNING"} or not clock_can_enter:
-            return self._pending(
-                tracked_signal=tracked_signal,
-                reason="No se cierra la señal porque el reloj live no está confirmado.",
-                pending_reason="CLOCK_NOT_CONFIRMED",
-                current_match=current_match,
-            )
+        if minute >= 75 and (is_draw or one_goal_game):
+            goal_need_score += 10
 
-        if data_age_seconds > 90:
-            return self._pending(
-                tracked_signal=tracked_signal,
-                reason="No se cierra la señal porque el dato está atrasado.",
-                pending_reason="DATA_TOO_OLD",
-                current_match=current_match,
-            )
+        if comfortable_score:
+            goal_need_score -= 15
 
-        if current_minute <= 0 or current_minute < entry_minute:
-            return self._pending(
-                tracked_signal=tracked_signal,
-                reason="No se cierra la señal porque el minuto actual no es confiable.",
-                pending_reason="INVALID_CURRENT_MINUTE",
-                current_match=current_match,
-            )
+        if total_goals >= 3:
+            goal_need_score += 10
 
-        if current_total_goals < entry_total_goals:
-            return self._pending(
-                tracked_signal=tracked_signal,
-                reason="No se cierra la señal porque el marcador actual es inconsistente.",
-                pending_reason="INVALID_SCORE_REGRESSION",
-                current_match=current_match,
-            )
+        if total_goals == 0 and minute >= 60:
+            goal_need_score -= 5
 
-        if market == "OVER":
-            return self._resolve_over(
-                tracked_signal=tracked_signal,
-                current_match=current_match,
-                entry_total_goals=entry_total_goals,
-                current_total_goals=current_total_goals,
-                follow_minutes=follow_minutes,
-            )
+        goal_need_score = max(0, min(100, goal_need_score))
 
-        if market == "UNDER":
-            return self._resolve_under(
-                tracked_signal=tracked_signal,
-                current_match=current_match,
-                entry_total_goals=entry_total_goals,
-                current_total_goals=current_total_goals,
-                follow_minutes=follow_minutes,
-            )
+        pressure_score = max(0, min(100, offensive_activity))
+        rhythm_score = self._estimate_rhythm(minute, total_shots, total_dangerous, total_corners)
 
-        return self._void(
-            tracked_signal=tracked_signal,
-            reason="Mercado no resoluble para tracking.",
-            void_reason="UNSUPPORTED_MARKET",
-            current_match=current_match,
+        score_hold_probability = self._estimate_score_hold(
+            minute=minute,
+            score_diff=score_diff,
+            total_shots_on=total_shots_on,
+            total_xg=total_xg,
+            pressure_score=pressure_score,
         )
 
-    def _resolve_over(
-        self,
-        tracked_signal: Dict[str, Any],
-        current_match: Dict[str, Any],
-        entry_total_goals: int,
-        current_total_goals: int,
-        follow_minutes: int,
-    ) -> Dict[str, Any]:
-        max_follow_minutes = safe_int(tracked_signal.get("max_follow_minutes"), 20)
-
-        if current_total_goals > entry_total_goals:
-            return self._won(
-                tracked_signal=tracked_signal,
-                current_match=current_match,
-                reason="La señal OVER acertó porque hubo al menos un gol después de la entrada.",
-                win_reason="GOAL_AFTER_ENTRY",
-            )
-
-        if follow_minutes >= max_follow_minutes:
-            failure_reason = self._detect_failure_reason(tracked_signal, current_match)
-
-            return self._lost(
-                tracked_signal=tracked_signal,
-                current_match=current_match,
-                reason="La señal OVER falló porque no hubo gol dentro de la ventana de seguimiento.",
-                failure_reason=failure_reason,
-            )
-
-        return self._pending(
-            tracked_signal=tracked_signal,
-            current_match=current_match,
-            reason="La señal OVER sigue pendiente porque todavía está dentro de la ventana de seguimiento.",
-            pending_reason="OVER_WAITING_GOAL",
+        under_transition_score = self._estimate_under_transition(
+            minute=minute,
+            pressure_score=pressure_score,
+            rhythm_score=rhythm_score,
+            total_shots_on=total_shots_on,
+            score_hold_probability=score_hold_probability,
         )
 
-    def _resolve_under(
-        self,
-        tracked_signal: Dict[str, Any],
-        current_match: Dict[str, Any],
-        entry_total_goals: int,
-        current_total_goals: int,
-        follow_minutes: int,
-    ) -> Dict[str, Any]:
-        max_follow_minutes = safe_int(tracked_signal.get("max_follow_minutes"), 20)
-
-        if current_total_goals > entry_total_goals:
-            return self._lost(
-                tracked_signal=tracked_signal,
-                current_match=current_match,
-                reason="La señal UNDER falló porque hubo un gol después de la entrada.",
-                failure_reason="GOAL_AGAINST_UNDER",
-            )
-
-        if follow_minutes >= max_follow_minutes:
-            return self._won(
-                tracked_signal=tracked_signal,
-                current_match=current_match,
-                reason="La señal UNDER acertó porque el marcador se sostuvo durante la ventana de seguimiento.",
-                win_reason="SCORE_HELD",
-            )
-
-        return self._pending(
-            tracked_signal=tracked_signal,
-            current_match=current_match,
-            reason="La señal UNDER sigue pendiente porque todavía está dentro de la ventana de seguimiento.",
-            pending_reason="UNDER_WAITING_WINDOW",
+        over_context_score = (
+            pressure_score * 0.35
+            + rhythm_score * 0.25
+            + goal_need_score * 0.25
+            + min(100, total_shots_on * 15) * 0.15
         )
 
-    def _detect_failure_reason(
-        self,
-        tracked_signal: Dict[str, Any],
-        current_match: Dict[str, Any],
-    ) -> str:
-        failed_filters = tracked_signal.get("failed_secondary_filters") or []
-        soft_warnings = tracked_signal.get("soft_warnings") or []
-        risk_reasons = tracked_signal.get("risk_reasons") or []
-
-        total_shots_on = safe_int(current_match.get("total_shots_on"), 0)
-        false_pressure_risk = safe_float(tracked_signal.get("false_pressure_risk"), 0.0)
-        score_hold_probability = safe_float(tracked_signal.get("score_hold_probability"), 0.0)
-        under_transition_score = safe_float(tracked_signal.get("under_transition_score"), 0.0)
-
-        text_pool = " ".join(map(str, failed_filters + soft_warnings + risk_reasons)).upper()
-
-        if "CLOCK" in text_pool:
-            return "MINUTO_ATRASADO"
-
-        if false_pressure_risk >= 70 or "FALSE_PRESSURE" in text_pool:
-            return "PRESION_FALSA"
-
-        if total_shots_on <= 1:
-            return "OVER_SIN_TIRO_AL_ARCO"
-
-        if score_hold_probability >= 75:
-            return "RETENCION_NO_SUPERADA"
-
-        if under_transition_score >= 75:
-            return "TRANSICION_UNDER_NO_DETECTADA"
-
-        if "CONMEBOL" in text_pool:
-            return "CONMEBOL_SIN_CONFIRMACION"
-
-        if "SCORE_HOLD" in text_pool:
-            return "RESULTADO_PROBABLE_CONTRARIO"
-
-        if "SIGNAL_AGED" in text_pool or "NO_REENTRY" in text_pool:
-            return "SENAL_ENVEJECIDA"
-
-        return "SIN_GOL_EN_VENTANA"
-
-    def _won(
-        self,
-        tracked_signal: Dict[str, Any],
-        current_match: Dict[str, Any],
-        reason: str,
-        win_reason: str,
-    ) -> Dict[str, Any]:
-        return self._base_result(
-            tracked_signal=tracked_signal,
-            current_match=current_match,
-            result_status="WON",
-            result_label="ACERTADA",
-            resolved=True,
-            reason=reason,
-            result_reason=win_reason,
+        under_context_score = (
+            score_hold_probability * 0.45
+            + under_transition_score * 0.35
+            + max(0, 100 - pressure_score) * 0.20
         )
 
-    def _lost(
-        self,
-        tracked_signal: Dict[str, Any],
-        current_match: Dict[str, Any],
-        reason: str,
-        failure_reason: str,
-    ) -> Dict[str, Any]:
-        return self._base_result(
-            tracked_signal=tracked_signal,
-            current_match=current_match,
-            result_status="LOST",
-            result_label="FALLIDA",
-            resolved=True,
-            reason=reason,
-            result_reason=failure_reason,
-        )
+        context_warnings: List[str] = []
 
-    def _pending(
-        self,
-        tracked_signal: Dict[str, Any],
-        reason: str,
-        pending_reason: str,
-        current_match: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
-        return self._base_result(
-            tracked_signal=tracked_signal,
-            current_match=current_match or {},
-            result_status="PENDING",
-            result_label="PENDIENTE",
-            resolved=False,
-            reason=reason,
-            result_reason=pending_reason,
-        )
+        if conmebol_late:
+            context_warnings.append("CONMEBOL_EXTRA_CONFIRMATION")
 
-    def _void(
-        self,
-        tracked_signal: Dict[str, Any],
-        reason: str,
-        void_reason: str,
-        current_match: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
-        return self._base_result(
-            tracked_signal=tracked_signal,
-            current_match=current_match or {},
-            result_status="VOID",
-            result_label="ANULADA",
-            resolved=True,
-            reason=reason,
-            result_reason=void_reason,
-        )
+        if comfortable_score and minute >= 60:
+            context_warnings.append("SCORE_HOLD_RISK")
 
-    def _base_result(
-        self,
-        tracked_signal: Dict[str, Any],
-        current_match: Dict[str, Any],
-        result_status: str,
-        result_label: str,
-        resolved: bool,
-        reason: str,
-        result_reason: str,
-    ) -> Dict[str, Any]:
-        current_home_score = safe_int(
-            current_match.get("home_score"),
-            safe_int(tracked_signal.get("entry_home_score"), 0),
-        )
-        current_away_score = safe_int(
-            current_match.get("away_score"),
-            safe_int(tracked_signal.get("entry_away_score"), 0),
-        )
+        if total_shots_on <= 1 and minute >= 55:
+            context_warnings.append("LOW_SHOTS_ON_TARGET")
 
-        current_minute = safe_int(
-            current_match.get("api_minute")
-            or current_match.get("display_minute")
-            or current_match.get("minute"),
-            safe_int(tracked_signal.get("entry_minute"), 0),
+        if pressure_score < 35 and minute >= 60:
+            context_warnings.append("LOW_REAL_PRESSURE")
+
+        if under_transition_score >= 70:
+            context_warnings.append("UNDER_TRANSITION_ACTIVE")
+
+        if over_context_score >= 70:
+            main_category = "OVER_CANDIDATE"
+        elif under_context_score >= 65:
+            main_category = "UNDER_CANDIDATE"
+        elif pressure_score >= 45 or rhythm_score >= 45:
+            main_category = "OBSERVE"
+        else:
+            main_category = "NO_BET"
+
+        probable_score = self._estimate_probable_score(
+            home_score=home_score,
+            away_score=away_score,
+            over_context_score=over_context_score,
+            under_context_score=under_context_score,
+            minute=minute,
         )
 
         return {
-            **tracked_signal,
-            "result_status": result_status,
-            "result_label": result_label,
-            "resolved": resolved,
-            "resolved_at": utc_now_iso() if resolved else None,
-            "result_reason": result_reason,
-            "result_explanation": reason,
-            "current_minute": current_minute,
-            "current_home_score": current_home_score,
-            "current_away_score": current_away_score,
-            "current_score": f"{current_home_score}-{current_away_score}",
-            "current_total_goals": current_home_score + current_away_score,
-          }
+            "context_category": main_category,
+            "is_conmebol": is_conmebol,
+            "conmebol_late": conmebol_late,
+            "goal_need_score": round(goal_need_score, 2),
+            "pressure_score": round(pressure_score, 2),
+            "rhythm_score": round(rhythm_score, 2),
+            "over_context_score": round(over_context_score, 2),
+            "under_context_score": round(under_context_score, 2),
+            "score_hold_probability": round(score_hold_probability, 2),
+            "under_transition_score": round(under_transition_score, 2),
+            "context_warnings": context_warnings,
+            "probable_score": probable_score,
+        }
+
+    def _estimate_rhythm(
+        self,
+        minute: int,
+        total_shots: int,
+        total_dangerous: int,
+        total_corners: int,
+    ) -> float:
+        if minute <= 0:
+            return 0.0
+
+        shots_rate = total_shots / max(1, minute) * 90
+        dangerous_rate = total_dangerous / max(1, minute) * 90
+        corners_rate = total_corners / max(1, minute) * 90
+
+        rhythm = shots_rate * 3.0 + dangerous_rate * 0.6 + corners_rate * 2.0
+        return max(0, min(100, rhythm))
+
+    def _estimate_score_hold(
+        self,
+        minute: int,
+        score_diff: int,
+        total_shots_on: int,
+        total_xg: float,
+        pressure_score: float,
+    ) -> float:
+        score = 20.0
+
+        if minute >= 60:
+            score += 15
+
+        if minute >= 75:
+            score += 15
+
+        if score_diff >= 1:
+            score += 15
+
+        if score_diff >= 2:
+            score += 15
+
+        if total_shots_on <= 2:
+            score += 10
+
+        if total_xg < 1.0:
+            score += 10
+
+        if pressure_score < 40:
+            score += 15
+
+        return max(0, min(100, score))
+
+    def _estimate_under_transition(
+        self,
+        minute: int,
+        pressure_score: float,
+        rhythm_score: float,
+        total_shots_on: int,
+        score_hold_probability: float,
+    ) -> float:
+        score = 0.0
+
+        if minute >= 55:
+            score += 15
+
+        if minute >= 70:
+            score += 15
+
+        if pressure_score < 45:
+            score += 20
+
+        if rhythm_score < 45:
+            score += 20
+
+        if total_shots_on <= 2:
+            score += 15
+
+        if score_hold_probability >= 65:
+            score += 20
+
+        return max(0, min(100, score))
+
+    def _estimate_probable_score(
+        self,
+        home_score: int,
+        away_score: int,
+        over_context_score: float,
+        under_context_score: float,
+        minute: int,
+    ) -> Dict[str, Any]:
+        current = f"{home_score}-{away_score}"
+
+        if over_context_score >= 75 and minute < 85:
+            if home_score >= away_score:
+                offensive = f"{home_score + 1}-{away_score}"
+            else:
+                offensive = f"{home_score}-{away_score + 1}"
+        elif over_context_score >= 65 and minute < 80:
+            offensive = "1 gol más posible"
+        else:
+            offensive = current
+
+        if under_context_score >= 70:
+            probable = current
+            reading = "riesgo de conservación del marcador"
+        elif over_context_score >= 70:
+            probable = offensive
+            reading = "posible gol adicional si se confirma presión"
+        else:
+            probable = current
+            reading = "sin ventaja clara para forzar entrada"
+
+        return {
+            "current_score": current,
+            "probable_score": probable,
+            "offensive_alternative": offensive,
+            "reading": reading,
+      }
