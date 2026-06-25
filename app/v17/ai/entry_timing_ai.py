@@ -49,6 +49,12 @@ class EntryTimingAI:
     - ¿Conviene esperar mejor minuto?
     - ¿Ya pasó la ventana?
     - ¿Debe evitarse por volatilidad, reloj o riesgo?
+
+    Ajuste V17.1:
+    - No cierra automáticamente por minuto 45/90 si el partido sigue LIVE.
+    - No convierte advertencias suaves de reloj en bloqueo operativo.
+    - Permite que STRONG_CANDIDATE / MAIN_SIGNAL sobrevivan como entrada posible
+      o revalidación, especialmente en tramos tardíos con amenaza real.
     """
 
     def evaluate(
@@ -87,6 +93,13 @@ class EntryTimingAI:
         league_phase = normalize_text(signal.get("league_minute_phase"))
         warning_level = normalize_text(match_reader.get("football_warning_level"))
         game_state = normalize_text(match_reader.get("football_game_state"))
+        match_status = normalize_text(
+            signal.get("real_time_status")
+            or signal.get("status")
+            or signal.get("match_status")
+            or match_reader.get("match_status")
+            or match_reader.get("football_match_status")
+        )
 
         critical_block = bool(signal.get("critical_block"))
         hard_blockers = signal.get("hard_blockers", []) or []
@@ -106,6 +119,33 @@ class EntryTimingAI:
         under_transition_score = safe_float(signal.get("under_transition_score"), 0.0)
         false_pressure_risk = safe_float(signal.get("false_pressure_risk"), 0.0)
         risk_score = safe_float(signal.get("risk_score"), 0.0)
+
+        real_goal_threat = safe_float(
+            signal.get("real_goal_threat")
+            or match_reader.get("real_goal_threat")
+            or match_reader.get("football_real_goal_threat"),
+            0.0,
+        )
+        prediction_live_over_probability = safe_float(signal.get("prediction_live_over_probability"), 0.0)
+        prediction_live_under_probability = safe_float(signal.get("prediction_live_under_probability"), 0.0)
+        break_risk = normalize_text(signal.get("break_risk") or match_reader.get("break_risk"))
+        pressure_quality = normalize_text(
+            signal.get("pressure_quality")
+            or signal.get("pressure_quality_state")
+            or match_reader.get("pressure_quality")
+            or match_reader.get("football_pressure_quality")
+        )
+
+        is_live_status = self._is_live_status(match_status)
+        is_added_time_live = self._is_added_time_live(minute, match_status)
+        is_strong_signal = self._is_strong_signal(
+            panel_decision=panel_decision,
+            panel_signal_type=panel_signal_type,
+            candidate_level=candidate_level,
+            football_confidence=football_confidence,
+            majority_support=majority_support,
+            support_ratio=support_ratio,
+        )
 
         if self._technical_block(
             critical_block=critical_block,
@@ -131,13 +171,18 @@ class EntryTimingAI:
             )
 
         if clock_status != "CLOCK_OK":
-            return self._wait(
-                reason="El reloj no está completamente confirmado. Esperar nueva actualización.",
-                label="ESPERAR RELOJ",
-                timing_type="CLOCK_CONFIRMATION",
-                target_zone="NEXT_SCAN",
-                priority=30,
-            )
+            if self._is_soft_clock_status(clock_status) and is_strong_signal and is_live_status:
+                # No autoriza por sí solo, pero tampoco mata una señal élite por una advertencia suave.
+                # La decisión final sigue dependiendo de MasterDecision / Promotion / Ranker.
+                pass
+            else:
+                return self._wait(
+                    reason="El reloj no está completamente confirmado. Esperar nueva actualización.",
+                    label="ESPERAR RELOJ",
+                    timing_type="CLOCK_CONFIRMATION",
+                    target_zone="NEXT_SCAN",
+                    priority=30,
+                )
 
         if warning_level in {"EXTREME", "TECHNICAL_BLOCK"}:
             return self._avoid(
@@ -165,6 +210,12 @@ class EntryTimingAI:
                 game_state=game_state,
                 false_pressure_risk=false_pressure_risk,
                 risk_score=risk_score,
+                real_goal_threat=real_goal_threat,
+                prediction_live_over_probability=prediction_live_over_probability,
+                break_risk=break_risk,
+                pressure_quality=pressure_quality,
+                is_added_time_live=is_added_time_live,
+                is_strong_signal=is_strong_signal,
             )
 
         if panel_market == "UNDER":
@@ -184,6 +235,12 @@ class EntryTimingAI:
                 game_state=game_state,
                 false_pressure_risk=false_pressure_risk,
                 risk_score=risk_score,
+                real_goal_threat=real_goal_threat,
+                prediction_live_under_probability=prediction_live_under_probability,
+                break_risk=break_risk,
+                pressure_quality=pressure_quality,
+                is_added_time_live=is_added_time_live,
+                is_strong_signal=is_strong_signal,
             )
 
         return self._wait(
@@ -212,8 +269,14 @@ class EntryTimingAI:
         game_state: str,
         false_pressure_risk: float,
         risk_score: float,
+        real_goal_threat: float = 0.0,
+        prediction_live_over_probability: float = 0.0,
+        break_risk: str = "",
+        pressure_quality: str = "",
+        is_added_time_live: bool = False,
+        is_strong_signal: bool = False,
     ) -> Dict[str, Any]:
-        if false_pressure_risk >= 75:
+        if false_pressure_risk >= 75 and not is_strong_signal:
             return self._avoid(
                 reason="OVER tiene riesgo de presión falsa. Evitar entrada directa.",
                 label="NO ENTRAR OVER",
@@ -222,6 +285,15 @@ class EntryTimingAI:
             )
 
         if not real_volume:
+            if is_strong_signal and real_goal_threat >= 62:
+                return self._wait(
+                    reason="OVER tiene lectura fuerte, pero necesita confirmar volumen real en el próximo escaneo.",
+                    label="OVER FUERTE, REVALIDAR VOLUMEN",
+                    timing_type="OVER_STRONG_REVALIDATE_VOLUME",
+                    target_zone="NEXT_SCAN",
+                    priority=58,
+                )
+
             return self._wait(
                 reason="OVER necesita volumen ofensivo real antes de considerar entrada.",
                 label="ESPERAR VOLUMEN OVER",
@@ -295,24 +367,42 @@ class EntryTimingAI:
             )
 
         if minute > 75:
-            if (
-                game_state == "LIVE_GOAL_THREAT"
-                and real_volume
-                and football_confidence >= 78
-                and over_support_ratio >= 0.70
-            ):
+            strong_late_threat = (
+                real_volume
+                and (
+                    game_state in {"LIVE_GOAL_THREAT", "OPEN_ATTACKING_GAME"}
+                    or pressure_quality in {"REAL_PRESSURE", "HIGH_THREAT_PRESSURE"}
+                    or real_goal_threat >= 68
+                    or prediction_live_over_probability >= 70
+                    or break_risk in {"MEDIUM", "HIGH"}
+                )
+                and football_confidence >= 72
+                and (over_support_ratio >= 0.62 or support_ratio >= 0.62 or is_strong_signal)
+            )
+
+            if strong_late_threat:
                 return self._now(
-                    reason="OVER tardío permitido solo por asedio claro y lectura muy fuerte.",
-                    label="OVER TARDÍO CON ASEDIO",
-                    timing_type="OVER_LATE_ATTACK",
-                    priority=74,
+                    reason="OVER tardío permitido por amenaza real, partido vivo y lectura fuerte.",
+                    label="OVER TARDÍO VÁLIDO",
+                    timing_type="OVER_LATE_VALID_THREAT",
+                    priority=76 if not is_added_time_live else 72,
                 )
 
-            return self._avoid(
-                reason="OVER después del 75 es riesgoso si no hay asedio extremo. Mejor evitar o solo observar.",
-                label="EVITAR OVER TARDÍO",
-                timing_type="OVER_TOO_LATE",
-                priority=20,
+            if is_strong_signal:
+                return self._wait(
+                    reason="OVER es candidato fuerte, pero en tramo tardío requiere una confirmación adicional de amenaza real.",
+                    label="OVER TARDÍO, REVALIDAR",
+                    timing_type="OVER_LATE_REVALIDATE",
+                    target_zone="NEXT_SCAN",
+                    priority=57,
+                )
+
+            return self._wait(
+                reason="OVER después del 75 requiere confirmación fuerte. Mantener en observación, no descartar automáticamente.",
+                label="OVER TARDÍO EN OBSERVACIÓN",
+                timing_type="OVER_LATE_WATCH",
+                target_zone="NEXT_SCAN",
+                priority=42,
             )
 
         return self._wait(
@@ -340,6 +430,12 @@ class EntryTimingAI:
         game_state: str,
         false_pressure_risk: float,
         risk_score: float,
+        real_goal_threat: float = 0.0,
+        prediction_live_under_probability: float = 0.0,
+        break_risk: str = "",
+        pressure_quality: str = "",
+        is_added_time_live: bool = False,
+        is_strong_signal: bool = False,
     ) -> Dict[str, Any]:
         if real_volume and game_state in {"LIVE_GOAL_THREAT", "OPEN_ATTACKING_GAME"}:
             return self._wait(
@@ -425,11 +521,39 @@ class EntryTimingAI:
             )
 
         if minute > 85:
-            return self._avoid(
-                reason="Minuto muy avanzado. La cuota puede no compensar el riesgo de evento aislado.",
-                label="EVITAR ENTRADA TARDÍA",
-                timing_type="UNDER_TOO_LATE",
-                priority=25,
+            late_under_control = (
+                not real_volume
+                and football_confidence >= 67
+                and score_hold_probability >= 74
+                and under_transition_score >= 70
+                and real_goal_threat <= 42
+                and break_risk not in {"MEDIUM", "HIGH"}
+                and prediction_live_under_probability >= 58
+            )
+
+            if late_under_control:
+                return self._now(
+                    reason="UNDER muy tardío permitido porque el partido muestra control, bajo peligro real y conservación del marcador.",
+                    label="UNDER MUY TARDÍO CONTROLADO",
+                    timing_type="UNDER_VERY_LATE_CONTROL",
+                    priority=70 if not is_added_time_live else 66,
+                )
+
+            if is_strong_signal:
+                return self._wait(
+                    reason="UNDER es candidato fuerte, pero en minuto muy avanzado necesita confirmar ausencia de ruptura o evento aislado.",
+                    label="UNDER MUY TARDÍO, REVALIDAR",
+                    timing_type="UNDER_VERY_LATE_REVALIDATE",
+                    target_zone="NEXT_SCAN",
+                    priority=54,
+                )
+
+            return self._wait(
+                reason="Minuto muy avanzado. Mantener UNDER en observación salvo control claro del marcador.",
+                label="UNDER MUY TARDÍO EN OBSERVACIÓN",
+                timing_type="UNDER_VERY_LATE_WATCH",
+                target_zone="NEXT_SCAN",
+                priority=38,
             )
 
         return self._wait(
@@ -465,6 +589,57 @@ class EntryTimingAI:
 
         return False
 
+    def _is_live_status(self, status: str) -> bool:
+        if not status:
+            return False
+        if status in {"LIVE", "IN_PLAY", "1H", "2H", "FIRST_HALF", "SECOND_HALF", "ET", "EXTRA_TIME"}:
+            return True
+        if "+" in status and not any(end in status for end in {"FT", "FINISHED", "ENDED"}):
+            return True
+        return False
+
+    def _is_added_time_live(self, minute: int, status: str) -> bool:
+        if not self._is_live_status(status):
+            return False
+        # El minuto no cierra el partido. Si el estado sigue LIVE, 45/90/120 son tramos jugables.
+        return minute >= 45
+
+    def _is_soft_clock_status(self, clock_status: str) -> bool:
+        return clock_status in {
+            "CLOCK_WARNING",
+            "CLOCK_SOFT_WARNING",
+            "DATA_AGING",
+            "DATA_TIMESTAMP_MISSING_BUT_STATS_CONFIRMED",
+            "CLOCK_STALE_SOFT",
+            "MINUTE_LAG_SOFT",
+        }
+
+    def _is_strong_signal(
+        self,
+        panel_decision: str,
+        panel_signal_type: str,
+        candidate_level: str,
+        football_confidence: int,
+        majority_support: bool,
+        support_ratio: float,
+    ) -> bool:
+        strong_labels = {
+            "MAIN_SIGNAL",
+            "TOP_SIGNAL",
+            "STRONG_CANDIDATE",
+            "ELITE_CANDIDATE",
+            "DIRECT_SIGNAL",
+            "SEÑAL_DIRECTA",
+            "SENAL_DIRECTA",
+        }
+        if panel_decision in {"ENTER", "OPERABLE", "MAIN_SIGNAL", "TOP_SIGNAL"}:
+            return True
+        if panel_signal_type in strong_labels or candidate_level in strong_labels:
+            return True
+        if football_confidence >= 75 and (majority_support or support_ratio >= 0.62):
+            return True
+        return False
+
     def _now(
         self,
         reason: str,
@@ -473,7 +648,7 @@ class EntryTimingAI:
         priority: int,
     ) -> Dict[str, Any]:
         return {
-            "entry_timing_version": "V17_ENTRY_TIMING_1",
+            "entry_timing_version": "V17_ENTRY_TIMING_1_1",
             "entry_window": "NOW",
             "entry_timing_label": label,
             "entry_timing_type": timing_type,
@@ -494,7 +669,7 @@ class EntryTimingAI:
         priority: int,
     ) -> Dict[str, Any]:
         return {
-            "entry_timing_version": "V17_ENTRY_TIMING_1",
+            "entry_timing_version": "V17_ENTRY_TIMING_1_1",
             "entry_window": "WAIT",
             "entry_timing_label": label,
             "entry_timing_type": timing_type,
@@ -514,7 +689,7 @@ class EntryTimingAI:
         priority: int,
     ) -> Dict[str, Any]:
         return {
-            "entry_timing_version": "V17_ENTRY_TIMING_1",
+            "entry_timing_version": "V17_ENTRY_TIMING_1_1",
             "entry_window": "AVOID",
             "entry_timing_label": label,
             "entry_timing_type": timing_type,
@@ -528,7 +703,7 @@ class EntryTimingAI:
 
     def _no_data(self) -> Dict[str, Any]:
         return {
-            "entry_timing_version": "V17_ENTRY_TIMING_1",
+            "entry_timing_version": "V17_ENTRY_TIMING_1_1",
             "entry_window": "AVOID",
             "entry_timing_label": "SIN DATOS",
             "entry_timing_type": "NO_DATA",
@@ -538,4 +713,4 @@ class EntryTimingAI:
             "entry_reason": "No hay señal válida para evaluar momento de entrada.",
             "entry_wait_next_scan": False,
             "entry_avoid": True,
-      }
+        }
