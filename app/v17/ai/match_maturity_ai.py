@@ -21,6 +21,16 @@ def safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def safe_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if str(value).lower() in {"true", "1", "yes", "y", "active"}:
+        return True
+    return False
+
+
 def clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(high, value))
 
@@ -38,7 +48,7 @@ class MatchMaturityAI:
     - Solo agrega una capa de madurez y revalidación.
     """
 
-    VERSION = "V17_MATCH_MATURITY_AI_1"
+    VERSION = "V17_MATCH_MATURITY_AI_2"
 
     def evaluate(
         self,
@@ -72,7 +82,7 @@ class MatchMaturityAI:
         ).upper()
 
         over_candidate_level = str(signal.get("over_candidate_level") or "").upper()
-        over_candidate_active = bool(signal.get("over_candidate_active"))
+        over_candidate_active = safe_bool(signal.get("over_candidate_active"))
         over_support_score = safe_float(signal.get("over_support_score"), 0.0)
         over_score = safe_float(
             signal.get("over_score")
@@ -126,6 +136,50 @@ class MatchMaturityAI:
         dangerous_attacks = safe_int(signal.get("dangerous_attacks"), 0)
         xg = safe_float(signal.get("xg") or signal.get("xG"), 0.0)
 
+        # ==========================================================
+        # MATCH INTELLIGENCE CONTEXT
+        # ==========================================================
+        # Estos campos vienen de MatchPredictionAI. No reemplazan la
+        # madurez tradicional; la vuelven más inteligente.
+        # La finalidad es evitar castigar UNDER solo por minuto y
+        # castigar únicamente cuando el escenario futuro realmente
+        # contradice la lectura.
+        prediction_no_goal_probability = safe_float(
+            signal.get("prediction_no_goal_probability")
+            or signal.get("no_goal_probability")
+            or 0,
+            0.0,
+        )
+        prediction_one_goal_probability = safe_float(
+            signal.get("prediction_one_goal_probability")
+            or signal.get("one_goal_probability")
+            or 0,
+            0.0,
+        )
+        prediction_two_plus_goal_probability = safe_float(
+            signal.get("prediction_two_plus_goal_probability")
+            or signal.get("two_plus_goal_probability")
+            or 0,
+            0.0,
+        )
+        prediction_next_goal_probability = str(
+            signal.get("prediction_next_goal_probability")
+            or ""
+        ).upper()
+        prediction_conflict_level = str(
+            signal.get("prediction_conflict_level")
+            or ""
+        ).upper()
+        prediction_market_alignment = str(
+            signal.get("prediction_market_alignment")
+            or ""
+        ).upper()
+        final_market_recommendation = str(
+            signal.get("final_market_recommendation")
+            or signal.get("prediction_market")
+            or ""
+        ).upper()
+
         maturity_score = 0.0
         warnings: List[str] = []
         support: List[str] = []
@@ -162,6 +216,23 @@ class MatchMaturityAI:
         elif live_volume_score <= 18:
             support.append("Volumen ofensivo live bajo.")
 
+        if prediction_no_goal_probability >= 60:
+            support.append(
+                "MatchPredictionAI proyecta alta probabilidad de conservación del marcador."
+            )
+        if prediction_two_plus_goal_probability >= 45:
+            warnings.append(
+                "MatchPredictionAI proyecta riesgo relevante de dos o más goles."
+            )
+        if prediction_next_goal_probability in {"HIGH", "VERY_HIGH"}:
+            warnings.append(
+                "MatchPredictionAI detecta probabilidad alta de próximo gol."
+            )
+        if prediction_conflict_level in {"HIGH", "CRITICAL"}:
+            warnings.append(
+                "Conflicto predictivo alto entre mercado y escenario futuro."
+            )
+
         if market == "OVER" or football_dominant == "OVER":
             maturity_score += self._over_maturity_adjustment(
                 minute=minute,
@@ -196,6 +267,13 @@ class MatchMaturityAI:
                 over_support_score=over_support_score,
                 over_score=over_score,
                 under_score=under_score,
+                prediction_no_goal_probability=prediction_no_goal_probability,
+                prediction_one_goal_probability=prediction_one_goal_probability,
+                prediction_two_plus_goal_probability=prediction_two_plus_goal_probability,
+                prediction_next_goal_probability=prediction_next_goal_probability,
+                prediction_conflict_level=prediction_conflict_level,
+                prediction_market_alignment=prediction_market_alignment,
+                final_market_recommendation=final_market_recommendation,
                 warnings=warnings,
                 support=support,
             )
@@ -216,6 +294,13 @@ class MatchMaturityAI:
             over_candidate_level=over_candidate_level,
             league_goal_profile=league_goal_profile,
             first_half_goal_risk=first_half_goal_risk,
+            live_volume_score=live_volume_score,
+            prediction_no_goal_probability=prediction_no_goal_probability,
+            prediction_two_plus_goal_probability=prediction_two_plus_goal_probability,
+            prediction_next_goal_probability=prediction_next_goal_probability,
+            prediction_conflict_level=prediction_conflict_level,
+            prediction_market_alignment=prediction_market_alignment,
+            final_market_recommendation=final_market_recommendation,
         )
 
         corrected_rank = self._corrected_rank(
@@ -247,6 +332,8 @@ class MatchMaturityAI:
 
         return {
             "match_maturity_version": self.VERSION,
+            "maturity_role": "EVIDENCE_ONLY",
+            "maturity_is_official_decision": False,
             "match_maturity_phase": phase,
             "match_maturity_score": round(maturity_score, 2),
             "match_maturity_level": maturity_level,
@@ -272,6 +359,13 @@ class MatchMaturityAI:
                 over_candidate_level=over_candidate_level,
                 league_goal_profile=league_goal_profile,
                 first_half_goal_risk=first_half_goal_risk,
+                live_volume_score=live_volume_score,
+                prediction_no_goal_probability=prediction_no_goal_probability,
+                prediction_two_plus_goal_probability=prediction_two_plus_goal_probability,
+                prediction_next_goal_probability=prediction_next_goal_probability,
+                prediction_conflict_level=prediction_conflict_level,
+                prediction_market_alignment=prediction_market_alignment,
+                final_market_recommendation=final_market_recommendation,
             ),
         }
 
@@ -287,8 +381,10 @@ class MatchMaturityAI:
     def _phase(self, minute: int) -> str:
         if minute <= 15:
             return "FIRST_HALF_RECOGNITION"
-        if minute <= 25:
-            return "FIRST_HALF_INITIAL_TREND"
+        if minute <= 20:
+            return "FIRST_HALF_ESTABLISHING"
+        if minute <= 30:
+            return "FIRST_HALF_STABLE_PANORAMA"
         if minute <= 35:
             return "FIRST_HALF_PANORAMA"
         if minute <= 45:
@@ -304,9 +400,10 @@ class MatchMaturityAI:
     def _phase_base_score(self, phase: str) -> float:
         values = {
             "FIRST_HALF_RECOGNITION": 18,
-            "FIRST_HALF_INITIAL_TREND": 35,
-            "FIRST_HALF_PANORAMA": 55,
-            "FIRST_HALF_DECISION_ZONE": 70,
+            "FIRST_HALF_ESTABLISHING": 30,
+            "FIRST_HALF_STABLE_PANORAMA": 45,
+            "FIRST_HALF_PANORAMA": 60,
+            "FIRST_HALF_DECISION_ZONE": 75,
             "SECOND_HALF_RESTART": 45,
             "SECOND_HALF_OVER_WINDOW": 72,
             "SECOND_HALF_CLOSING_WINDOW": 76,
@@ -403,10 +500,45 @@ class MatchMaturityAI:
         over_support_score: float,
         over_score: float,
         under_score: float,
+        prediction_no_goal_probability: float,
+        prediction_one_goal_probability: float,
+        prediction_two_plus_goal_probability: float,
+        prediction_next_goal_probability: str,
+        prediction_conflict_level: str,
+        prediction_market_alignment: str,
+        final_market_recommendation: str,
         warnings: List[str],
         support: List[str],
     ) -> float:
         adj = 0.0
+
+        predictive_under_support = (
+            prediction_no_goal_probability >= 58
+            and prediction_two_plus_goal_probability <= 25
+            and prediction_next_goal_probability not in {"HIGH", "VERY_HIGH"}
+            and prediction_conflict_level not in {"HIGH", "CRITICAL"}
+            and final_market_recommendation not in {"OVER", "OBSERVE_OVER_RISK"}
+        )
+
+        predictive_over_risk = (
+            prediction_two_plus_goal_probability >= 38
+            or prediction_next_goal_probability in {"HIGH", "VERY_HIGH"}
+            or prediction_conflict_level in {"HIGH", "CRITICAL"}
+            or prediction_market_alignment in {"CONFLICT", "STRONG_CONFLICT"}
+            or final_market_recommendation in {"OVER", "OBSERVE_OVER_RISK"}
+        )
+
+        if predictive_under_support:
+            adj += 14
+            support.append(
+                "MatchPredictionAI respalda UNDER: alta probabilidad de no gol y bajo riesgo de 2+ goles."
+            )
+
+        if predictive_over_risk:
+            adj -= 22
+            warnings.append(
+                "MatchPredictionAI contradice UNDER: existe riesgo futuro de gol o conflicto de mercado."
+            )
 
         if live_volume_score <= 20:
             adj += 12
@@ -416,8 +548,14 @@ class MatchMaturityAI:
             warnings.append("UNDER contradicho por volumen ofensivo live.")
 
         if phase in {"FIRST_HALF_RECOGNITION", "FIRST_HALF_INITIAL_TREND"}:
-            adj -= 20
-            warnings.append("UNDER en primer tramo no debe subir fuerte todavía.")
+            if predictive_under_support and live_volume_score <= 22 and total_goals == 0:
+                adj -= 4
+                support.append(
+                    "UNDER temprano permitido como lectura de valor porque el escenario futuro apoya conservación."
+                )
+            else:
+                adj -= 20
+                warnings.append("UNDER en primer tramo no debe subir fuerte todavía.")
 
         if phase == "FIRST_HALF_PANORAMA":
             adj -= 6
@@ -432,24 +570,48 @@ class MatchMaturityAI:
                 warnings.append("Zona final del primer tiempo con volumen activo. Cuidado con gol antes del descanso.")
 
         if total_goals >= 1 and minute <= 35:
-            adj -= 22
-            warnings.append("Gol temprano antes del minuto 35. UNDER requiere revalidación.")
+            if predictive_under_support and live_volume_score <= 22:
+                adj -= 8
+                warnings.append(
+                    "Gol temprano antes del minuto 35, pero la predicción futura reduce el castigo del UNDER."
+                )
+            else:
+                adj -= 22
+                warnings.append("Gol temprano antes del minuto 35. UNDER requiere revalidación.")
 
         if total_goals >= 1 and phase in {"FIRST_HALF_PANORAMA", "FIRST_HALF_DECISION_ZONE"}:
             adj -= 10
             warnings.append("Marcador ya abierto en primer tiempo. No elevar UNDER sin caída real del ritmo.")
 
         if league_goal_profile in {"VERY_OPEN_LEAGUE", "OPEN_LEAGUE"} and minute <= 45:
-            adj -= 18
-            warnings.append("Liga abierta en primer tiempo. UNDER temprano no debe ser candidato fuerte sin confirmación extrema.")
+            if predictive_under_support and live_volume_score <= 25:
+                adj -= 6
+                warnings.append(
+                    "Liga abierta en primer tiempo, pero el escenario futuro sostiene conservación con bajo volumen."
+                )
+            else:
+                adj -= 18
+                warnings.append("Liga abierta en primer tiempo. UNDER temprano no debe ser candidato fuerte sin confirmación extrema.")
 
         if first_half_goal_risk == "HIGH_FIRST_HALF_GOAL_RISK" and minute <= 45:
-            adj -= 18
-            warnings.append("Memoria previa advierte alto riesgo de gol en primer tiempo.")
+            if predictive_under_support and live_volume_score <= 25:
+                adj -= 6
+                warnings.append(
+                    "Memoria previa advierte gol, pero la lectura live/predictiva actual reduce ese riesgo."
+                )
+            else:
+                adj -= 18
+                warnings.append("Memoria previa advierte alto riesgo de gol en primer tiempo.")
 
         if under_early_risk == "HIGH_UNDER_EARLY_RISK" and minute <= 45:
-            adj -= 22
-            warnings.append("Memoria previa marca UNDER temprano peligroso.")
+            if predictive_under_support and live_volume_score <= 22 and total_goals == 0:
+                adj -= 8
+                warnings.append(
+                    "Memoria previa marca UNDER temprano peligroso, pero el escenario actual lo mantiene evaluable."
+                )
+            else:
+                adj -= 22
+                warnings.append("Memoria previa marca UNDER temprano peligroso.")
 
         if pre_match_behavior == "DO_NOT_PROMOTE_EARLY_UNDER_WITHOUT_LIVE_CONFIRMATION" and minute <= 45:
             adj -= 18
@@ -509,7 +671,30 @@ class MatchMaturityAI:
         over_candidate_level: str,
         league_goal_profile: str,
         first_half_goal_risk: str,
+        live_volume_score: float,
+        prediction_no_goal_probability: float,
+        prediction_two_plus_goal_probability: float,
+        prediction_next_goal_probability: str,
+        prediction_conflict_level: str,
+        prediction_market_alignment: str,
+        final_market_recommendation: str,
     ) -> str:
+        predictive_under_support = (
+            prediction_no_goal_probability >= 58
+            and prediction_two_plus_goal_probability <= 25
+            and prediction_next_goal_probability not in {"HIGH", "VERY_HIGH"}
+            and prediction_conflict_level not in {"HIGH", "CRITICAL"}
+            and final_market_recommendation not in {"OVER", "OBSERVE_OVER_RISK"}
+        )
+
+        predictive_over_risk = (
+            prediction_two_plus_goal_probability >= 38
+            or prediction_next_goal_probability in {"HIGH", "VERY_HIGH"}
+            or prediction_conflict_level in {"HIGH", "CRITICAL"}
+            or prediction_market_alignment in {"CONFLICT", "STRONG_CONFLICT"}
+            or final_market_recommendation in {"OVER", "OBSERVE_OVER_RISK"}
+        )
+
         if maturity_score < 38:
             return "OBSERVE_ONLY"
 
@@ -518,7 +703,12 @@ class MatchMaturityAI:
 
         is_under = market == "UNDER" or football_dominant in {"UNDER", "BAJO"}
 
+        if is_under and predictive_over_risk:
+            return "WAIT_REVALIDATION"
+
         if is_under and minute <= 45:
+            if predictive_under_support and live_volume_score <= 25 and maturity_score >= 62:
+                return "ALLOW_CANDIDATE"
             if under_early_risk == "HIGH_UNDER_EARLY_RISK":
                 return "WAIT_REVALIDATION"
 
@@ -666,10 +856,40 @@ class MatchMaturityAI:
         over_candidate_level: str,
         league_goal_profile: str,
         first_half_goal_risk: str,
+        live_volume_score: float,
+        prediction_no_goal_probability: float,
+        prediction_two_plus_goal_probability: float,
+        prediction_next_goal_probability: str,
+        prediction_conflict_level: str,
+        prediction_market_alignment: str,
+        final_market_recommendation: str,
     ) -> bool:
         is_under = market == "UNDER" or football_dominant in {"UNDER", "BAJO"}
 
         if not is_under:
+            return False
+
+        predictive_under_support = (
+            prediction_no_goal_probability >= 60
+            and prediction_two_plus_goal_probability <= 24
+            and prediction_next_goal_probability not in {"HIGH", "VERY_HIGH"}
+            and prediction_conflict_level not in {"HIGH", "CRITICAL"}
+            and prediction_market_alignment not in {"CONFLICT", "STRONG_CONFLICT"}
+            and final_market_recommendation not in {"OVER", "OBSERVE_OVER_RISK"}
+        )
+
+        predictive_over_risk = (
+            prediction_two_plus_goal_probability >= 38
+            or prediction_next_goal_probability in {"HIGH", "VERY_HIGH"}
+            or prediction_conflict_level in {"HIGH", "CRITICAL"}
+            or prediction_market_alignment in {"CONFLICT", "STRONG_CONFLICT"}
+            or final_market_recommendation in {"OVER", "OBSERVE_OVER_RISK"}
+        )
+
+        if predictive_over_risk:
+            return True
+
+        if predictive_under_support and live_volume_score <= 25:
             return False
 
         if phase in {"FIRST_HALF_RECOGNITION", "FIRST_HALF_INITIAL_TREND"}:
