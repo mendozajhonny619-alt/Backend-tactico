@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 
@@ -32,6 +33,42 @@ def pick_first(data: Dict[str, Any], keys: List[str], default: Any = None) -> An
         value = data.get(key)
         if value is not None and value != "":
             return value
+    return default
+
+
+def normalize_text(value: Any) -> str:
+    text = str(value or "").strip().upper()
+    text = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in text if not unicodedata.combining(ch))
+
+
+def bool_from_any(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+
+    if value is None:
+        return False
+
+    text = str(value).strip().upper()
+    return text in {"1", "TRUE", "YES", "Y", "SI", "SÍ"}
+
+
+def pick_from_nested(data: Dict[str, Any], keys: List[str], default: Any = None) -> Any:
+    for key in keys:
+        value = data.get(key)
+
+        if isinstance(value, dict):
+            nested = pick_first(
+                value,
+                ["name", "league", "country", "short", "long", "id", "logo", "flag"],
+                None,
+            )
+            if nested is not None and nested != "":
+                return nested
+
+        if value is not None and value != "":
+            return value
+
     return default
 
 
@@ -137,8 +174,13 @@ class LiveSnapshotStore:
         home = pick_first(data, ["home_team", "home", "team_home", "local_team"], "")
         away = pick_first(data, ["away_team", "away", "team_away", "visitor_team"], "")
 
-        league = pick_first(data, ["league", "league_name", "competition"], "")
-        country = pick_first(data, ["country", "country_name"], "")
+        league = self._extract_league_name(data)
+        country = self._extract_country_name(data)
+        competition_metadata = self._extract_competition_metadata(
+            data=data,
+            league=league,
+            country=country,
+        )
 
         api_minute = safe_int(
             pick_first(
@@ -223,6 +265,18 @@ class LiveSnapshotStore:
             "away_team": away,
             "league": league,
             "country": country,
+
+            # Competición / filtro de ligas.
+            # Estos campos vienen desde LeagueFilter o se infieren aquí como fallback
+            # para que viajen hacia Engine, ML, historial y panel.
+            "league_id": competition_metadata.get("league_id"),
+            "league_filter_status": competition_metadata.get("league_filter_status"),
+            "league_filter_reason": competition_metadata.get("league_filter_reason"),
+            "competition_tier": competition_metadata.get("competition_tier"),
+            "competition_weight": competition_metadata.get("competition_weight"),
+            "world_cup_flag": competition_metadata.get("world_cup_flag"),
+            "national_team_flag": competition_metadata.get("national_team_flag"),
+            "major_tournament_flag": competition_metadata.get("major_tournament_flag"),
             "api_minute": api_minute,
             "display_minute": api_minute,
             "home_score": home_score,
@@ -252,6 +306,166 @@ class LiveSnapshotStore:
         }
 
         return normalized
+
+
+    def _extract_league_name(self, data: Dict[str, Any]) -> str:
+        league_obj = data.get("league") if isinstance(data.get("league"), dict) else {}
+
+        value = (
+            data.get("league") if not isinstance(data.get("league"), dict) else None
+            or data.get("league_name")
+            or data.get("competition")
+            or data.get("tournament")
+            or league_obj.get("name")
+        )
+
+        return str(value or "").strip()
+
+    def _extract_country_name(self, data: Dict[str, Any]) -> str:
+        league_obj = data.get("league") if isinstance(data.get("league"), dict) else {}
+
+        value = (
+            data.get("country")
+            or data.get("country_name")
+            or data.get("pais")
+            or league_obj.get("country")
+        )
+
+        return str(value or "").strip()
+
+    def _extract_league_id(self, data: Dict[str, Any]) -> Optional[int]:
+        league_obj = data.get("league") if isinstance(data.get("league"), dict) else {}
+
+        raw_id = pick_first(
+            data,
+            ["league_id", "competition_id", "tournament_id"],
+            league_obj.get("id"),
+        )
+
+        parsed = safe_int(raw_id, 0)
+        return parsed if parsed > 0 else None
+
+    def _extract_competition_metadata(
+        self,
+        data: Dict[str, Any],
+        league: str,
+        country: str,
+    ) -> Dict[str, Any]:
+        """
+        Propaga y normaliza metadatos competitivos.
+
+        No decide si una liga entra o no. Esa decisión sigue siendo de LeagueFilter.
+        Esta capa solo garantiza que competition_tier, competition_weight y flags
+        lleguen al motor, al feature builder, al historial y al panel.
+        """
+
+        league_id = self._extract_league_id(data)
+        league_filter_status = str(data.get("league_filter_status") or "").strip()
+        league_filter_reason = str(data.get("league_filter_reason") or "").strip()
+
+        text = normalize_text(
+            f"{league} {country} "
+            f"{data.get('league_filter_reason') or ''} "
+            f"{data.get('competition_tier') or ''}"
+        )
+
+        raw_tier = str(data.get("competition_tier") or "").strip().upper()
+        competition_tier = raw_tier or self._infer_competition_tier(text)
+
+        raw_weight = safe_int(data.get("competition_weight"), -1)
+        competition_weight = raw_weight if raw_weight >= 0 else self._competition_weight(competition_tier)
+
+        world_cup_flag = (
+            bool_from_any(data.get("world_cup_flag"))
+            or competition_tier == "WORLD_CUP_ELITE"
+            or any(token in text for token in ["WORLD CUP", "COPA MUNDIAL", "MUNDIAL"])
+        )
+
+        national_team_flag = (
+            bool_from_any(data.get("national_team_flag"))
+            or world_cup_flag
+            or competition_tier in {
+                "NATIONAL_TEAM_ELITE",
+                "WORLD_CUP_QUALIFIERS",
+                "INTERNATIONAL_FRIENDLY",
+            }
+            or any(
+                token in text
+                for token in [
+                    "EURO",
+                    "COPA AMERICA",
+                    "AFRICA CUP",
+                    "ASIAN CUP",
+                    "GOLD CUP",
+                    "NATIONS LEAGUE",
+                    "QUALIFIERS",
+                    "QUALIFICATION",
+                    "FRIENDLY",
+                ]
+            )
+        )
+
+        major_tournament_flag = (
+            bool_from_any(data.get("major_tournament_flag"))
+            or competition_weight >= 85
+            or competition_tier in {
+                "WORLD_CUP_ELITE",
+                "WORLD_CUP_QUALIFIERS",
+                "NATIONAL_TEAM_ELITE",
+                "INTERNATIONAL_CLUB_ELITE",
+            }
+        )
+
+        if not league_filter_status:
+            league_filter_status = "SNAPSHOT_METADATA_INFERRED"
+
+        if not league_filter_reason:
+            league_filter_reason = "Metadatos competitivos propagados por LiveSnapshotStore."
+
+        return {
+            "league_id": league_id,
+            "league_filter_status": league_filter_status,
+            "league_filter_reason": league_filter_reason,
+            "competition_tier": competition_tier,
+            "competition_weight": competition_weight,
+            "world_cup_flag": world_cup_flag,
+            "national_team_flag": national_team_flag,
+            "major_tournament_flag": major_tournament_flag,
+        }
+
+    def _infer_competition_tier(self, text: str) -> str:
+        if any(token in text for token in ["WORLD CUP", "COPA MUNDIAL", "MUNDIAL"]):
+            if "QUALIF" in text or "ELIMINATOR" in text:
+                return "WORLD_CUP_QUALIFIERS"
+            return "WORLD_CUP_ELITE"
+
+        if any(token in text for token in ["CHAMPIONS LEAGUE", "EUROPA LEAGUE", "LIBERTADORES", "SUDAMERICANA"]):
+            return "INTERNATIONAL_CLUB_ELITE"
+
+        if any(token in text for token in ["COPA AMERICA", "UEFA EURO", "AFRICA CUP", "ASIAN CUP", "GOLD CUP", "NATIONS LEAGUE"]):
+            return "NATIONAL_TEAM_ELITE"
+
+        if "INTERNATIONAL FRIEND" in text or "FIFA FRIEND" in text:
+            return "INTERNATIONAL_FRIENDLY"
+
+        if "COUNTRY_REVIEW" in text:
+            return "COUNTRY_REVIEW"
+
+        return "PRIORITY_LEAGUE"
+
+    def _competition_weight(self, tier: str) -> int:
+        weights = {
+            "WORLD_CUP_ELITE": 100,
+            "WORLD_CUP_QUALIFIERS": 92,
+            "INTERNATIONAL_CLUB_ELITE": 90,
+            "NATIONAL_TEAM_ELITE": 88,
+            "PRIORITY_LEAGUE": 75,
+            "INTERNATIONAL_FRIENDLY": 55,
+            "COUNTRY_REVIEW": 45,
+            "UNKNOWN": 0,
+            "BLOCKED": 0,
+        }
+        return weights.get(str(tier or "").upper(), 75)
 
     def _merge_fresh(self, old: Dict[str, Any], new: Dict[str, Any]) -> Dict[str, Any]:
         merged = deepcopy(old)
