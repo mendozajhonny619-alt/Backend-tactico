@@ -162,6 +162,24 @@ class PreMatchDataService:
             count=5,
         )
 
+        # V17.2: mantener últimos 5 como base, pero separar contexto local/visitante.
+        # Esto ayuda a diferenciar equipos fuertes en casa de equipos débiles fuera.
+        home_home_last_5 = self._get_last_matches(
+            team_id=home_team_id,
+            league_id=league_id,
+            season=season,
+            count=5,
+            venue="home",
+        )
+
+        away_away_last_5 = self._get_last_matches(
+            team_id=away_team_id,
+            league_id=league_id,
+            season=season,
+            count=5,
+            venue="away",
+        )
+
         h2h = self._get_head_to_head(
             home_team_id=home_team_id,
             away_team_id=away_team_id,
@@ -196,6 +214,8 @@ class PreMatchDataService:
             "fixture_info": self._compact_fixture_info(fixture_info),
             "home_last_5": self._compact_match_list(home_last_5),
             "away_last_5": self._compact_match_list(away_last_5),
+            "home_home_last_5": self._compact_match_list(home_home_last_5),
+            "away_away_last_5": self._compact_match_list(away_away_last_5),
             "head_to_head_last_5": self._compact_match_list(h2h),
             "league_recent_sample": self._compact_match_list(league_recent),
             "standings_context": self._compact_standings(
@@ -206,12 +226,16 @@ class PreMatchDataService:
             "raw_counts": {
                 "home_last_5": len(home_last_5),
                 "away_last_5": len(away_last_5),
+                "home_home_last_5": len(home_home_last_5),
+                "away_away_last_5": len(away_away_last_5),
                 "head_to_head_last_5": len(h2h),
                 "league_recent_sample": len(league_recent),
             },
             "pre_match_summary": self._build_numeric_summary(
                 home_last_5=home_last_5,
                 away_last_5=away_last_5,
+                home_home_last_5=home_home_last_5,
+                away_away_last_5=away_away_last_5,
                 h2h=h2h,
                 league_recent=league_recent,
                 home_team_id=home_team_id,
@@ -235,6 +259,7 @@ class PreMatchDataService:
         league_id: Optional[int],
         season: Optional[int],
         count: int = 5,
+        venue: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         if not team_id:
             return []
@@ -250,12 +275,19 @@ class PreMatchDataService:
         if season:
             params["season"] = season
 
-        data = self._request(
-            endpoint="/fixtures",
-            params=params,
-        )
+        if venue in {"home", "away"}:
+            params["venue"] = venue
 
-        return data.get("response") or []
+        try:
+            data = self._request(
+                endpoint="/fixtures",
+                params=params,
+            )
+            return data.get("response") or []
+        except Exception:
+            # Si la API no acepta el filtro venue en alguna cobertura,
+            # no rompemos el prepartido; devolvemos lista vacía y seguimos con últimos 5 generales.
+            return []
 
     def _get_head_to_head(
         self,
@@ -337,6 +369,8 @@ class PreMatchDataService:
         self,
         home_last_5: List[Dict[str, Any]],
         away_last_5: List[Dict[str, Any]],
+        home_home_last_5: List[Dict[str, Any]],
+        away_away_last_5: List[Dict[str, Any]],
         h2h: List[Dict[str, Any]],
         league_recent: List[Dict[str, Any]],
         home_team_id: Optional[int],
@@ -344,6 +378,8 @@ class PreMatchDataService:
     ) -> Dict[str, Any]:
         home_summary = self._summarize_team_matches(home_last_5, home_team_id)
         away_summary = self._summarize_team_matches(away_last_5, away_team_id)
+        home_home_summary = self._summarize_team_matches(home_home_last_5, home_team_id)
+        away_away_summary = self._summarize_team_matches(away_away_last_5, away_team_id)
         h2h_summary = self._summarize_general_matches(h2h)
         league_summary = self._summarize_general_matches(league_recent)
 
@@ -374,6 +410,8 @@ class PreMatchDataService:
         return {
             "home_recent": home_summary,
             "away_recent": away_summary,
+            "home_home_recent": home_home_summary,
+            "away_away_recent": away_away_summary,
             "head_to_head": h2h_summary,
             "league_recent": league_summary,
             "combined": {
@@ -383,6 +421,12 @@ class PreMatchDataService:
                 "goal_profile_hint": self._goal_profile_hint(combined_goals_avg),
                 "first_half_profile_hint": self._first_half_profile_hint(first_half_avg),
                 "second_half_profile_hint": self._second_half_profile_hint(second_half_avg),
+                "over_pressure_hint": self._over_pressure_hint(home_summary, away_summary, h2h_summary),
+                "under_resistance_hint": self._under_resistance_hint(home_summary, away_summary, h2h_summary),
+                "btts_profile_hint": self._btts_profile_hint(home_summary, away_summary, h2h_summary),
+                "home_goal_expectation": self._team_goal_expectation(home_summary, home_home_summary),
+                "away_goal_expectation": self._team_goal_expectation(away_summary, away_away_summary),
+                "pre_match_risk_hint": self._pre_match_risk_hint(home_summary, away_summary, h2h_summary),
             },
         }
 
@@ -401,7 +445,17 @@ class PreMatchDataService:
         goals_against = []
         over_15 = 0
         over_25 = 0
+        over_35 = 0
+        under_25 = 0
+        under_35 = 0
         btts = 0
+        clean_sheets = 0
+        failed_to_score = 0
+        scored_matches = 0
+        conceded_matches = 0
+        wins = 0
+        draws = 0
+        losses = 0
         valid = 0
 
         for item in matches:
@@ -423,18 +477,47 @@ class PreMatchDataService:
             first_half_goals.append(ht_total)
             second_half_goals.append(st_total)
 
+            team_for = None
+            team_against = None
             if team_id and team_id == home_id:
+                team_for = home_goals
+                team_against = away_goals
                 goals_for.append(home_goals)
                 goals_against.append(away_goals)
             elif team_id and team_id == away_id:
+                team_for = away_goals
+                team_against = home_goals
                 goals_for.append(away_goals)
                 goals_against.append(home_goals)
+
+            if team_for is not None and team_against is not None:
+                if team_for > 0:
+                    scored_matches += 1
+                else:
+                    failed_to_score += 1
+                if team_against == 0:
+                    clean_sheets += 1
+                else:
+                    conceded_matches += 1
+                if team_for > team_against:
+                    wins += 1
+                elif team_for == team_against:
+                    draws += 1
+                else:
+                    losses += 1
 
             if total >= 2:
                 over_15 += 1
 
             if total >= 3:
                 over_25 += 1
+            else:
+                under_25 += 1
+
+            if total >= 4:
+                over_35 += 1
+            else:
+                under_35 += 1
 
             if home_goals > 0 and away_goals > 0:
                 btts += 1
@@ -451,9 +534,20 @@ class PreMatchDataService:
             "avg_goals_against": self._avg(goals_against),
             "over_15_rate": round(over_15 / valid, 3),
             "over_25_rate": round(over_25 / valid, 3),
+            "over_35_rate": round(over_35 / valid, 3),
+            "under_25_rate": round(under_25 / valid, 3),
+            "under_35_rate": round(under_35 / valid, 3),
             "btts_rate": round(btts / valid, 3),
+            "clean_sheet_rate": round(clean_sheets / valid, 3),
+            "failed_to_score_rate": round(failed_to_score / valid, 3),
+            "scored_rate": round(scored_matches / valid, 3),
+            "conceded_rate": round(conceded_matches / valid, 3),
+            "win_rate": round(wins / valid, 3),
+            "draw_rate": round(draws / valid, 3),
+            "loss_rate": round(losses / valid, 3),
             "goal_profile_hint": self._goal_profile_hint(self._avg(total_goals)),
             "first_half_profile_hint": self._first_half_profile_hint(self._avg(first_half_goals)),
+            "team_profile_hint": self._team_profile_hint(self._avg(goals_for), self._avg(goals_against)),
         }
 
     def _summarize_general_matches(self, matches: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -465,6 +559,9 @@ class PreMatchDataService:
         second_half_goals = []
         over_15 = 0
         over_25 = 0
+        over_35 = 0
+        under_25 = 0
+        under_35 = 0
         btts = 0
         valid = 0
 
@@ -489,6 +586,13 @@ class PreMatchDataService:
 
             if total >= 3:
                 over_25 += 1
+            else:
+                under_25 += 1
+
+            if total >= 4:
+                over_35 += 1
+            else:
+                under_35 += 1
 
             if home_goals > 0 and away_goals > 0:
                 btts += 1
@@ -503,6 +607,9 @@ class PreMatchDataService:
             "avg_second_half_goals": self._avg(second_half_goals),
             "over_15_rate": round(over_15 / valid, 3),
             "over_25_rate": round(over_25 / valid, 3),
+            "over_35_rate": round(over_35 / valid, 3),
+            "under_25_rate": round(under_25 / valid, 3),
+            "under_35_rate": round(under_35 / valid, 3),
             "btts_rate": round(btts / valid, 3),
             "goal_profile_hint": self._goal_profile_hint(self._avg(total_goals)),
             "first_half_profile_hint": self._first_half_profile_hint(self._avg(first_half_goals)),
@@ -518,9 +625,20 @@ class PreMatchDataService:
             "avg_goals_against": 0.0,
             "over_15_rate": 0.0,
             "over_25_rate": 0.0,
+            "over_35_rate": 0.0,
+            "under_25_rate": 0.0,
+            "under_35_rate": 0.0,
             "btts_rate": 0.0,
+            "clean_sheet_rate": 0.0,
+            "failed_to_score_rate": 0.0,
+            "scored_rate": 0.0,
+            "conceded_rate": 0.0,
+            "win_rate": 0.0,
+            "draw_rate": 0.0,
+            "loss_rate": 0.0,
             "goal_profile_hint": "UNKNOWN",
             "first_half_profile_hint": "UNKNOWN",
+            "team_profile_hint": "UNKNOWN",
         }
 
     def _compact_fixture_info(self, item: Dict[str, Any]) -> Dict[str, Any]:
@@ -683,6 +801,125 @@ class PreMatchDataService:
 
         return "UNKNOWN"
 
+    def _team_profile_hint(self, avg_for: float, avg_against: float) -> str:
+        if avg_for >= 1.6 and avg_against <= 1.0:
+            return "STRONG_OFFENSE_SOLID_DEFENSE"
+        if avg_for >= 1.4 and avg_against >= 1.4:
+            return "OPEN_TEAM"
+        if avg_for <= 0.8 and avg_against <= 1.1:
+            return "LOW_SCORING_TEAM"
+        if avg_for <= 0.8 and avg_against >= 1.4:
+            return "DEFENSIVE_RISK_LOW_ATTACK"
+        if avg_for >= 1.2:
+            return "MODERATE_SCORING_TEAM"
+        return "BALANCED_TEAM"
+
+    def _over_pressure_hint(
+        self,
+        home_summary: Dict[str, Any],
+        away_summary: Dict[str, Any],
+        h2h_summary: Dict[str, Any],
+    ) -> str:
+        over_25 = self._avg_clean([
+            home_summary.get("over_25_rate"),
+            away_summary.get("over_25_rate"),
+            h2h_summary.get("over_25_rate"),
+        ])
+        over_15 = self._avg_clean([
+            home_summary.get("over_15_rate"),
+            away_summary.get("over_15_rate"),
+            h2h_summary.get("over_15_rate"),
+        ])
+        if over_25 >= 0.68:
+            return "STRONG_OVER_TREND"
+        if over_25 >= 0.52 or over_15 >= 0.78:
+            return "MODERATE_OVER_TREND"
+        if over_25 > 0:
+            return "WEAK_OVER_TREND"
+        return "UNKNOWN"
+
+    def _under_resistance_hint(
+        self,
+        home_summary: Dict[str, Any],
+        away_summary: Dict[str, Any],
+        h2h_summary: Dict[str, Any],
+    ) -> str:
+        under_25 = self._avg_clean([
+            home_summary.get("under_25_rate"),
+            away_summary.get("under_25_rate"),
+            h2h_summary.get("under_25_rate"),
+        ])
+        clean_or_failed = self._avg_clean([
+            home_summary.get("clean_sheet_rate"),
+            away_summary.get("clean_sheet_rate"),
+            home_summary.get("failed_to_score_rate"),
+            away_summary.get("failed_to_score_rate"),
+        ])
+        if under_25 >= 0.68 or clean_or_failed >= 0.45:
+            return "STRONG_UNDER_RESISTANCE"
+        if under_25 >= 0.52:
+            return "MODERATE_UNDER_RESISTANCE"
+        if under_25 > 0:
+            return "LOW_UNDER_RESISTANCE"
+        return "UNKNOWN"
+
+    def _btts_profile_hint(
+        self,
+        home_summary: Dict[str, Any],
+        away_summary: Dict[str, Any],
+        h2h_summary: Dict[str, Any],
+    ) -> str:
+        btts = self._avg_clean([
+            home_summary.get("btts_rate"),
+            away_summary.get("btts_rate"),
+            h2h_summary.get("btts_rate"),
+        ])
+        if btts >= 0.68:
+            return "BTTS_STRONG"
+        if btts >= 0.52:
+            return "BTTS_MODERATE"
+        if btts > 0:
+            return "BTTS_WEAK"
+        return "UNKNOWN"
+
+    def _team_goal_expectation(self, general_summary: Dict[str, Any], venue_summary: Dict[str, Any]) -> str:
+        avg_for = self._avg_clean([
+            general_summary.get("avg_goals_for"),
+            venue_summary.get("avg_goals_for"),
+        ])
+        scored_rate = self._avg_clean([
+            general_summary.get("scored_rate"),
+            venue_summary.get("scored_rate"),
+        ])
+        failed_rate = self._avg_clean([
+            general_summary.get("failed_to_score_rate"),
+            venue_summary.get("failed_to_score_rate"),
+        ])
+        if avg_for >= 1.5 and scored_rate >= 0.7:
+            return "HIGH_GOAL_EXPECTATION"
+        if avg_for >= 1.0 and scored_rate >= 0.55:
+            return "MEDIUM_GOAL_EXPECTATION"
+        if failed_rate >= 0.45:
+            return "LOW_GOAL_EXPECTATION"
+        return "BALANCED_GOAL_EXPECTATION"
+
+    def _pre_match_risk_hint(
+        self,
+        home_summary: Dict[str, Any],
+        away_summary: Dict[str, Any],
+        h2h_summary: Dict[str, Any],
+    ) -> str:
+        home_open = safe_float(home_summary.get("over_25_rate"))
+        away_under = safe_float(away_summary.get("under_25_rate"))
+        h2h_goals = safe_float(h2h_summary.get("avg_total_goals"))
+        if abs(home_open - away_under) >= 0.45:
+            return "CONFLICTING_PREMATCH_PROFILES"
+        if h2h_goals >= 3.0:
+            return "H2H_OPEN_RISK"
+        if h2h_goals > 0 and h2h_goals <= 1.8:
+            return "H2H_LOW_GOAL_RISK"
+        return "NORMAL_PREMATCH_RISK"
+
     def _avg(self, values: List[Any]) -> float:
         clean = [safe_float(x) for x in values if x is not None]
         if not clean:
@@ -823,12 +1060,16 @@ class PreMatchDataService:
             "raw_counts": {
                 "home_last_5": 0,
                 "away_last_5": 0,
+                "home_home_last_5": 0,
+                "away_away_last_5": 0,
                 "head_to_head_last_5": 0,
                 "league_recent_sample": 0,
             },
             "pre_match_summary": {
                 "home_recent": self._empty_summary(),
                 "away_recent": self._empty_summary(),
+                "home_home_recent": self._empty_summary(),
+                "away_away_recent": self._empty_summary(),
                 "head_to_head": self._empty_summary(),
                 "league_recent": self._empty_summary(),
                 "combined": {
@@ -838,6 +1079,12 @@ class PreMatchDataService:
                     "goal_profile_hint": "UNKNOWN",
                     "first_half_profile_hint": "UNKNOWN",
                     "second_half_profile_hint": "UNKNOWN",
+                    "over_pressure_hint": "UNKNOWN",
+                    "under_resistance_hint": "UNKNOWN",
+                    "btts_profile_hint": "UNKNOWN",
+                    "home_goal_expectation": "UNKNOWN",
+                    "away_goal_expectation": "UNKNOWN",
+                    "pre_match_risk_hint": "UNKNOWN",
                 },
             },
         }
