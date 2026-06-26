@@ -746,11 +746,9 @@ class ScanService:
             )
         )
 
-        pre_match_ai = self.pre_match_intelligence_engine.analyze(
+        pre_match_ai = self._safe_pre_match_intelligence(
             match=match,
-            home_history=memory_context.get("home_history", []),
-            away_history=memory_context.get("away_history", []),
-            league_history=memory_context.get("league_history", []),
+            memory_context=memory_context,
         )
 
         adaptive_learning = self.adaptive_learning_engine.analyze(
@@ -810,6 +808,72 @@ class ScanService:
         match.update(sports_ai_context)
         match.update(memory_context.get("memory_summary", {}))
         match.update(pre_match_ai)
+
+    def _safe_pre_match_intelligence(
+        self,
+        match: Dict[str, Any],
+        memory_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Ejecuta PreMatchIntelligenceEngine sin romper el worker cuando existe
+        diferencia entre la firma antigua y la llamada nueva.
+
+        Render estaba fallando con:
+        PreMatchIntelligenceEngine.analyze() got an unexpected keyword argument 'match'
+
+        Por eso primero intenta la llamada completa y, si la versión instalada
+        no acepta match=, degrada a la firma antigua basada solo en historiales.
+        Este método no decide señales; solo evita que el prepartido tumbe el ciclo.
+        """
+
+        home_history = memory_context.get("home_history", []) or []
+        away_history = memory_context.get("away_history", []) or []
+        league_history = memory_context.get("league_history", []) or []
+
+        try:
+            result = self.pre_match_intelligence_engine.analyze(
+                match=match,
+                home_history=home_history,
+                away_history=away_history,
+                league_history=league_history,
+            )
+        except TypeError as exc:
+            error_text = str(exc)
+
+            if "unexpected keyword argument 'match'" in error_text:
+                try:
+                    result = self.pre_match_intelligence_engine.analyze(
+                        home_history=home_history,
+                        away_history=away_history,
+                        league_history=league_history,
+                    )
+                except TypeError:
+                    result = self.pre_match_intelligence_engine.analyze(
+                        home_history,
+                        away_history,
+                        league_history,
+                    )
+            else:
+                try:
+                    result = self.pre_match_intelligence_engine.analyze(
+                        home_history,
+                        away_history,
+                        league_history,
+                    )
+                except Exception:
+                    return {
+                        "pre_match_intelligence_status": "DISABLED_BY_SIGNATURE_ERROR",
+                        "pre_match_intelligence_error": error_text,
+                    }
+        except Exception as exc:
+            return {
+                "pre_match_intelligence_status": "DISABLED_BY_RUNTIME_ERROR",
+                "pre_match_intelligence_error": str(exc),
+            }
+
+        return result if isinstance(result, dict) else {
+            "pre_match_intelligence_status": "EMPTY_OR_INVALID_RESULT"
+        }
 
     def _emit_internal_signal(
         self,
