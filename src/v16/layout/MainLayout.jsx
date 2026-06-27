@@ -1,7 +1,7 @@
 // src/v16/layout/MainLayout.jsx
 
 import React from "react";
-import "../styles/dashboard.css";
+import "../styles/Dashboard.css";
 
 export default function MainLayout({ children }) {
   return (
