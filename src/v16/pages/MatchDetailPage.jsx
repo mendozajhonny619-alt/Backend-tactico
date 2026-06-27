@@ -7,7 +7,7 @@ import LiveSignalFeed from "../components/LiveSignalFeed";
 import RiskMeter from "../components/RiskMeter";
 
 import "../styles/components.css";
-import "../styles/dashboard.css";
+import "../styles/Dashboard.css";
 
 const num = (v, fb = 0) => {
   const n = Number(v);
