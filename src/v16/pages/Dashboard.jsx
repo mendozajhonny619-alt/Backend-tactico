@@ -16,7 +16,7 @@ import LiveSignalFeed from "../components/LiveSignalFeed";
 import useLiveData from "../hooks/useLiveData";
 
 import "../styles/variables.css";
-import "../styles/dashboard.css";
+import "../styles/Dashboard.css";
 import "../styles/components.css";
 
 const Dashboard = () => {
