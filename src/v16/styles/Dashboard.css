@@ -1,4 +1,4 @@
-/* src/v16/styles/dashboard.css */
+/* src/v16/styles/Dashboard.css */
 
 * {
   box-sizing: border-box;
@@ -10,7 +10,7 @@ body {
   color: #fff;
 }
 
-.dashboard {
+.Dashboard {
   width: 100%;
   min-height: 100vh;
 }
@@ -181,7 +181,7 @@ body {
 
 /* GRID */
 
-.v16-dashboard-grid {
+.v16-Dashboard-grid {
   display: grid;
   grid-template-columns: 300px minmax(420px, 1fr) 300px;
   gap: 18px;
@@ -348,7 +348,7 @@ body {
 /* RESPONSIVE */
 
 @media (max-width: 1200px) {
-  .v16-dashboard-grid {
+  .v16-Dashboard-grid {
     grid-template-columns: 1fr;
   }
 
