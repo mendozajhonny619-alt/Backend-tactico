@@ -520,3 +520,222 @@ body {
     flex-direction: column;
   }
                                }
+/* ==========================================================
+   JHONNY ELITE V17 - MOBILE PREMIUM PATCH
+   Pegar al final del archivo v17-dashboard.css
+   ========================================================== */
+
+@media (max-width: 760px) {
+  html,
+  body {
+    width: 100%;
+    overflow-x: hidden;
+    background: var(--v17-bg);
+  }
+
+  .v17-dashboard {
+    padding: 12px 10px 92px;
+    overflow-x: hidden;
+  }
+
+  .v17-header {
+    position: sticky;
+    top: 0;
+    z-index: 60;
+    flex-direction: column;
+    gap: 12px;
+    margin: -12px -10px 14px;
+    padding: 14px 12px;
+    background: rgba(5, 11, 18, 0.96);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(67, 234, 255, 0.18);
+  }
+
+  .v17-kicker {
+    font-size: 10px;
+    letter-spacing: 0.16em;
+  }
+
+  .v17-header h1 {
+    font-size: 24px;
+    line-height: 1.05;
+    margin: 3px 0;
+  }
+
+  .v17-header p {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .v17-status-box {
+    min-width: 0;
+    width: 100%;
+    border-radius: 18px;
+    padding: 13px;
+  }
+
+  .v17-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .v17-stat-card {
+    border-radius: 16px;
+    padding: 13px;
+  }
+
+  .v17-stat-label {
+    font-size: 9px;
+  }
+
+  .v17-stat-value {
+    font-size: 24px;
+    margin-top: 6px;
+  }
+
+  .v17-stat-hint {
+    font-size: 10px;
+  }
+
+  .v17-message,
+  .v17-learning-box,
+  .v17-alert,
+  .v17-loading,
+  .v17-empty {
+    border-radius: 16px;
+    padding: 13px;
+    margin-bottom: 14px;
+  }
+
+  .v17-section-panel,
+  .v17-history-panel {
+    border-radius: 20px;
+    padding: 14px;
+    margin-bottom: 16px;
+  }
+
+  .v17-section-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .v17-section-header h2 {
+    font-size: 18px;
+  }
+
+  .v17-section-header p {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .v17-section-header > span {
+    min-width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    font-size: 13px;
+  }
+
+  .v17-card-list,
+  .v17-card-list.compact {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .v17-signal-card {
+    border-radius: 18px;
+    padding: 14px;
+  }
+
+  .v17-tabs-nav {
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    top: auto;
+    z-index: 100;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    margin: 0;
+    padding: 8px;
+    border-radius: 20px;
+    overflow-x: hidden;
+    background: rgba(5, 11, 18, 0.97);
+    backdrop-filter: blur(18px);
+    box-shadow: 0 -12px 34px rgba(0, 0, 0, 0.48);
+  }
+
+  .v17-tabs-nav button {
+    min-width: 0;
+    min-height: 50px;
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 2px;
+    padding: 6px 4px;
+    border-radius: 14px;
+  }
+
+  .v17-tabs-nav button span {
+    font-size: 16px;
+  }
+
+  .v17-tabs-nav button strong {
+    font-size: 9px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .v17-tabs-nav button small {
+    display: none;
+  }
+
+  .v17-detail-tab-grid,
+  .v17-detail-tab-grid.small,
+  .v17-detail-two-col,
+  .v17-analysis-header-grid {
+    grid-template-columns: 1fr;
+  }
+
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  button {
+    min-height: 42px;
+    touch-action: manipulation;
+  }
+
+  * {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+}
+
+@media (max-width: 420px) {
+  .v17-dashboard {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .v17-header {
+    margin-left: -8px;
+    margin-right: -8px;
+  }
+
+  .v17-header h1 {
+    font-size: 21px;
+  }
+
+  .v17-stat-value {
+    font-size: 21px;
+  }
+
+  .v17-tabs-nav button strong {
+    font-size: 8px;
+  }
+    }
