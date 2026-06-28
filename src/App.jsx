@@ -1,5 +1,5 @@
-import Dashboard from "./v16/pages/Dashboard";
+import DashboardV17 from "./v17/pages/DashboardV17";
 
 export default function App() {
-  return <Dashboard />;
+  return <DashboardV17 />;
 }
