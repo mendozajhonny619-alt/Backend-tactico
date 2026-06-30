@@ -33,6 +33,7 @@ from app.v17.core.context_reader import ContextReader
 from app.v17.core.data_quality_guard import DataQualityGuard
 from app.v17.core.live_snapshot_store import LiveSnapshotStore
 from app.v17.services.pre_match_data_service import PreMatchDataService
+from app.v17.services.football_intelligence_memory_service import FootballIntelligenceMemoryService
 from app.v17.services.signal_history_service import SignalHistoryService
 from app.v17.signals.signal_lifecycle import SignalLifecycle
 from app.v17.signals.signal_ranker import SignalRanker
@@ -130,6 +131,11 @@ class LiveSignalEngineV17:
         self.signal_lifecycle = SignalLifecycle()
         self.signal_ranker = SignalRanker()
         self.signal_history_service = SignalHistoryService()
+        try:
+            self.football_memory_service = FootballIntelligenceMemoryService()
+        except Exception as exc:
+            logger.warning("FOOTBALL_MEMORY_INIT_ERROR: %s", exc)
+            self.football_memory_service = None
 
     def process_live_matches(self, raw_matches: List[Dict[str, Any]]) -> Dict[str, Any]:
         updated_at = utc_now_iso()
@@ -170,6 +176,8 @@ class LiveSignalEngineV17:
             return None
 
         pre_match_profile = self._evaluate_pre_match_profile(match)
+
+        football_memory_match_record = self._record_football_memory_match(match)
 
         clock = self.clock_guard.evaluate(match)
         data_quality = self.data_quality_guard.evaluate(match)
@@ -449,6 +457,22 @@ class LiveSignalEngineV17:
             **final_signal,
             **history_result,
         }
+
+        football_memory_signal_record = self._record_football_memory_signal(final_signal)
+        football_memory_context = self._build_football_memory_context(
+            match=match,
+            signal=final_signal,
+        )
+
+        final_signal = {
+            **final_signal,
+            "football_memory_match_record": football_memory_match_record,
+            "football_memory_signal_record": football_memory_signal_record,
+            "football_memory_context": football_memory_context,
+        }
+
+        # Garantía extra: la memoria no puede modificar la decisión oficial.
+        final_signal.update(official_decision)
 
         self._verify_official_decision_integrity(
             signal=final_signal,
@@ -1061,6 +1085,209 @@ class LiveSignalEngineV17:
                 "PreMatchLiveRealityAI no pudo evaluar el partido. La decisión oficial no fue afectada."
             ],
             "reality_panel_note": "Evidencia prepartido vs live no disponible. MasterDecisionAI mantiene autoridad total.",
+        }
+
+    def _record_football_memory_match(self, match: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            if not self.football_memory_service:
+                return {
+                    "memory_role": "EVIDENCE_ONLY",
+                    "memory_is_official_decision": False,
+                    "memory_can_publish": False,
+                    "memory_ok": False,
+                    "memory_reason": "FOOTBALL_MEMORY_SERVICE_NOT_AVAILABLE",
+                }
+
+            result = self.football_memory_service.record_match_snapshot(match)
+            if isinstance(result, dict):
+                return result
+
+            return {
+                "memory_role": "EVIDENCE_ONLY",
+                "memory_is_official_decision": False,
+                "memory_can_publish": False,
+                "memory_ok": False,
+                "memory_reason": "FOOTBALL_MEMORY_INVALID_MATCH_RECORD_RESULT",
+            }
+
+        except Exception as exc:
+            logger.warning("FOOTBALL_MEMORY_RECORD_MATCH_ERROR: %s", exc)
+            return {
+                "memory_role": "EVIDENCE_ONLY",
+                "memory_is_official_decision": False,
+                "memory_can_publish": False,
+                "memory_ok": False,
+                "memory_reason": f"FOOTBALL_MEMORY_RECORD_MATCH_ERROR:{type(exc).__name__}",
+            }
+
+    def _record_football_memory_signal(self, signal: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            if not self.football_memory_service:
+                return {
+                    "memory_role": "EVIDENCE_ONLY",
+                    "memory_is_official_decision": False,
+                    "memory_can_publish": False,
+                    "memory_ok": False,
+                    "memory_reason": "FOOTBALL_MEMORY_SERVICE_NOT_AVAILABLE",
+                }
+
+            result = self.football_memory_service.record_signal_snapshot(signal)
+            if isinstance(result, dict):
+                return result
+
+            return {
+                "memory_role": "EVIDENCE_ONLY",
+                "memory_is_official_decision": False,
+                "memory_can_publish": False,
+                "memory_ok": False,
+                "memory_reason": "FOOTBALL_MEMORY_INVALID_SIGNAL_RECORD_RESULT",
+            }
+
+        except Exception as exc:
+            logger.warning("FOOTBALL_MEMORY_RECORD_SIGNAL_ERROR: %s", exc)
+            return {
+                "memory_role": "EVIDENCE_ONLY",
+                "memory_is_official_decision": False,
+                "memory_can_publish": False,
+                "memory_ok": False,
+                "memory_reason": f"FOOTBALL_MEMORY_RECORD_SIGNAL_ERROR:{type(exc).__name__}",
+            }
+
+    def _build_football_memory_context(
+        self,
+        *,
+        match: Dict[str, Any],
+        signal: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        try:
+            if not self.football_memory_service:
+                return self._empty_football_memory_context(
+                    reason="FOOTBALL_MEMORY_SERVICE_NOT_AVAILABLE"
+                )
+
+            home_team_id = (
+                match.get("home_id")
+                or match.get("home_team_id")
+                or signal.get("home_id")
+                or signal.get("home_team_id")
+            )
+            away_team_id = (
+                match.get("away_id")
+                or match.get("away_team_id")
+                or signal.get("away_id")
+                or signal.get("away_team_id")
+            )
+
+            home_team = (
+                match.get("home_team")
+                or match.get("home_name")
+                or signal.get("home_team")
+            )
+            away_team = (
+                match.get("away_team")
+                or match.get("away_name")
+                or signal.get("away_team")
+            )
+
+            league_id = match.get("league_id") or signal.get("league_id")
+            league_name = match.get("league") or signal.get("league")
+
+            minute = (
+                signal.get("api_minute")
+                or signal.get("display_minute")
+                or match.get("api_minute")
+                or match.get("minute")
+            )
+
+            home_score = safe_int(signal.get("home_score") or match.get("home_score"), 0)
+            away_score = safe_int(signal.get("away_score") or match.get("away_score"), 0)
+
+            if home_score > away_score:
+                score_state = "HOME_LEADING"
+            elif away_score > home_score:
+                score_state = "AWAY_LEADING"
+            else:
+                score_state = "DRAW"
+
+            market = (
+                signal.get("official_market")
+                or signal.get("master_market")
+                or signal.get("market")
+                or signal.get("suggested_market")
+                or "UNKNOWN"
+            )
+
+            match_direction = (
+                signal.get("match_direction")
+                or signal.get("football_game_state")
+                or signal.get("momentum_label")
+                or "UNKNOWN"
+            )
+
+            home_memory = self.football_memory_service.get_team_memory(
+                team_id=home_team_id,
+                team_name=home_team,
+            )
+            away_memory = self.football_memory_service.get_team_memory(
+                team_id=away_team_id,
+                team_name=away_team,
+            )
+            league_memory = self.football_memory_service.get_league_memory(
+                league_id=league_id,
+                league_name=league_name,
+            )
+            matchup_memory = self.football_memory_service.get_matchup_memory(
+                home_team_id=home_team_id,
+                away_team_id=away_team_id,
+                home_team=home_team,
+                away_team=away_team,
+            )
+            live_pattern_memory = self.football_memory_service.get_live_pattern_memory(
+                league_id=league_id,
+                minute=minute,
+                score_state=score_state,
+                market=market,
+                match_direction=match_direction,
+            )
+
+            return {
+                "memory_role": "EVIDENCE_ONLY",
+                "memory_is_official_decision": False,
+                "memory_can_publish": False,
+                "memory_available": True,
+                "home_team_memory": home_memory,
+                "away_team_memory": away_memory,
+                "league_memory": league_memory,
+                "matchup_memory": matchup_memory,
+                "live_pattern_memory": live_pattern_memory,
+                "memory_panel_note": (
+                    "Football Intelligence Memory adjuntada como evidencia pasiva. "
+                    "No decide mercado, no publica señales y no modifica official_*."
+                ),
+            }
+
+        except Exception as exc:
+            logger.warning("FOOTBALL_MEMORY_CONTEXT_ERROR: %s", exc)
+            return self._empty_football_memory_context(
+                reason=f"FOOTBALL_MEMORY_CONTEXT_ERROR:{type(exc).__name__}"
+            )
+
+    def _empty_football_memory_context(self, reason: str) -> Dict[str, Any]:
+        return {
+            "memory_role": "EVIDENCE_ONLY",
+            "memory_is_official_decision": False,
+            "memory_can_publish": False,
+            "memory_available": False,
+            "memory_reason": reason,
+            "home_team_memory": {},
+            "away_team_memory": {},
+            "league_memory": {},
+            "matchup_memory": {},
+            "live_pattern_memory": {},
+            "memory_panel_note": (
+                "Football Intelligence Memory no disponible. "
+                "La decisión oficial continúa dependiendo solo de MasterDecisionAI."
+            ),
         }
 
     def _apply_signal_activation_guard(
