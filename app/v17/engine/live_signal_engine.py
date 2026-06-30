@@ -17,6 +17,7 @@ from app.v17.ai.match_reader_ai import MatchReaderAI
 from app.v17.ai.over_candidate_ai import OverCandidateAI
 from app.v17.ai.panel_decision_ai import PanelDecisionAI
 from app.v17.ai.pre_match_profile_ai import PreMatchProfileAI
+from app.v17.ai.pre_match_live_reality_ai import PreMatchLiveRealityAI
 from app.v17.ai.risk_ai import RiskAI
 from app.v17.ai.signal_activation_ai import SignalActivationAI
 from app.v17.services.prediction_feature_builder import PredictionFeatureBuilder
@@ -93,6 +94,7 @@ class LiveSignalEngineV17:
 
         self.pre_match_data_service = PreMatchDataService()
         self.pre_match_profile_ai = PreMatchProfileAI()
+        self.pre_match_live_reality_ai = PreMatchLiveRealityAI()
 
         self.tactical_ai = TacticalAI()
         self.market_ai = MarketAI()
@@ -424,6 +426,19 @@ class LiveSignalEngineV17:
         }
 
         # Garantía final: official_* vuelve a quedar exactamente como lo emitió Master.
+        final_signal.update(official_decision)
+
+        # PreMatchLiveRealityAI queda como evidencia observacional encapsulada.
+        # Se ejecuta después de la decisión oficial para no alterar MasterDecisionAI,
+        # PromotionAI, ActivationAI, Lifecycle ni NarrativeAI.
+        pre_match_live_reality = self._evaluate_pre_match_live_reality(
+            pre_match_profile=pre_match_profile,
+            live_signal=final_signal,
+            match_reader=match_reader,
+        )
+        final_signal["pre_match_live_reality"] = pre_match_live_reality
+
+        # Garantía extra: ningún campo official_* puede ser alterado por esta evidencia.
         final_signal.update(official_decision)
 
         self._update_prediction_feature_store(final_signal)
@@ -949,6 +964,104 @@ class LiveSignalEngineV17:
                     "Memoria previa no disponible. No aumentar confianza solo por marcador."
                 ],
             }
+
+    def _evaluate_pre_match_live_reality(
+        self,
+        *,
+        pre_match_profile: Dict[str, Any],
+        live_signal: Dict[str, Any],
+        match_reader: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        try:
+            live_input = {
+                "minute": (
+                    live_signal.get("api_minute")
+                    or live_signal.get("minute")
+                    or live_signal.get("minuto")
+                ),
+                "home_score": live_signal.get("home_score"),
+                "away_score": live_signal.get("away_score"),
+                "score": (
+                    live_signal.get("scoreline")
+                    or live_signal.get("current_score")
+                    or live_signal.get("score")
+                ),
+                "total_shots": (
+                    live_signal.get("total_shots")
+                    or live_signal.get("shots")
+                ),
+                "total_shots_on": (
+                    live_signal.get("total_shots_on")
+                    or live_signal.get("shots_on_target")
+                ),
+                "total_dangerous_attacks": (
+                    live_signal.get("total_dangerous_attacks")
+                    or live_signal.get("dangerous_attacks")
+                ),
+                "total_corners": (
+                    live_signal.get("total_corners")
+                    or live_signal.get("corners")
+                ),
+                "total_xg": (
+                    live_signal.get("total_xg")
+                    or live_signal.get("xg")
+                    or live_signal.get("xG")
+                ),
+                "pressure_score": (
+                    live_signal.get("pressure_score")
+                    or live_signal.get("football_real_offensive_volume")
+                ),
+                "rhythm_score": (
+                    live_signal.get("rhythm_score")
+                    or live_signal.get("volume_score")
+                    or live_signal.get("goal_evidence_score")
+                ),
+                "risk": (
+                    live_signal.get("risk_status")
+                    or live_signal.get("risk_level")
+                    or live_signal.get("football_warning_level")
+                ),
+                "match_reader": (
+                    match_reader.get("football_dominant_reading")
+                    or match_reader.get("football_game_state")
+                    or match_reader.get("football_story")
+                ),
+                "market": (
+                    live_signal.get("official_market")
+                    or live_signal.get("master_market")
+                    or live_signal.get("market")
+                    or live_signal.get("suggested_market")
+                ),
+            }
+
+            result = self.pre_match_live_reality_ai.analyze(
+                pre_match=pre_match_profile,
+                live=live_input,
+            )
+
+            if isinstance(result, dict):
+                return result
+
+        except Exception as exc:
+            logger.warning("PRE_MATCH_LIVE_REALITY_AI_ERROR: %s", exc)
+
+        return {
+            "reality_role": "EVIDENCE_ONLY",
+            "reality_is_official_decision": False,
+            "reality_can_publish": False,
+            "pre_match_expectation": "UNKNOWN",
+            "live_reality": "UNKNOWN",
+            "favorite_status": "UNKNOWN",
+            "score_fairness": "UNKNOWN",
+            "momentum_shift": "UNKNOWN",
+            "match_direction": "UNKNOWN",
+            "reality_confidence": 0,
+            "reality_support_points": [],
+            "reality_warnings": [
+                "PreMatchLiveRealityAI no pudo evaluar el partido. La decisión oficial no fue afectada."
+            ],
+            "reality_panel_note": "Evidencia prepartido vs live no disponible. MasterDecisionAI mantiene autoridad total.",
+        }
 
     def _apply_signal_activation_guard(
         self,
