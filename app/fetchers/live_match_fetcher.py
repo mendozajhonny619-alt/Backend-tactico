@@ -222,7 +222,7 @@ class LiveMatchFetcher:
                 "LIVE_FETCHER: usando live cache (%s partidos).",
                 len(self._live_cache),
             )
-            return self._clone_list_with_age(self._live_cache)
+            return self._clone_list_with_age(self._live_cache, is_cache_source=True)
 
         if now < self._api_football_cooldown_until:
             remaining = int(self._api_football_cooldown_until - now)
@@ -234,20 +234,24 @@ class LiveMatchFetcher:
             backup_matches = self._fetch_from_football_data()
             if backup_matches:
                 self._store_live_cache(backup_matches)
-                return self._clone_list_with_age(backup_matches)
+                return self._clone_list_with_age(backup_matches, is_cache_source=False)
 
             if self._live_cache:
                 logger.warning(
                     "LIVE_FETCHER: devolviendo última cache disponible por cooldown."
                 )
-                return self._clone_list_with_age(self._live_cache)
+                return self._clone_list_with_age(
+                    self._live_cache,
+                    is_cache_source=True,
+                    force_data_source_quality="STALE_CACHE",
+                )
 
             return []
 
         primary_matches = self._fetch_from_api_football()
         if primary_matches:
             self._store_live_cache(primary_matches)
-            return self._clone_list_with_age(primary_matches)
+            return self._clone_list_with_age(primary_matches, is_cache_source=False)
 
         logger.warning(
             "LIVE_FETCHER: API-Football sin datos útiles. Probando backup football-data.org..."
@@ -256,13 +260,17 @@ class LiveMatchFetcher:
         backup_matches = self._fetch_from_football_data()
         if backup_matches:
             self._store_live_cache(backup_matches)
-            return self._clone_list_with_age(backup_matches)
+            return self._clone_list_with_age(backup_matches, is_cache_source=False)
 
         if self._live_cache:
             logger.warning(
                 "LIVE_FETCHER: ninguna fuente devolvió datos válidos. Devolviendo última cache disponible."
             )
-            return self._clone_list_with_age(self._live_cache)
+            return self._clone_list_with_age(
+                self._live_cache,
+                is_cache_source=True,
+                force_data_source_quality="STALE_CACHE",
+            )
 
         logger.warning(
             "LIVE_FETCHER: ninguna fuente devolvió partidos válidos y no existe cache previa."
@@ -715,6 +723,15 @@ class LiveMatchFetcher:
                 totals = self._build_totals(home_stats, away_stats)
                 data_quality = self._classify_data_quality(home_stats, away_stats, totals)
                 has_live_stats = self._has_real_live_stats(home_stats, away_stats, totals)
+                source_metadata = self._build_data_source_metadata(
+                    fixture_id=fixture_id,
+                    data_quality=data_quality,
+                    has_live_stats=has_live_stats,
+                    home_stats=home_stats,
+                    away_stats=away_stats,
+                    totals=totals,
+                    is_backup_source=False,
+                )
 
                 home_score = self._safe_int(goals.get("home"))
                 away_score = self._safe_int(goals.get("away"))
@@ -858,6 +875,7 @@ class LiveMatchFetcher:
 
                     "data_quality": data_quality,
                     "calidad_datos": data_quality,
+                    **source_metadata,
                     "has_live_stats": has_live_stats,
                     "tiene_estadísticas_en_vivo": has_live_stats,
                     "is_scannable": is_scannable,
@@ -996,6 +1014,15 @@ class LiveMatchFetcher:
                 data_quality = "LOW_BACKUP"
                 has_live_stats = False
                 is_scannable = False
+                source_metadata = self._build_data_source_metadata(
+                    fixture_id=item.get("id"),
+                    data_quality=data_quality,
+                    has_live_stats=has_live_stats,
+                    home_stats=home_stats,
+                    away_stats=away_stats,
+                    totals=totals,
+                    is_backup_source=True,
+                )
 
                 scan_phase = self._scan_phase(
                     minute=minute,
@@ -1107,6 +1134,7 @@ class LiveMatchFetcher:
 
                         "data_quality": data_quality,
                         "calidad_datos": data_quality,
+                        **source_metadata,
                         "has_live_stats": has_live_stats,
                         "tiene_estadísticas_en_vivo": has_live_stats,
                         "is_scannable": is_scannable,
@@ -1568,15 +1596,135 @@ class LiveMatchFetcher:
         try: return int(value)
         except: return default
 
+    def _cache_age_seconds(self, cache: Dict[str, Dict[str, Any]], fixture_id: Any) -> int | None:
+        try:
+            cached = cache.get(str(fixture_id))
+            if not cached or "at" not in cached:
+                return None
+            return max(0, int(time.time() - cached["at"]))
+        except Exception:
+            return None
+
+    def _stats_completeness_score(
+        self,
+        home_stats: Dict[str, Any],
+        away_stats: Dict[str, Any],
+    ) -> float:
+        expected_fields = {
+            "Ball Possession",
+            "Total Shots",
+            "Shots on Goal",
+            "Shots off Goal",
+            "Blocked Shots",
+            "Shots insidebox",
+            "Shots outsidebox",
+            "Corner Kicks",
+            "Fouls",
+            "Offsides",
+            "Yellow Cards",
+            "Red Cards",
+            "Goalkeeper Saves",
+            "Total passes",
+            "Passes accurate",
+            "Passes %",
+            "expected_goals",
+            "goals_prevented",
+        }
+
+        available_fields = set(home_stats.get("stats_available_fields") or [])
+        available_fields.update(away_stats.get("stats_available_fields") or [])
+
+        if not expected_fields:
+            return 0.0
+
+        return round(min(1.0, len(available_fields) / len(expected_fields)), 3)
+
+    def _build_data_source_metadata(
+        self,
+        *,
+        fixture_id: Any,
+        data_quality: str,
+        has_live_stats: bool,
+        home_stats: Dict[str, Any],
+        away_stats: Dict[str, Any],
+        totals: Dict[str, Any],
+        is_backup_source: bool,
+    ) -> Dict[str, Any]:
+        stats_age_seconds = self._cache_age_seconds(self._stats_cache, fixture_id)
+        events_age_seconds = self._cache_age_seconds(self._events_cache, fixture_id)
+        players_age_seconds = self._cache_age_seconds(self._players_cache, fixture_id)
+        stats_completeness_score = self._stats_completeness_score(
+            home_stats=home_stats,
+            away_stats=away_stats,
+        )
+
+        stale_stats_limit = max(self.STATS_CACHE_TTL_SECONDS * 3, 180)
+        stats_are_stale = (
+            stats_age_seconds is not None
+            and stats_age_seconds > stale_stats_limit
+        )
+
+        if is_backup_source:
+            data_source_quality = "LOW_BACKUP"
+        elif stats_are_stale:
+            data_source_quality = "STALE_CACHE"
+        elif data_quality in {"HIGH", "MEDIUM_HIGH"} and has_live_stats:
+            data_source_quality = "HIGH"
+        elif has_live_stats:
+            data_source_quality = "MEDIUM"
+        else:
+            data_source_quality = "MEDIUM"
+
+        metadata = {
+            "data_source_quality": data_source_quality,
+            "is_backup_source": bool(is_backup_source),
+            "is_cache_source": False,
+            "stats_completeness_score": stats_completeness_score,
+        }
+
+        if stats_age_seconds is not None:
+            metadata["stats_age_seconds"] = stats_age_seconds
+        if events_age_seconds is not None:
+            metadata["events_age_seconds"] = events_age_seconds
+        if players_age_seconds is not None:
+            metadata["players_age_seconds"] = players_age_seconds
+
+        return metadata
+
     def _clone_list(self, data: List[Any]) -> List[Any]:
         return deepcopy(data)
 
-    def _clone_list_with_age(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _clone_list_with_age(
+        self,
+        data: List[Dict[str, Any]],
+        *,
+        is_cache_source: bool = False,
+        force_data_source_quality: str | None = None,
+    ) -> List[Dict[str, Any]]:
         now = time.time()
         cloned = deepcopy(data)
+
         for item in cloned:
-            if isinstance(item, dict) and "fetched_at" in item:
-                item["cache_age_seconds"] = max(0, int(now - item["fetched_at"]))
+            if not isinstance(item, dict):
+                continue
+
+            item["is_cache_source"] = bool(is_cache_source)
+
+            if "fetched_at" in item:
+                cache_age_seconds = max(0, int(now - item["fetched_at"]))
+                item["cache_age_seconds"] = cache_age_seconds
+
+                if force_data_source_quality:
+                    item["data_source_quality"] = force_data_source_quality
+                elif (
+                    is_cache_source
+                    and cache_age_seconds > max(
+                        self.LIVE_CACHE_TTL_SECONDS * 3,
+                        self.CLOCK_STALE_SECONDS,
+                    )
+                ):
+                    item["data_source_quality"] = "STALE_CACHE"
+
         return cloned
 
     def _store_live_cache(self, matches: List[Dict[str, Any]]) -> None:
