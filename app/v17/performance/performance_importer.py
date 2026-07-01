@@ -68,6 +68,9 @@ class PerformanceImporter:
         self.performance_db_path = Path(self.history.db_path)
         self._ensure_import_log()
 
+    def _default_app_dir(self) -> Path:
+        return Path(__file__).resolve().parents[2]
+
     def import_all(self) -> Dict[str, Any]:
         summary = self._header()
         summary.update({"sources": {}, "started_at": utc_now_iso()})
