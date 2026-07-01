@@ -38,6 +38,11 @@ from app.v17.services.signal_history_service import SignalHistoryService
 from app.v17.signals.signal_lifecycle import SignalLifecycle
 from app.v17.signals.signal_ranker import SignalRanker
 
+try:
+    from app.v17.performance.performance_evaluator import PerformanceEvaluator
+except Exception:
+    PerformanceEvaluator = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +141,14 @@ class LiveSignalEngineV17:
         except Exception as exc:
             logger.warning("FOOTBALL_MEMORY_INIT_ERROR: %s", exc)
             self.football_memory_service = None
+
+        self.performance_evaluator = None
+        try:
+            if PerformanceEvaluator is not None:
+                self.performance_evaluator = PerformanceEvaluator()
+        except Exception as exc:
+            logger.warning("PERFORMANCE_EVALUATOR_INIT_ERROR: %s", exc)
+            self.performance_evaluator = None
 
     def process_live_matches(self, raw_matches: List[Dict[str, Any]]) -> Dict[str, Any]:
         updated_at = utc_now_iso()
@@ -479,7 +492,100 @@ class LiveSignalEngineV17:
             official_decision=official_decision,
         )
 
+        # PerformanceEvaluator queda como registro pasivo para evaluación futura.
+        # No decide, no publica, no modifica official_* y no entra en pre_master_evidence.
+        self._record_performance_signal_passive(
+            final_signal=final_signal,
+            official_decision=official_decision,
+        )
+
+        # Garantía final: PerformanceEvaluator tampoco puede modificar official_*.
+        final_signal.update(official_decision)
+
+        self._verify_official_decision_integrity(
+            signal=final_signal,
+            official_decision=official_decision,
+        )
+
         return final_signal
+
+
+    def _record_performance_signal_passive(
+        self,
+        final_signal: Dict[str, Any],
+        official_decision: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Registra final_signal en PerformanceEvaluator de forma pasiva.
+
+        EVALUATION_ONLY:
+        - no decide
+        - no publica
+        - no modifica official_*
+        - no entra en pre_master_evidence
+        """
+
+        if not isinstance(final_signal, dict):
+            return {
+                "performance_role": "EVALUATION_ONLY",
+                "performance_is_official_decision": False,
+                "performance_can_publish": False,
+                "performance_ok": False,
+                "performance_reason": "INVALID_FINAL_SIGNAL",
+            }
+
+        if self.performance_evaluator is None:
+            result = {
+                "performance_role": "EVALUATION_ONLY",
+                "performance_is_official_decision": False,
+                "performance_can_publish": False,
+                "performance_ok": False,
+                "performance_reason": "PERFORMANCE_EVALUATOR_UNAVAILABLE",
+            }
+            final_signal["performance_record_result"] = result
+            final_signal.update(official_decision)
+            return result
+
+        try:
+            result = self.performance_evaluator.record_signal(dict(final_signal))
+
+            if not isinstance(result, dict):
+                result = {
+                    "performance_role": "EVALUATION_ONLY",
+                    "performance_is_official_decision": False,
+                    "performance_can_publish": False,
+                    "performance_ok": False,
+                    "performance_reason": "INVALID_PERFORMANCE_RESULT",
+                }
+
+            final_signal["performance_record_result"] = result
+
+        except Exception as exc:
+            result = {
+                "performance_role": "EVALUATION_ONLY",
+                "performance_is_official_decision": False,
+                "performance_can_publish": False,
+                "performance_ok": False,
+                "performance_reason": "PERFORMANCE_RECORD_FAILED",
+                "performance_error": str(exc)[:300],
+            }
+            final_signal["performance_record_result"] = result
+
+        final_signal.update(official_decision)
+
+        try:
+            self._verify_official_decision_integrity(
+                signal=final_signal,
+                official_decision=official_decision,
+            )
+        except Exception as exc:
+            final_signal.update(official_decision)
+            final_signal["performance_record_result"] = {
+                **result,
+                "performance_integrity_warning": str(exc)[:300],
+            }
+
+        return final_signal.get("performance_record_result", result)
 
 
     @staticmethod
