@@ -1,6 +1,5 @@
 const API_BASE =
-  import.meta?.env?.VITE_API_URL ||
-  process.env.REACT_APP_API_URL ||
+  import.meta.env.VITE_API_URL ||
   "http://127.0.0.1:8000";
 
 const V17_BASE = `${API_BASE}/v17`;
@@ -45,10 +44,6 @@ export async function fetchV17Signals() {
 
 export async function fetchV17History() {
   return fetchWithTimeout(`${V17_BASE}/history`, {}, DEFAULT_TIMEOUT);
-}
-
-export async function fetchV17Debug() {
-  return fetchWithTimeout(`${V17_BASE}/debug`, {}, DEFAULT_TIMEOUT);
 }
 
 export const V17_API_BASE = V17_BASE;
