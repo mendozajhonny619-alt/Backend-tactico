@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Dict
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class DashboardService:
+    """Read-only facade for the JHONNY ELITE panel.
+
+    Heavy analysis is done by the worker. API routes only read the latest
+    immutable-ish snapshot so the panel remains fast on desktop and mobile.
+    """
+
+    VERSION = "JHONNY_ELITE_19.0"
+
+    def __init__(self, runtime_state, dashboard_adapter) -> None:
+        self.runtime_state = runtime_state
+        self.dashboard_adapter = dashboard_adapter
+
+    def _dashboard(self) -> Dict[str, Any]:
+        data = self.dashboard_adapter.last_dashboard()
+        return data if isinstance(data, dict) else {}
+
+    def get_health(self) -> Dict[str, Any]:
+        state = self.runtime_state.get_health_status()
+        snap = self.runtime_state.snapshot()
+        return {
+            "ok": state.get("status") != "ERROR",
+            "status": state.get("status", "STARTING"),
+            "active": state.get("status") == "OK",
+            "version": self.VERSION,
+            "error": state.get("error"),
+            "updated_at": (snap.get("meta") or {}).get("updated_at") or now_iso(),
+            "protocol": "LIVE -> CANDIDATE -> PREMATCH/ODDS -> MATH -> MASTER -> TRACK",
+        }
+
+    def get_live(self) -> Dict[str, Any]:
+        items = self.runtime_state.get_live_matches()
+        return {"ok": True, "count": len(items), "items": items, "matches": items, "updated_at": now_iso()}
+
+    def get_signals(self) -> Dict[str, Any]:
+        items = self.runtime_state.get_active_signals()
+        return {"ok": True, "count": len(items), "items": items, "signals": items, "updated_at": now_iso()}
+
+    def get_opportunities(self) -> Dict[str, Any]:
+        data = self._dashboard()
+        observe = data.get("observe", []) or []
+        no_bet = data.get("no_bet", []) or []
+        over = [x for x in observe if str(x.get("suggested_market") or x.get("market")).upper() == "OVER"]
+        under = [x for x in observe if str(x.get("suggested_market") or x.get("market")).upper() == "UNDER"]
+        sections = {
+            "over_candidates": over,
+            "under_candidates": under,
+            "observe": observe,
+            "rejected": no_bet,
+        }
+        items = over + under + [x for x in observe if x not in over and x not in under] + no_bet
+        return {
+            "ok": True,
+            "summary": data.get("summary", {}),
+            "sections": sections,
+            "items": items,
+            "updated_at": now_iso(),
+        }
+
+    def get_blocked(self) -> Dict[str, Any]:
+        items = self.runtime_state.get_blocked()
+        return {"ok": True, "count": len(items), "items": items, "blocked": items, "updated_at": now_iso()}
+
+    def get_history(self, limit: int = 100) -> Dict[str, Any]:
+        data = self._dashboard()
+        history = (data.get("history", []) or [])[:limit]
+        pending = data.get("pending_signals", []) or []
+        closed = data.get("closed_history", []) or []
+        return {
+            "ok": True,
+            "count": len(history),
+            "total_available": len(data.get("history", []) or []),
+            "limit": limit,
+            "items": history,
+            "history": history,
+            "tracking_items": history,
+            "tracking_history": history,
+            "tracking_count": len(history),
+            "tracking_total_available": len(history),
+            "tracking_summary": data.get("summary", {}),
+            "performance_analysis": data.get("performance_analysis", {}),
+            "pending_signals": pending,
+            "closed_history": closed,
+            "updated_at": now_iso(),
+        }
+
+    def get_stats(self) -> Dict[str, Any]:
+        data = self._dashboard()
+        stats = {**(data.get("stats", {}) or {}), **(self.runtime_state.get_stats() or {})}
+        stats["version"] = self.VERSION
+        return {"ok": True, "stats": stats, "updated_at": now_iso()}
