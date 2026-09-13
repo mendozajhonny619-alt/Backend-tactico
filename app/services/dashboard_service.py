@@ -1,84 +1,101 @@
-from datetime import datetime
-from app.services.history_service import HistoryService
-from app.services.live_signal_manager import LiveSignalManager
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Dict
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
 
 class DashboardService:
-    @staticmethod
-    def healthcheck():
+    """Read-only facade for the JHONNY ELITE panel.
+
+    Heavy analysis is done by the worker. API routes only read the latest
+    immutable-ish snapshot so the panel remains fast on desktop and mobile.
+    """
+
+    VERSION = "JHONNY_ELITE_19.0"
+
+    def __init__(self, runtime_state, dashboard_adapter) -> None:
+        self.runtime_state = runtime_state
+        self.dashboard_adapter = dashboard_adapter
+
+    def _dashboard(self) -> Dict[str, Any]:
+        data = self.dashboard_adapter.last_dashboard()
+        return data if isinstance(data, dict) else {}
+
+    def get_health(self) -> Dict[str, Any]:
+        state = self.runtime_state.get_health_status()
+        snap = self.runtime_state.snapshot()
         return {
-            "ok": True,
-            "system_status": "OPERATIONAL",
-            "version": "V16.0_ELITE",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "ok": state.get("status") != "ERROR",
+            "status": state.get("status", "STARTING"),
+            "active": state.get("status") == "OK",
+            "version": self.VERSION,
+            "error": state.get("error"),
+            "updated_at": (snap.get("meta") or {}).get("updated_at") or now_iso(),
+            "protocol": "LIVE -> CANDIDATE -> PREMATCH/ODDS -> MATH -> MASTER -> TRACK",
         }
 
-    @staticmethod
-    def get_stats():
-        history = HistoryService.obtener_historial()
-        active_signals = LiveSignalManager.active_signals
+    def get_live(self) -> Dict[str, Any]:
+        items = self.runtime_state.get_live_matches()
+        return {"ok": True, "count": len(items), "items": items, "matches": items, "updated_at": now_iso()}
 
-        total_signals = len(history)
-        total_matches = len(active_signals)
-        errors = 0
+    def get_signals(self) -> Dict[str, Any]:
+        items = self.runtime_state.get_active_signals()
+        return {"ok": True, "count": len(items), "items": items, "signals": items, "updated_at": now_iso()}
 
+    def get_opportunities(self) -> Dict[str, Any]:
+        data = self._dashboard()
+        observe = data.get("observe", []) or []
+        no_bet = data.get("no_bet", []) or []
+        over = [x for x in observe if str(x.get("suggested_market") or x.get("market")).upper() == "OVER"]
+        under = [x for x in observe if str(x.get("suggested_market") or x.get("market")).upper() == "UNDER"]
+        sections = {
+            "over_candidates": over,
+            "under_candidates": under,
+            "observe": observe,
+            "rejected": no_bet,
+        }
+        items = over + under + [x for x in observe if x not in over and x not in under] + no_bet
         return {
             "ok": True,
-            "stats": {
-                "total_matches": total_matches,
-                "total_signals": total_signals,
-                "errors": errors,
-                "system_status": "OPERATIONAL",
-                "version": "V16.0_ELITE"
-            },
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "summary": data.get("summary", {}),
+            "sections": sections,
+            "items": items,
+            "updated_at": now_iso(),
         }
 
-    @staticmethod
-    def get_history_panel():
-        history = HistoryService.obtener_historial()
+    def get_blocked(self) -> Dict[str, Any]:
+        items = self.runtime_state.get_blocked()
+        return {"ok": True, "count": len(items), "items": items, "blocked": items, "updated_at": now_iso()}
+
+    def get_history(self, limit: int = 100) -> Dict[str, Any]:
+        data = self._dashboard()
+        history = (data.get("history", []) or [])[:limit]
+        pending = data.get("pending_signals", []) or []
+        closed = data.get("closed_history", []) or []
         return {
             "ok": True,
             "count": len(history),
-            "items": history[-20:],
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "total_available": len(data.get("history", []) or []),
+            "limit": limit,
+            "items": history,
+            "history": history,
+            "tracking_items": history,
+            "tracking_history": history,
+            "tracking_count": len(history),
+            "tracking_total_available": len(history),
+            "tracking_summary": data.get("summary", {}),
+            "performance_analysis": data.get("performance_analysis", {}),
+            "pending_signals": pending,
+            "closed_history": closed,
+            "updated_at": now_iso(),
         }
 
-    @staticmethod
-    def get_active_signals():
-        active_signals = LiveSignalManager.active_signals
-
-        formatted = []
-        for signal in active_signals:
-            match = signal.get("match", {})
-            motores = signal.get("motores", {})
-
-            formatted.append({
-                "match_id": match.get("match_id"),
-                "partido": f"{match.get('home', 'N/A')} vs {match.get('away', 'N/A')}",
-                "league": match.get("league"),
-                "country": match.get("country"),
-                "minute": match.get("minute"),
-                "score": match.get("score"),
-                "market": match.get("market"),
-                "selection": match.get("selection"),
-                "line": match.get("line"),
-                "odd": match.get("cuota"),
-                "confidence": match.get("confidence"),
-                "risk_score": match.get("risk_score"),
-                "signal_score": match.get("signal_score"),
-                "signal_rank": match.get("signal_rank"),
-                "recomendacion_final": match.get("recomendacion_final"),
-                "reason": match.get("reason"),
-                "status": signal.get("status", "ACTIVA"),
-                "match_state": motores.get("tactica", {}).get("match_state"),
-                "match_state_reason": motores.get("tactica", {}).get("match_state_reason"),
-                "edge": motores.get("value", {}).get("edge"),
-                "value_category": motores.get("value", {}).get("value_category"),
-            })
-
-        return {
-            "ok": True,
-            "count": len(formatted),
-            "items": formatted,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
+    def get_stats(self) -> Dict[str, Any]:
+        data = self._dashboard()
+        stats = {**(data.get("stats", {}) or {}), **(self.runtime_state.get_stats() or {})}
+        stats["version"] = self.VERSION
+        return {"ok": True, "stats": stats, "updated_at": now_iso()}

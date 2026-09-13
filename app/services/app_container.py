@@ -1,31 +1,22 @@
 from __future__ import annotations
 
 from app.fetchers.live_match_fetcher import LiveMatchFetcher
-
 from app.services.runtime_state import RuntimeState
-from app.services.scan_service import ScanService
-from app.services.live_signal_manager import LiveSignalManager
-from app.services.history_service import HistoryService
+from app.services.dashboard_service import DashboardService
+from app.v17.dashboard.dashboard_adapter import V17DashboardAdapter
 
 
 class AppContainer:
-    """
-    Contenedor central del sistema.
-
-    Aquí viven las dependencias compartidas:
-    - fetcher live
-    - scanner
-    - runtime state
-    - señales activas
-    - historial
-    """
+    """Single dependency container for the JHONNY ELITE runtime."""
 
     def __init__(self) -> None:
         self.runtime_state = RuntimeState()
         self.live_fetcher = LiveMatchFetcher()
-        self.scan_service = ScanService()
-        self.live_signal_manager = LiveSignalManager()
-        self.history_service = HistoryService()
+        self.v17_dashboard_adapter = V17DashboardAdapter()
+        self.dashboard_service = DashboardService(
+            runtime_state=self.runtime_state,
+            dashboard_adapter=self.v17_dashboard_adapter,
+        )
 
 
 app_container = AppContainer()
