@@ -36,7 +36,7 @@ def normalize_text(value: Any) -> str:
 
 class V17AssistantAI:
     """
-    Asistente conversacional interno de JHONNY ELITE V17.
+    Asistente conversacional interno de JHONNY ELITE 19.
 
     Esta primera versión:
     - Lee el snapshot del dashboard V17.
@@ -48,7 +48,7 @@ class V17AssistantAI:
 
     def __init__(self) -> None:
         self.api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        self.model = os.getenv("OPENAI_MODEL", "gpt-5.5").strip()
+        self.model = os.getenv("OPENAI_MODEL", "").strip()
         self.deep_model = os.getenv("OPENAI_DEEP_MODEL", self.model).strip()
 
     def answer(
@@ -65,7 +65,7 @@ class V17AssistantAI:
             return {
                 "ok": False,
                 "mode": mode,
-                "answer": "Necesito que escribas una pregunta para poder analizar el sistema V17.",
+                "answer": "Necesito que escribas una pregunta para poder analizar JHONNY ELITE 19.",
                 "model": None,
                 "used_openai": False,
                 "context_summary": {},
@@ -75,7 +75,7 @@ class V17AssistantAI:
         match = selected_match if isinstance(selected_match, dict) else None
         context_summary = self._build_context_summary(snapshot=snapshot, selected_match=match)
 
-        if not self.api_key:
+        if not self.api_key or not self.model:
             return {
                 "ok": True,
                 "mode": mode,
@@ -108,7 +108,7 @@ class V17AssistantAI:
                 "mode": mode,
                 "answer": (
                     "No pude conectar con la IA externa en este momento. "
-                    "Te doy una lectura local básica del sistema V17:\n\n"
+                    "Te doy una lectura local básica del sistema JHONNY ELITE 19:\n\n"
                     + self._local_answer(question=clean_question, context=context_summary)
                 ),
                 "model": "LOCAL_FALLBACK_AFTER_ERROR",
@@ -178,7 +178,7 @@ class V17AssistantAI:
 
     def _system_prompt(self, mode: str) -> str:
         return """
-Eres JHONNY ELITE ASSISTANT V17, un analista deportivo conversacional conectado al sistema JHONNY ELITE V17.
+Eres JHONNY ELITE ASSISTANT 19, un analista deportivo conversacional conectado al sistema JHONNY ELITE 19.
 
 Tu trabajo es explicar el panel, interpretar señales, comparar partidos y ayudar al usuario a entender qué está viendo el sistema.
 
@@ -209,13 +209,13 @@ Reglas obligatorias:
 Pregunta del usuario:
 {question}
 
-Resumen actual del sistema V17:
+Resumen actual del sistema JHONNY ELITE 19:
 {context_summary}
 
 Conversación reciente:
 {short_conversation}
 
-Responde como analista interno de JHONNY ELITE V17.
+Responde como analista interno de JHONNY ELITE 19.
 """
 
     def _build_context_summary(
@@ -232,7 +232,7 @@ Responde como analista interno de JHONNY ELITE V17.
         summary = snapshot.get("summary", {}) if isinstance(snapshot.get("summary"), dict) else {}
 
         context = {
-            "system_version": snapshot.get("version", "V17"),
+            "system_version": snapshot.get("version", "JHONNY_ELITE_19.0"),
             "updated_at": snapshot.get("updated_at"),
             "message": snapshot.get("message"),
             "summary": summary,

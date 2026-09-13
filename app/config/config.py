@@ -171,11 +171,49 @@ class Config:
     # =========================
     SHADOW_MODE = os.getenv("SHADOW_MODE", "false").lower() == "true"
     SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", 30))
+    LIVE_BASE_CACHE_TTL_SECONDS = max(15, int(os.getenv("LIVE_BASE_CACHE_TTL_SECONDS", 15)))
+    POST_GOAL_RESCAN_SECONDS = max(15, int(os.getenv("POST_GOAL_RESCAN_SECONDS", 15)))
+    WORKER_ENABLED = os.getenv("WORKER_ENABLED", "true").lower() == "true"
+    WORKER_SINGLE_PROCESS_ONLY = os.getenv("WORKER_SINGLE_PROCESS_ONLY", "true").lower() == "true"
+    GLOBAL_SENIOR_SCOPE = os.getenv("GLOBAL_SENIOR_SCOPE", "true").lower() == "true"
+
+    # Escaneo live profundo por lotes. API-Football soporta hasta 20 ids por petición.
+    LIVE_DETAILS_BATCH_SIZE = max(1, min(20, int(os.getenv("LIVE_DETAILS_BATCH_SIZE", 20))))
+    LIVE_DETAILS_MAX_MATCHES = max(20, int(os.getenv("LIVE_DETAILS_MAX_MATCHES", 200)))
+    LIVE_DETAILS_CACHE_TTL_SECONDS = max(15, int(os.getenv("LIVE_DETAILS_CACHE_TTL_SECONDS", 15)))
+
+    # Protocolo JHONNY ELITE: OVER puede aparecer en cualquier tramo si la evidencia
+    # madura; UNDER se publica tarde por defecto.
+    UNDER_MINUTE_MIN = int(os.getenv("UNDER_MINUTE_MIN", 75))
+    CANDIDATE_PREMATCH_MIN_CONFIDENCE = float(os.getenv("CANDIDATE_PREMATCH_MIN_CONFIDENCE", 58.0))
+    PUBLISH_MIN_CONFIDENCE = float(os.getenv("PUBLISH_MIN_CONFIDENCE", 68.0))
+    STRONG_SIGNAL_CONFIDENCE = float(os.getenv("STRONG_SIGNAL_CONFIDENCE", 82.0))
+    PREMIUM_SIGNAL_CONFIDENCE = float(os.getenv("PREMIUM_SIGNAL_CONFIDENCE", 88.0))
+
+    # Las cuotas enriquecen solo candidatos para ahorrar cuota y latencia.
+    CANDIDATE_ODDS_ENABLED = os.getenv("CANDIDATE_ODDS_ENABLED", "true").lower() == "true"
+    VALUE_REQUIRED_FOR_PREMIUM = os.getenv("VALUE_REQUIRED_FOR_PREMIUM", "true").lower() == "true"
+
+    # Seguridad / panel. Separar múltiples orígenes con coma.
+    CORS_ORIGINS = [
+        x.strip() for x in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173"
+        ).split(",") if x.strip()
+    ]
+
+    # Persistencia local del tracker/caches. En hosts efímeros se debe montar
+    # DATA_DIR sobre disco persistente. DATABASE_URL queda reservado para una
+    # migración futura y no se utiliza como backend del tracker en esta versión.
+    DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+    DATA_DIR = os.getenv("JHONNY_DATA_DIR", "app/v17/storage").strip()
 
     # =========================
     # 🧪 DEBUG
     # =========================
     DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+    API_FOOTBALL_DEBUG_RAW = os.getenv("JHONNY_DEBUG_API_RAW", "0").lower() in {"1", "true", "yes", "on"}
+    API_FOOTBALL_DEBUG_RAW_DIR = os.getenv("JHONNY_DEBUG_API_RAW_DIR", "debug_api_football")
 
     @classmethod
     def validate(cls):

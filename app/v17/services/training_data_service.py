@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from app.config.config import Config
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -45,12 +47,14 @@ class TrainingDataService:
     STORAGE_DIR = Path("app/v17/storage")
     STORAGE_FILE = STORAGE_DIR / "training_data.jsonl"
 
-    def __init__(self) -> None:
-        self.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    def __init__(self, storage_dir: Optional[str] = None) -> None:
+        self.storage_dir = Path(storage_dir or getattr(Config, "DATA_DIR", "app/v17/storage"))
+        self.storage_file = self.storage_dir / "training_data.jsonl"
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
 
     def _append(self, payload: Dict[str, Any]) -> None:
         try:
-            with self.STORAGE_FILE.open("a", encoding="utf-8") as fh:
+            with self.storage_file.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
         except Exception:
             # Best-effort only: training data must never break the live engine.
@@ -97,10 +101,10 @@ class TrainingDataService:
         No es obligatorio para el motor, pero ayuda al panel y al debug.
         """
         try:
-            if not self.STORAGE_FILE.exists():
+            if not self.storage_file.exists():
                 return []
 
-            lines = self.STORAGE_FILE.read_text(encoding="utf-8").splitlines()
+            lines = self.storage_file.read_text(encoding="utf-8").splitlines()
             selected = lines[-max(1, int(limit)):]
             events: List[Dict[str, Any]] = []
 
@@ -151,7 +155,7 @@ class TrainingDataService:
             "world_cup_events": world_cup_events,
             "national_team_events": national_team_events,
             "major_tournament_events": major_tournament_events,
-            "storage_file": str(self.STORAGE_FILE),
+            "storage_file": str(self.storage_file),
         }
 
     def _competition_metadata(self, payload: Dict[str, Any]) -> Dict[str, Any]:

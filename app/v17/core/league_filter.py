@@ -3,6 +3,8 @@ from __future__ import annotations
 import unicodedata
 from typing import Any, Dict, List
 
+from app.config.config import Config
+
 
 ALLOWED_LEAGUE_KEYWORDS: List[str] = [
     "WORLD CUP",
@@ -195,6 +197,8 @@ HARD_BLOCKED_LEAGUE_KEYWORDS: List[str] = [
     "CUARTA", "CUARTA DIVISION", "CUARTA DIVISIÓN", "FOURTH DIVISION",
     "5TH", "FIFTH", "REGIONAL", "AMATEUR", "LOCAL LEAGUE", "DISTRICT", "COUNTY",
     "UNIVERSITY", "UNIVERSITARIO", "COLLEGE", "SCHOOL",
+    "LEAGUE TWO", "LEAGUE THREE", "3. LIGA", "3RD DIVISION", "DIVISION 3",
+    "SERIE C", "SERIE D", "LIGA 3", "NATIONAL LEAGUE", "NON LEAGUE",
 ]
 
 
@@ -290,10 +294,22 @@ class LeagueFilter:
                 competition_weight=45,
             )
 
+        if getattr(Config, "GLOBAL_SENIOR_SCOPE", True) and league.strip():
+            return self._result(
+                allowed=True,
+                status="ALLOWED_GLOBAL_SENIOR_COMPETITION",
+                reason="Competición senior admitida por alcance global; se excluyen categorías juveniles, reservas y divisiones inferiores conocidas.",
+                allowed_hits=allowed_hits,
+                blocked_hits=[],
+                country_hits=country_hits,
+                competition_tier="GLOBAL_SENIOR",
+                competition_weight=55,
+            )
+
         return self._result(
             allowed=False,
             status="BLOCKED_UNKNOWN_LOW_PRIORITY",
-            reason="Liga no identificada como primera o segunda división prioritaria.",
+            reason="Liga no identificada como competición senior operable.",
             allowed_hits=allowed_hits,
             blocked_hits=[],
             country_hits=country_hits,
@@ -373,6 +389,7 @@ class LeagueFilter:
             "NATIONAL_TEAM_ELITE": 88,
             "PRIORITY_LEAGUE": 75,
             "COUNTRY_REVIEW": 45,
+            "GLOBAL_SENIOR": 55,
             "UNKNOWN": 0,
             "BLOCKED": 0,
         }

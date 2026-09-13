@@ -25,7 +25,7 @@ class LiveMatchFetcher:
     API_FOOTBALL_PLAYERS_URL = f"{API_BASE}/fixtures/players"
     FOOTBALL_DATA_URL = "https://api.football-data.org/v4/matches"
 
-    LIVE_CACHE_TTL_SECONDS = 30
+    LIVE_CACHE_TTL_SECONDS = max(15, int(getattr(Config, "LIVE_BASE_CACHE_TTL_SECONDS", 15)))
     STATS_CACHE_TTL_SECONDS = 60
     EVENTS_CACHE_TTL_SECONDS = 60
     PLAYERS_CACHE_TTL_SECONDS = 300
@@ -94,6 +94,7 @@ class LiveMatchFetcher:
         self._stats_cache: Dict[str, Dict[str, Any]] = {}
         self._events_cache: Dict[str, Dict[str, Any]] = {}
         self._players_cache: Dict[str, Dict[str, Any]] = {}
+        self._details_cache: Dict[str, Dict[str, Any]] = {}
         self._api_football_cooldown_until: float = 0.0
 
         self._clock_memory: Dict[str, Dict[str, Any]] = {}
@@ -137,17 +138,17 @@ class LiveMatchFetcher:
         Prioridad:
         1) Config.API_FOOTBALL_DEBUG_RAW, si existe.
         2) Variable de entorno JHONNY_DEBUG_API_RAW.
-        3) Activo por defecto para esta versión de auditoría.
+        3) Desactivado por defecto en producción.
         """
         try:
             config_value = getattr(Config, "API_FOOTBALL_DEBUG_RAW", None)
             if config_value is not None:
                 return bool(config_value)
 
-            env_value = os.getenv(self.DEBUG_RAW_ENV, "1").strip().lower()
+            env_value = os.getenv(self.DEBUG_RAW_ENV, "0").strip().lower()
             return env_value not in {"0", "false", "no", "off", "disabled"}
         except Exception:
-            return True
+            return False
 
     def _debug_raw_dir(self) -> Path:
         try:
@@ -311,6 +312,7 @@ class LiveMatchFetcher:
                 extra={"url": self.API_FOOTBALL_LIVE_URL},
             )
             raw_matches = data.get("response", []) or []
+            raw_matches = self._enrich_live_details_batch(raw_matches)
 
             logger.info(
                 "LIVE_FETCHER: partidos crudos recibidos=%s | results=%s",
@@ -328,6 +330,164 @@ class LiveMatchFetcher:
         except Exception as exc:
             logger.exception("LIVE_FETCHER API-Football error: %s", exc)
             return []
+
+
+    def _enrich_live_details_batch(self, raw_matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Enriquece el snapshot live en lotes de hasta 20 fixtures.
+
+        API-Football permite consultar /fixtures?ids=ID1-ID2... y devolver en una
+        sola respuesta los detalles disponibles de varios partidos. Esto elimina el
+        cuello de botella histórico de "solo 6 deep scans" sin disparar 3 llamadas
+        adicionales por cada encuentro.
+        """
+        if not raw_matches or not Config.API_FOOTBALL_KEY:
+            return raw_matches or []
+
+        if time.time() < self._api_football_cooldown_until:
+            return raw_matches
+
+        max_matches = max(1, int(getattr(Config, "LIVE_DETAILS_MAX_MATCHES", 120)))
+        batch_size = max(1, min(20, int(getattr(Config, "LIVE_DETAILS_BATCH_SIZE", 20))))
+        ttl = max(10, int(getattr(Config, "LIVE_DETAILS_CACHE_TTL_SECONDS", 30)))
+        now = time.time()
+
+        selected = []
+        for item in raw_matches:
+            if not isinstance(item, dict):
+                continue
+            fixture_id = ((item.get("fixture") or {}).get("id"))
+            if fixture_id and self._is_priority_league(item):
+                selected.append(str(fixture_id))
+            if len(selected) >= max_matches:
+                break
+
+        details_by_id: Dict[str, Dict[str, Any]] = {}
+        missing_ids: List[str] = []
+        for fixture_id in selected:
+            cached = self._details_cache.get(fixture_id)
+            if cached and (now - float(cached.get("at") or 0.0)) < ttl:
+                details_by_id[fixture_id] = deepcopy(cached.get("data") or {})
+            else:
+                missing_ids.append(fixture_id)
+
+        for start in range(0, len(missing_ids), batch_size):
+            ids = missing_ids[start:start + batch_size]
+            if not ids:
+                continue
+            try:
+                response = requests.get(
+                    f"{self.API_BASE}/fixtures",
+                    headers=self.api_football_headers,
+                    params={"ids": "-".join(ids)},
+                    timeout=self.PRIMARY_TIMEOUT_SECONDS,
+                )
+                if response.status_code == 429:
+                    self._activate_429_cooldown()
+                    logger.warning("LIVE_FETCHER batch details -> 429")
+                    break
+                if response.status_code != 200:
+                    logger.warning("LIVE_FETCHER batch details status=%s", response.status_code)
+                    continue
+                payload = response.json()
+                self._save_api_raw_debug(
+                    endpoint="fixtures_ids_batch",
+                    payload=payload,
+                    extra={"fixture_count": len(ids)},
+                )
+                for detailed in payload.get("response", []) or []:
+                    if not isinstance(detailed, dict):
+                        continue
+                    fixture_id = str(((detailed.get("fixture") or {}).get("id")) or "")
+                    if not fixture_id:
+                        continue
+                    details_by_id[fixture_id] = detailed
+                    self._details_cache[fixture_id] = {"at": now, "data": deepcopy(detailed)}
+            except Exception as exc:
+                logger.warning("LIVE_FETCHER batch details error: %s", exc)
+
+        enriched = []
+        for item in raw_matches:
+            fixture_id = str((((item or {}).get("fixture") or {}).get("id")) or "")
+            detailed = details_by_id.get(fixture_id)
+            if detailed:
+                # El detalle es la fuente principal, pero conservamos campos del
+                # snapshot live que pudieran no venir en la respuesta por IDs.
+                merged = deepcopy(item)
+                for key, value in detailed.items():
+                    if value not in (None, [], {}):
+                        merged[key] = value
+                enriched.append(merged)
+            else:
+                enriched.append(item)
+
+        return enriched
+
+    def get_fixture_statuses(self, fixture_ids: List[Any]) -> List[Dict[str, Any]]:
+        """Fetch minimal current/final snapshots for signals already being tracked.
+
+        This is not a global pre-match scan. It is a lifecycle call used only so
+        a signal can be resolved after a fixture leaves the `live=all` feed.
+        """
+        if not Config.API_FOOTBALL_KEY or not fixture_ids:
+            return []
+        ids = []
+        seen = set()
+        for value in fixture_ids:
+            text = str(value or "").strip()
+            if text and text not in seen:
+                seen.add(text)
+                ids.append(text)
+        output: List[Dict[str, Any]] = []
+        for start in range(0, len(ids), 20):
+            batch = ids[start:start + 20]
+            try:
+                response = requests.get(
+                    f"{self.API_BASE}/fixtures",
+                    headers=self.api_football_headers,
+                    params={"ids": "-".join(batch)},
+                    timeout=self.PRIMARY_TIMEOUT_SECONDS,
+                )
+                if response.status_code == 429:
+                    self._activate_429_cooldown()
+                    break
+                if response.status_code != 200:
+                    continue
+                for item in (response.json().get("response") or []):
+                    if not isinstance(item, dict):
+                        continue
+                    fixture = item.get("fixture") or {}
+                    status = fixture.get("status") or {}
+                    goals = item.get("goals") or {}
+                    league = item.get("league") or {}
+                    teams = item.get("teams") or {}
+                    base_minute = self._safe_int(status.get("elapsed"))
+                    extra = self._safe_int(status.get("extra"))
+                    effective = base_minute + extra if extra > 0 else base_minute
+                    output.append({
+                        "match_id": fixture.get("id"),
+                        "fixture_id": fixture.get("id"),
+                        "home_team": ((teams.get("home") or {}).get("name")) or "HOME",
+                        "away_team": ((teams.get("away") or {}).get("name")) or "AWAY",
+                        "home_score": self._safe_int(goals.get("home")),
+                        "away_score": self._safe_int(goals.get("away")),
+                        "score": f"{self._safe_int(goals.get('home'))}-{self._safe_int(goals.get('away'))}",
+                        "api_minute": effective,
+                        "minute": effective,
+                        "effective_minute": effective,
+                        "display_minute": f"{base_minute}+{extra}" if extra > 0 else str(base_minute),
+                        "status_short": str(status.get("short") or "").upper(),
+                        "status_long": str(status.get("long") or "").upper(),
+                        "league": league.get("name") or "UNKNOWN",
+                        "country": league.get("country") or "UNKNOWN",
+                        "league_id": league.get("id"),
+                        "tracking_only_terminal": True,
+                        "data_quality": "TRACKING_STATUS",
+                        "sync_updated_at": datetime.now().isoformat(timespec="seconds"),
+                    })
+            except Exception as exc:
+                logger.warning("fixture status tracking error: %s", exc)
+        return output
 
     def _fetch_fixture_statistics(
         self,
@@ -629,7 +789,8 @@ class LiveMatchFetcher:
 
                 league_id = league.get("id")
                 if (
-                    self._allowed_league_ids
+                    not getattr(Config, "GLOBAL_SENIOR_SCOPE", True)
+                    and self._allowed_league_ids
                     and league_id not in self._allowed_league_ids
                     and not self._should_bypass_allowed_league_ids(item=item, league_id=league_id)
                 ):
@@ -677,19 +838,20 @@ class LiveMatchFetcher:
                     )
                     continue
 
-                tracking_only = minute > self.MAX_OPERABLE_MINUTE
-                is_late_game = minute >= 75
+                effective_minute = minute + elapsed_plus if elapsed_plus > 0 else minute
+                tracking_only = effective_minute > self.MAX_OPERABLE_MINUTE
+                is_late_game = effective_minute >= 75
                 is_added_time = elapsed_plus > 0
 
                 should_fetch_deep = (
                     deep_scan_used < self.MAX_DEEP_SCAN_MATCHES
-                    and self._should_fetch_detailed_stats(item, minute)
+                    and self._should_fetch_detailed_stats(item, effective_minute)
                     and not tracking_only
                 )
 
                 should_fetch_players = (
                     deep_scan_used < self.MAX_DEEP_SCAN_MATCHES
-                    and self._should_fetch_player_stats(minute)
+                    and self._should_fetch_player_stats(effective_minute)
                     and not tracking_only
                 )
 
@@ -702,17 +864,21 @@ class LiveMatchFetcher:
                 home_name = home_team.get("name") or "HOME"
                 away_name = away_team.get("name") or "AWAY"
 
-                statistics = self._fetch_fixture_statistics(
+                embedded_statistics = item.get("statistics") if isinstance(item.get("statistics"), list) else []
+                embedded_events = item.get("events") if isinstance(item.get("events"), list) else []
+                embedded_players = item.get("players") if isinstance(item.get("players"), list) else []
+
+                statistics = embedded_statistics or self._fetch_fixture_statistics(
                     fixture_id=fixture_id,
                     should_fetch=should_fetch_deep,
                 )
 
-                events = self._fetch_fixture_events(
+                events = embedded_events or self._fetch_fixture_events(
                     fixture_id=fixture_id,
                     should_fetch=should_fetch_deep or tracking_only or is_late_game,
                 )
 
-                players = self._fetch_fixture_players(
+                players = embedded_players or self._fetch_fixture_players(
                     fixture_id=fixture_id,
                     should_fetch=should_fetch_players,
                 )
@@ -737,14 +903,14 @@ class LiveMatchFetcher:
                 away_score = self._safe_int(goals.get("away"))
 
                 is_scannable = self._is_scannable_match(
-                    minute=minute,
+                    minute=effective_minute,
                     home_stats=home_stats,
                     away_stats=away_stats,
                     totals=totals,
                 )
 
                 scan_phase = self._scan_phase(
-                    minute=minute,
+                    minute=effective_minute,
                     is_scannable=is_scannable,
                     has_live_stats=has_live_stats,
                     totals=totals,
@@ -761,7 +927,7 @@ class LiveMatchFetcher:
 
                 clock_fields = self._build_live_clock_fields(
                     fixture_id=fixture_id,
-                    minute=minute,
+                    minute=effective_minute,
                     score=score_text,
                     status_short=status_short,
                     status_long=status_long,
@@ -770,7 +936,7 @@ class LiveMatchFetcher:
                 )
 
                 # Ejecutar cálculos avanzados analíticos propios del sistema JHONNY_ELITE
-                analytics = self._calculate_advanced_analytics(minute, home_score, away_score, home_stats, away_stats, totals)
+                analytics = self._calculate_advanced_analytics(effective_minute, home_score, away_score, home_stats, away_stats, totals)
 
                 normalized = {
                     "match_id": fixture_id,
@@ -809,10 +975,14 @@ class LiveMatchFetcher:
                     "league_filter_status": "ALLOWED_PRIORITY_LEAGUE",
                     "league_filter_source": "live_fetcher",
 
-                    "minute": minute,
-                    "minuto": minute,
+                    "minute": effective_minute,
+                    "minuto": effective_minute,
+                    "api_minute": effective_minute,
+                    "effective_minute": effective_minute,
+                    "base_minute": minute,
                     "source_minute": minute,
                     "api_elapsed": minute,
+                    "display_minute": f"{minute}+{elapsed_plus}" if elapsed_plus > 0 else str(minute),
                     "elapsed_plus": elapsed_plus,
                     "added_time": elapsed_plus,
                     "is_added_time": is_added_time,
@@ -1050,7 +1220,7 @@ class LiveMatchFetcher:
                 )
 
                 # Ejecutar estimaciones analíticas adaptativas para canales de respaldo de baja calidad
-                analytics = self._calculate_advanced_analytics(minute, home_score, away_score, home_stats, away_stats, totals)
+                analytics = self._calculate_advanced_analytics(effective_minute, home_score, away_score, home_stats, away_stats, totals)
 
                 normalized_list.append(
                     {

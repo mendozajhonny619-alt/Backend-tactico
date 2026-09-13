@@ -4,7 +4,7 @@ Phase 3 - Safely integrates model predictions into signal pipeline without affec
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 
 from app.v17.ml.prediction_model import PredictionModel
@@ -96,7 +96,7 @@ class ModelPredictionService:
                 "predicted_class": predicted_class,
                 "probabilities": probabilities,
                 "predicted_probability": predicted_probability,
-                "prediction_timestamp": datetime.utcnow().isoformat() + "Z",
+                "prediction_timestamp": datetime.now(timezone.utc).isoformat(),
                 # V17 competition intelligence metadata. These fields are optional
                 # and do not affect the live decision. They are stored for later
                 # performance analysis, especially for World Cup / elite tournaments.
@@ -186,7 +186,7 @@ class ModelPredictionService:
                 "major_tournament_flag": major_tournament_flag if major_tournament_flag is not None else prediction.get("major_tournament_flag"),
                 "league_filter_status": league_filter_status or prediction.get("league_filter_status"),
                 "league_filter_reason": league_filter_reason or prediction.get("league_filter_reason"),
-                "feedback_timestamp": datetime.utcnow().isoformat() + "Z"
+                "feedback_timestamp": datetime.now(timezone.utc).isoformat()
             }
             
             # Store feedback (will be read by PerformanceAnalyzer)

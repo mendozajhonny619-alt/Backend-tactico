@@ -284,6 +284,8 @@ def _normalize_history(payload: Dict[str, Any]) -> Dict[str, Any]:
         "tracking_total_available": payload.get("tracking_total_available", 0),
         "tracking_summary": _safe_dict(payload.get("tracking_summary")),
         "performance_analysis": _safe_dict(payload.get("performance_analysis")),
+        "pending_signals": _safe_list(payload.get("pending_signals")),
+        "closed_history": _safe_list(payload.get("closed_history")),
         "updated_at": payload.get("updated_at") or _now_iso(),
         "fallback": payload.get("fallback", False),
         "timeout": payload.get("timeout", False),
@@ -527,17 +529,32 @@ def dashboard() -> Dict[str, Any]:
         ]
     )
 
+    opportunity_sections = opportunities_data.get("sections", {}) or {}
+    observe_items = (
+        opportunity_sections.get("over_candidates", [])
+        + opportunity_sections.get("under_candidates", [])
+        + opportunity_sections.get("observe", [])
+    )
+    no_bet_items = opportunity_sections.get("rejected", [])
+
     return {
         "ok": True,
+        "version": "JHONNY_ELITE_19.0",
         "updated_at": updated_at,
         "frontend_safe": True,
         "fallback": any_fallback,
         "timeout": any_timeout,
-        "live": live_data,
-        "signals": signals_data,
-        "opportunities": opportunities_data,
-        "blocked": blocked_data,
-        "history": history_data,
+        "live_matches": live_data.get("items", []),
+        "top_signals": signals_data.get("items", []),
+        "observe": observe_items,
+        "no_bet": no_bet_items,
+        "blocked": blocked_data.get("items", []),
+        "pending_signals": history_data.get("pending_signals", []),
+        "closed_history": history_data.get("closed_history", []),
+        "history": history_data.get("history", []),
         "stats": stats_data,
+        "summary": opportunities_data.get("summary", {}),
+        "performance_analysis": history_data.get("performance_analysis", {}),
         "health": health_data,
-        }
+        "message": "Escaneo global activo. El prepartido y las cuotas se consultan solo cuando una lectura live supera el filtro de candidato.",
+    }

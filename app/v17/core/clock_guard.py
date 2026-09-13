@@ -64,7 +64,8 @@ class ClockGuard:
 
     def evaluate(self, match: Dict[str, Any]) -> Dict[str, Any]:
         api_minute = safe_int(
-            match.get("api_minute")
+            match.get("effective_minute")
+            or match.get("api_minute")
             or match.get("minute")
             or match.get("display_minute")
             or match.get("current_minute")
@@ -197,7 +198,7 @@ class ClockGuard:
 
         return {
             "api_minute": api_minute,
-            "display_minute": api_minute,
+            "display_minute": match.get("display_minute") or api_minute,
             "estimated_minute": estimated_minute,
             "data_age_seconds": data_age_seconds,
             "same_minute_count": same_minute_count,

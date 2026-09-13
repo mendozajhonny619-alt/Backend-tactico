@@ -42,7 +42,7 @@ class PreMatchProfileAI:
     - tendencia de primer tiempo y segundo tiempo
     """
 
-    VERSION = "V17_PRE_MATCH_PROFILE_AI_1"
+    VERSION = "JHONNY_ELITE_PREMATCH_19.0"
 
     def analyze(self, pre_match_package: Dict[str, Any], live_match: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         live_match = live_match or {}
@@ -82,6 +82,16 @@ class PreMatchProfileAI:
         h2h_avg_goals = safe_float(h2h.get("avg_total_goals"))
         h2h_over_25 = safe_float(h2h.get("over_25_rate"))
         h2h_btts = safe_float(h2h.get("btts_rate"))
+
+        home_season = pre_match_package.get("home_team_statistics") if isinstance(pre_match_package.get("home_team_statistics"), dict) else {}
+        away_season = pre_match_package.get("away_team_statistics") if isinstance(pre_match_package.get("away_team_statistics"), dict) else {}
+        home_season_for = self._nested_float(home_season, "goals_for", "average", "total")
+        home_season_against = self._nested_float(home_season, "goals_against", "average", "total")
+        away_season_for = self._nested_float(away_season, "goals_for", "average", "total")
+        away_season_against = self._nested_float(away_season, "goals_against", "average", "total")
+        season_expected_total_goals = self._season_expected_total(
+            home_season_for, home_season_against, away_season_for, away_season_against
+        )
 
         league_goal_profile = self._league_goal_profile(avg_total_goals, league_over_25, league_btts, league, country)
         first_half_profile = self._first_half_profile(avg_first_half_goals)
@@ -130,6 +140,20 @@ class PreMatchProfileAI:
             h2h_over_25=h2h_over_25,
             league_goal_profile=league_goal_profile,
         )
+
+        if season_expected_total_goals > 0:
+            if season_expected_total_goals >= 3.0:
+                over_pre_match_score = clamp(over_pre_match_score + 7)
+                under_pre_match_score = clamp(under_pre_match_score - 7)
+            elif season_expected_total_goals >= 2.6:
+                over_pre_match_score = clamp(over_pre_match_score + 4)
+                under_pre_match_score = clamp(under_pre_match_score - 4)
+            elif season_expected_total_goals <= 1.9:
+                over_pre_match_score = clamp(over_pre_match_score - 6)
+                under_pre_match_score = clamp(under_pre_match_score + 6)
+            elif season_expected_total_goals <= 2.2:
+                over_pre_match_score = clamp(over_pre_match_score - 3)
+                under_pre_match_score = clamp(under_pre_match_score + 3)
 
         first_half_goal_risk = self._first_half_goal_risk(
             avg_first_half_goals=avg_first_half_goals,
@@ -219,6 +243,11 @@ class PreMatchProfileAI:
             "pre_match_avg_total_goals": avg_total_goals,
             "pre_match_avg_first_half_goals": avg_first_half_goals,
             "pre_match_avg_second_half_goals": avg_second_half_goals,
+            "season_expected_total_goals": round(season_expected_total_goals, 3),
+            "home_season_goals_for_avg": home_season_for,
+            "home_season_goals_against_avg": home_season_against,
+            "away_season_goals_for_avg": away_season_for,
+            "away_season_goals_against_avg": away_season_against,
 
             "home_recent_goal_profile": home_recent.get("goal_profile_hint") or "UNKNOWN",
             "away_recent_goal_profile": away_recent.get("goal_profile_hint") or "UNKNOWN",
@@ -244,6 +273,24 @@ class PreMatchProfileAI:
                 under_support_pre_match=under_support_pre_match,
             ),
         }
+
+    @staticmethod
+    def _nested_float(data: Dict[str, Any], *keys: str) -> float:
+        value: Any = data
+        for key in keys:
+            if not isinstance(value, dict):
+                return 0.0
+            value = value.get(key)
+        return safe_float(value, 0.0)
+
+    @staticmethod
+    def _season_expected_total(home_for: float, home_against: float, away_for: float, away_against: float) -> float:
+        values = [home_for, home_against, away_for, away_against]
+        if not any(v > 0 for v in values):
+            return 0.0
+        home_expectancy = (home_for + away_against) / 2 if home_for > 0 and away_against > 0 else max(home_for, away_against)
+        away_expectancy = (away_for + home_against) / 2 if away_for > 0 and home_against > 0 else max(away_for, home_against)
+        return max(0.0, home_expectancy + away_expectancy)
 
     def _league_goal_profile(
         self,

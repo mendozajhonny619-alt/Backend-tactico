@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from app.v17.core.league_filter import LeagueFilter
-from app.v17.engine.live_signal_engine import LiveSignalEngineV17
+from app.jhonny_elite.engine import JhonnyEliteEngine
 from app.v17.signals.signal_tracker import SignalTracker
 
 
@@ -98,13 +98,13 @@ class V17DashboardAdapter:
     """
 
     def __init__(self) -> None:
-        self.engine = LiveSignalEngineV17()
+        self.engine = JhonnyEliteEngine()
         self.tracker = SignalTracker()
         self.league_filter = LeagueFilter()
 
         self._last_dashboard: Dict[str, Any] = {
             "ok": True,
-            "version": "V17",
+            "version": "JHONNY_ELITE_19.0",
             "updated_at": utc_now_iso(),
             "top_signals": [],
             "observe": [],
@@ -171,7 +171,7 @@ class V17DashboardAdapter:
         data = self.last_dashboard()
         return {
             "ok": True,
-            "version": "V17",
+            "version": "JHONNY_ELITE_19.0",
             "updated_at": utc_now_iso(),
             "top_signals": data.get("top_signals", []),
             "observe": data.get("observe", []),
@@ -182,7 +182,7 @@ class V17DashboardAdapter:
         data = self.last_dashboard()
         return {
             "ok": True,
-            "version": "V17",
+            "version": "JHONNY_ELITE_19.0",
             "updated_at": utc_now_iso(),
             "history": data.get("history", []),
             "pending_signals": data.get("pending_signals", []),
@@ -196,7 +196,7 @@ class V17DashboardAdapter:
         data = self.last_dashboard()
         return {
             "ok": True,
-            "version": "V17",
+            "version": "JHONNY_ELITE_19.0",
             "updated_at": utc_now_iso(),
             "source_status": data.get("source_status"),
             "counts": {
@@ -280,11 +280,11 @@ class V17DashboardAdapter:
 
         return {
             "ok": True,
-            "version": "V17",
+            "version": "JHONNY_ELITE_19.0",
             "updated_at": utc_now_iso(),
             "source_status": source_status,
             "frontend_safe": True,
-            "live_matches": self._compact_signals(all_analyzed),
+            "live_matches": self._compact_signals([x for x in all_analyzed if not x.get("tracking_only_terminal")]),
             "top_signals": self._compact_signals(top_signals),
             "observe": self._compact_signals(observe[:20]),
             "no_bet": self._compact_signals(no_bet[:20]),
@@ -782,7 +782,7 @@ class V17DashboardAdapter:
             probability_pack = self._prediction_probability_pack(item)
 
             compact.append({
-                "version": "V17",
+                "version": "JHONNY_ELITE_19.0",
                 "signal_key": item.get("signal_key"),
                 "signal_id": item.get("signal_id"),
                 "match_id": item.get("match_id"),
@@ -822,8 +822,8 @@ class V17DashboardAdapter:
 
                 "home_score": item.get("home_score"),
                 "away_score": item.get("away_score"),
-                "scoreline": item.get("scoreline"),
-                "current_score": item.get("current_score"),
+                "scoreline": item.get("scoreline") or item.get("score") or item.get("marcador"),
+                "current_score": item.get("current_score") or item.get("score") or item.get("marcador"),
 
                 "market": market_direction,
                 "market_direction": market_direction,
@@ -843,20 +843,42 @@ class V17DashboardAdapter:
                 "official_risks": item.get("official_risks", []),
                 "decision_id": item.get("decision_id"),
                 "decision_timestamp": item.get("decision_timestamp"),
+                "can_publish": item.get("can_publish", item.get("official_can_publish", False)),
+                "signal_strength": item.get("signal_strength"),
+                "candidate_score": item.get("candidate_score"),
+                "candidate_detected": item.get("candidate_detected"),
+                "pre_match_triggered": item.get("pre_match_triggered"),
+                "pre_match_available": item.get("pre_match_available"),
+                "pre_match_source": item.get("pre_match_source"),
+                "expected_goals_remaining": item.get("expected_goals_remaining"),
+                "probability_next_goal": item.get("probability_next_goal"),
+                "probability_no_more_goals": item.get("probability_no_more_goals"),
+                "probability_two_plus_goals": item.get("probability_two_plus_goals"),
+                "primary_final_score": item.get("primary_final_score"),
+                "alternative_scores": item.get("alternative_scores", []),
+                "official_next_goal_team": item.get("official_next_goal_team"),
+                "line": item.get("line"),
+                "odds": item.get("odds"),
+                "odds_available": item.get("odds_available"),
+                "implied_probability": item.get("implied_probability"),
+                "value_edge": item.get("value_edge"),
+                "has_positive_value": item.get("has_positive_value"),
+                "support_points": item.get("support_points", []),
+                "caution_points": item.get("caution_points", []),
 
-                "master_status": item.get("master_status"),
-                "master_rank": item.get("master_rank"),
-                "master_confidence": item.get("master_confidence"),
+                "master_status": item.get("master_status") or item.get("official_status") or item.get("decision_status"),
+                "master_rank": item.get("master_rank") or item.get("signal_strength"),
+                "master_confidence": item.get("master_confidence") if item.get("master_confidence") is not None else item.get("official_confidence"),
                 "master_action": item.get("master_action"),
                 "master_reason": item.get("master_reason"),
 
-                "elite_score": item.get("elite_score"),
-                "elite_rank": item.get("elite_rank"),
+                "elite_score": item.get("elite_score") if item.get("elite_score") is not None else item.get("official_confidence"),
+                "elite_rank": item.get("elite_rank") or item.get("signal_strength"),
                 "elite_position": item.get("elite_position"),
                 "published": item.get("published", False),
                 "panel_section": item.get("panel_section"),
 
-                "risk_status": item.get("risk_status"),
+                "risk_status": item.get("risk_status") or item.get("risk_level"),
                 "risk_score": item.get("risk_score"),
                 "risk_reasons": item.get("risk_reasons", []),
                 "risk_warnings": item.get("risk_warnings", []),
@@ -869,6 +891,25 @@ class V17DashboardAdapter:
                 "offensive_depth_score": item.get("offensive_depth_score"),
                 "offensive_volume_score": item.get("offensive_volume_score"),
                 "recent_attack_proxy": item.get("recent_attack_proxy"),
+
+                # Dinámica entre escaneos: permite al panel mostrar si el
+                # partido se está abriendo/cerrando AHORA, no solo acumulados.
+                "dynamics_available": item.get("dynamics_available"),
+                "snapshot_gap_seconds": item.get("snapshot_gap_seconds"),
+                "recent_threat_score": item.get("recent_threat_score"),
+                "recent_home_threat_score": item.get("recent_home_threat_score"),
+                "recent_away_threat_score": item.get("recent_away_threat_score"),
+                "recent_dominant_team": item.get("recent_dominant_team"),
+                "dynamic_trend": item.get("dynamic_trend"),
+                "dynamic_match_state": item.get("dynamic_match_state"),
+                "dynamic_instability_score": item.get("dynamic_instability_score"),
+                "score_changed_since_last_scan": item.get("score_changed_since_last_scan"),
+                "post_goal_reanalysis": item.get("post_goal_reanalysis"),
+                "delta_shots": item.get("delta_shots"),
+                "delta_shots_on_target": item.get("delta_shots_on_target"),
+                "delta_dangerous_attacks": item.get("delta_dangerous_attacks"),
+                "delta_corners": item.get("delta_corners"),
+                "delta_xg": item.get("delta_xg"),
 
                 # Scores visuales: el frontend suele usarlos como porcentajes.
                 # Por eso se prioriza la probabilidad live real del MatchPredictionAI.
@@ -883,7 +924,7 @@ class V17DashboardAdapter:
                 "under_transition_score": item.get("under_transition_score"),
                 "false_pressure_risk": item.get("false_pressure_risk"),
 
-                "probable_score": item.get("probable_score"),
+                "probable_score": item.get("probable_score") or {"probable_score": item.get("official_probable_score"), "reading": item.get("official_main_scenario")},
                 "result_probability_reading": item.get("result_probability_reading"),
 
                 "passed_filters": item.get("passed_filters", []),
@@ -899,8 +940,8 @@ class V17DashboardAdapter:
                 "lifecycle_can_publish": item.get("lifecycle_can_publish"),
                 "lifecycle_requires_wait": item.get("lifecycle_requires_wait"),
 
-                "main_reading": item.get("main_reading"),
-                "what_is_missing": item.get("what_is_missing"),
+                "main_reading": item.get("main_reading") or item.get("why_signal"),
+                "what_is_missing": item.get("what_is_missing") or ", ".join(map(str, item.get("missing_points", [])[:3])) or "Sin filtros críticos pendientes.",
 
                 "decision_valid": item.get("decision_valid"),
                 "logic_status": item.get("logic_status"),
@@ -1011,7 +1052,7 @@ class V17DashboardAdapter:
             probability_pack = self._prediction_probability_pack(item)
 
             compact.append({
-                "version": "V17",
+                "version": "JHONNY_ELITE_19.0",
                 "signal_key": item.get("signal_key"),
                 "signal_id": item.get("signal_id"),
                 "match_id": item.get("match_id"),
@@ -1039,11 +1080,11 @@ class V17DashboardAdapter:
 
                 "market": market_direction,
                 "market_direction": market_direction,
-                "master_status": item.get("master_status"),
-                "master_rank": item.get("master_rank"),
-                "master_confidence": item.get("master_confidence"),
-                "elite_score": item.get("elite_score"),
-                "elite_rank": item.get("elite_rank"),
+                "master_status": item.get("master_status") or item.get("official_status") or item.get("decision_status"),
+                "master_rank": item.get("master_rank") or item.get("signal_strength"),
+                "master_confidence": item.get("master_confidence") if item.get("master_confidence") is not None else item.get("official_confidence"),
+                "elite_score": item.get("elite_score") if item.get("elite_score") is not None else item.get("official_confidence"),
+                "elite_rank": item.get("elite_rank") or item.get("signal_strength"),
 
                 "promotion_level": item.get("promotion_level"),
                 "activation_level": item.get("activation_level"),
@@ -1079,7 +1120,7 @@ class V17DashboardAdapter:
                 "entry_total_goals": item.get("entry_total_goals"),
 
                 "current_minute": item.get("current_minute"),
-                "current_score": item.get("current_score"),
+                "current_score": item.get("current_score") or item.get("score") or item.get("marcador"),
                 "current_home_score": item.get("current_home_score"),
                 "current_away_score": item.get("current_away_score"),
                 "current_total_goals": item.get("current_total_goals"),
@@ -1096,7 +1137,7 @@ class V17DashboardAdapter:
                 "clock_status": item.get("clock_status"),
                 "data_age_seconds": item.get("data_age_seconds"),
                 "timestamp_missing": item.get("timestamp_missing"),
-                "risk_status": item.get("risk_status"),
+                "risk_status": item.get("risk_status") or item.get("risk_level"),
                 "risk_score": item.get("risk_score"),
                 "failed_secondary_filters": item.get("failed_secondary_filters", []),
                 "soft_warnings": item.get("soft_warnings", []),

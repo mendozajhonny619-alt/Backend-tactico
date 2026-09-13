@@ -19,14 +19,14 @@ class OddsFetcher:
 
     def __init__(self):
         self.api_key = Config.ODDS_API_KEY
-        self.base_url = "https://api.the-odds-api.com/v4/sports/soccer"
+        self.base_url = "https://api.the-odds-api.com/v4/sports"
 
-    def get_live_odds(self, regions: str = "eu") -> List[Dict[str, Any]]:
+    def get_live_odds(self, regions: str = "eu", sport_key: str = "upcoming") -> List[Dict[str, Any]]:
         if not self.api_key:
             logging.warning("ODDS_API_KEY no configurada.")
             return []
 
-        raw_odds = self._fetch_raw_odds(regions=regions)
+        raw_odds = self._fetch_raw_odds(regions=regions, sport_key=sport_key)
         if not raw_odds:
             return []
 
@@ -34,11 +34,11 @@ class OddsFetcher:
         logging.info(f"ODDS_FETCHER: odds normalizadas = {len(normalized)}")
         return normalized
 
-    def _fetch_raw_odds(self, regions: str = "eu") -> List[Dict[str, Any]]:
-        url = f"{self.base_url}/odds"
+    def _fetch_raw_odds(self, regions: str = "eu", sport_key: str = "upcoming") -> List[Dict[str, Any]]:
+        url = f"{self.base_url}/{sport_key}/odds"
 
         params = {
-            "api_key": self.api_key,
+            "apiKey": self.api_key,
             "regions": regions,
             "markets": "h2h,totals",
             "oddsFormat": "decimal",

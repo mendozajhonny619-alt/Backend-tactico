@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import json
+from pathlib import Path
 from typing import Any, Dict, List
 
 from app.v17.signals.learning_memory import LearningMemory
@@ -11,6 +13,7 @@ from app.v17.services.prediction_feature_store import PredictionFeatureStore
 from app.v17.services.training_data_pipeline import TrainingDataPipeline
 from app.v17.services.model_prediction_service import ModelPredictionService
 from app.v17.ml.model_registry import ModelRegistry
+from app.config.config import Config
 
 
 def utc_now_iso() -> str:
@@ -84,6 +87,8 @@ class SignalTracker:
         self.max_pending = max_pending
         self._pending: Dict[str, Dict[str, Any]] = {}
         self._closed: List[Dict[str, Any]] = []
+        self._state_path = Path(getattr(Config, "DATA_DIR", "app/v17/storage")) / "signal_tracker_state.json"
+        self._load_state()
 
         self.resolver = ResultResolver()
         self.learning_memory = LearningMemory()
@@ -92,8 +97,8 @@ class SignalTracker:
         self.training_pipeline = TrainingDataPipeline(self.prediction_feature_store)
         
         # Phase 3: Model feedback recording
-        from pathlib import Path
-        storage_dir = str(Path(__file__).parent.parent.parent / "v17" / "storage")
+        
+        storage_dir = str(Path(getattr(Config, "DATA_DIR", "app/v17/storage")))
         self.model_registry = ModelRegistry(storage_dir)
         self.model_prediction_service = ModelPredictionService(
             self.model_registry,
@@ -142,6 +147,7 @@ class SignalTracker:
                 pass
 
         self._trim_pending()
+        self._persist_state()
         return registered
 
     def update_with_live_matches(self, live_matches: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -218,6 +224,7 @@ class SignalTracker:
 
         self._pending = still_pending
         self._closed = self._closed[:500]
+        self._persist_state()
 
         return {
             "pending": self.pending(),
@@ -552,7 +559,44 @@ class SignalTracker:
         if not match_id:
             return str(signal.get("signal_key") or signal.get("signal_id") or "").strip()
 
-        return f"V17:{match_id}:{market_direction}"
+        entry_home = safe_int(signal.get("entry_home_score") or signal.get("home_score") or signal.get("current_home_score"), 0)
+        entry_away = safe_int(signal.get("entry_away_score") or signal.get("away_score") or signal.get("current_away_score"), 0)
+        score_epoch = entry_home + entry_away
+        line = safe_float(signal.get("line") or signal.get("market_line"), score_epoch + 0.5)
+        return f"JE19:{match_id}:{market_direction}:{line:.1f}:{score_epoch}"
+
+    def _load_state(self) -> None:
+        try:
+            if not self._state_path.exists():
+                return
+            payload = json.loads(self._state_path.read_text(encoding="utf-8"))
+            pending = payload.get("pending", {}) if isinstance(payload, dict) else {}
+            closed = payload.get("closed", []) if isinstance(payload, dict) else []
+            if isinstance(pending, dict):
+                self._pending = pending
+            if isinstance(closed, list):
+                self._closed = closed[:500]
+        except Exception:
+            # Estado corrupto no debe impedir que el scanner arranque.
+            self._pending = {}
+            self._closed = []
+
+    def _persist_state(self) -> None:
+        try:
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._state_path.with_suffix(".tmp")
+            tmp.write_text(
+                json.dumps(
+                    {"version": "JHONNY_ELITE_19.0", "pending": self._pending, "closed": self._closed[:500]},
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                ),
+                encoding="utf-8",
+            )
+            tmp.replace(self._state_path)
+        except Exception:
+            pass
 
     def _trim_pending(self) -> None:
         if len(self._pending) <= self.max_pending:

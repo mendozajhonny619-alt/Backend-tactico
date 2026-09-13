@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from app.config.config import Config
+
 
 def safe_int(value: Any, default: int = 0) -> int:
     try:
@@ -47,13 +49,13 @@ class PreMatchDataService:
 
     def __init__(
         self,
-        cache_path: str = "app/v17/storage/prematch_cache.json",
+        cache_path: Optional[str] = None,
         cache_ttl_seconds: int = 60 * 60 * 24,
         api_base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         timeout_seconds: int = 12,
     ) -> None:
-        self.cache_path = Path(cache_path)
+        self.cache_path = Path(cache_path or (Path(getattr(Config, "DATA_DIR", "app/v17/storage")) / "prematch_cache.json"))
         self.cache_ttl_seconds = cache_ttl_seconds
         self.api_base_url = api_base_url or os.getenv(
             "API_FOOTBALL_BASE_URL",
@@ -191,6 +193,16 @@ class PreMatchDataService:
             season=season,
         )
 
+        # Datos de temporada y predicción del proveedor. Se consultan solo en
+        # esta fase, es decir, después de que el live ya produjo un candidato.
+        home_team_statistics = self._get_team_statistics_safe(
+            team_id=home_team_id, league_id=league_id, season=season
+        )
+        away_team_statistics = self._get_team_statistics_safe(
+            team_id=away_team_id, league_id=league_id, season=season
+        )
+        provider_prediction = self._get_provider_prediction_safe(fixture_id)
+
         league_recent = self._get_league_recent_matches(
             league_id=league_id,
             season=season,
@@ -223,6 +235,9 @@ class PreMatchDataService:
                 home_team_id=home_team_id,
                 away_team_id=away_team_id,
             ),
+            "home_team_statistics": self._compact_team_statistics(home_team_statistics),
+            "away_team_statistics": self._compact_team_statistics(away_team_statistics),
+            "provider_prediction": self._compact_provider_prediction(provider_prediction),
             "raw_counts": {
                 "home_last_5": len(home_last_5),
                 "away_last_5": len(away_last_5),
@@ -307,6 +322,67 @@ class PreMatchDataService:
         )
 
         return data.get("response") or []
+
+
+    def _get_team_statistics_safe(
+        self,
+        team_id: Optional[int],
+        league_id: Optional[int],
+        season: Optional[int],
+    ) -> Dict[str, Any]:
+        if not team_id or not league_id or not season:
+            return {}
+        try:
+            data = self._request(
+                endpoint="/teams/statistics",
+                params={"team": team_id, "league": league_id, "season": season},
+            )
+            response = data.get("response") or {}
+            return response if isinstance(response, dict) else {}
+        except Exception:
+            return {}
+
+    def _get_provider_prediction_safe(self, fixture_id: str) -> Dict[str, Any]:
+        if not fixture_id:
+            return {}
+        try:
+            data = self._request(endpoint="/predictions", params={"fixture": fixture_id})
+            response = data.get("response") or []
+            item = response[0] if isinstance(response, list) and response else {}
+            return item if isinstance(item, dict) else {}
+        except Exception:
+            return {}
+
+    def _compact_team_statistics(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(data, dict):
+            return {}
+        goals = data.get("goals") if isinstance(data.get("goals"), dict) else {}
+        fixtures = data.get("fixtures") if isinstance(data.get("fixtures"), dict) else {}
+        clean_sheet = data.get("clean_sheet") if isinstance(data.get("clean_sheet"), dict) else {}
+        failed_to_score = data.get("failed_to_score") if isinstance(data.get("failed_to_score"), dict) else {}
+        return {
+            "form": data.get("form"),
+            "fixtures": fixtures,
+            "goals_for": goals.get("for", {}),
+            "goals_against": goals.get("against", {}),
+            "clean_sheet": clean_sheet,
+            "failed_to_score": failed_to_score,
+            "biggest": data.get("biggest", {}),
+        }
+
+    def _compact_provider_prediction(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(data, dict):
+            return {}
+        prediction = data.get("predictions") if isinstance(data.get("predictions"), dict) else {}
+        comparison = data.get("comparison") if isinstance(data.get("comparison"), dict) else {}
+        return {
+            "winner": prediction.get("winner"),
+            "under_over": prediction.get("under_over"),
+            "advice": prediction.get("advice"),
+            "percent": prediction.get("percent"),
+            "goals": prediction.get("goals"),
+            "comparison": comparison,
+        }
 
     def _get_standings(
         self,
@@ -1057,6 +1133,9 @@ class PreMatchDataService:
             "head_to_head_last_5": [],
             "league_recent_sample": [],
             "standings_context": {},
+            "home_team_statistics": {},
+            "away_team_statistics": {},
+            "provider_prediction": {},
             "raw_counts": {
                 "home_last_5": 0,
                 "away_last_5": 0,

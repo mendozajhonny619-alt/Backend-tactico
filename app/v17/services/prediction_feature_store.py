@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from app.config.config import Config
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -79,10 +81,12 @@ class PredictionFeatureStore:
         "league_filter_status": "TEXT",
     }
 
-    def __init__(self) -> None:
-        self.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    def __init__(self, storage_dir: Optional[str] = None) -> None:
+        self.storage_dir = Path(storage_dir or getattr(Config, "DATA_DIR", "app/v17/storage"))
+        self.storage_file = self.storage_dir / "prediction_features.db"
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(
-            str(self.STORAGE_FILE),
+            str(self.storage_file),
             check_same_thread=False,
             isolation_level=None,
         )
