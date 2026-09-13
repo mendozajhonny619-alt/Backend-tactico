@@ -1,5 +1,8 @@
-fastapi
-uvicorn
-gunicorn
-python-dotenv
-requests
+fastapi>=0.128,<1.0
+uvicorn[standard]>=0.35,<1.0
+gunicorn>=23,<24
+python-dotenv>=1.1,<2.0
+requests>=2.32,<3.0
+numpy>=2.0,<3.0
+scikit-learn>=1.7,<2.0
+openai>=1.0,<3.0

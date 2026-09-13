@@ -2,830 +2,102 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime
-from typing import Any, Dict, List
+from datetime import datetime, timezone
 
+from app.config.config import Config
 from app.services.app_container import app_container
-from app.fetchers.odds_fetcher import OddsFetcher
-from app.services.match_odds_mapper import MatchOddsMapper
-from app.v17.core.league_filter import LeagueFilter
 
-logger = logging.getLogger("JHONNY_ELITE_V16")
+logger = logging.getLogger("JHONNY_ELITE_WORKER")
 
-SCAN_INTERVAL_SECONDS = 30
-ODDS_COOLDOWN_SECONDS = 60 * 60 * 6
 
-
-def utc_now_iso() -> str:
-    return datetime.utcnow().isoformat()
-
-
-def _safe_float(value: Any) -> float:
-    try:
-        return float(value or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _safe_int(value: Any) -> int:
-    try:
-        return int(float(value or 0))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _text(value: Any, default: str = "-") -> str:
-    if value is None:
-        return default
-    text = str(value).strip()
-    return text if text else default
-
-
-def _first_value(*values: Any, default: Any = None) -> Any:
-    for value in values:
-        if value is None:
-            continue
-
-        if isinstance(value, str) and not value.strip():
-            continue
-
-        return value
-
-    return default
-
-
-def _match_name(item: Dict[str, Any]) -> str:
-    return _text(
-        item.get("match_name")
-        or item.get("partido")
-        or item.get("nombre_del_partido")
-        or item.get("nombre_partido")
-        or item.get("match")
-    )
-
-
-def _minute(item: Dict[str, Any]) -> int:
-    return _safe_int(
-        item.get("minute")
-        or item.get("minuto")
-        or item.get("current_minute")
-        or item.get("match_minute")
-        or item.get("final_minute")
-    )
-
-
-def _market(item: Dict[str, Any]) -> str:
-    return _text(item.get("market") or item.get("mercado"), "N/A")
-
-
-def _rank(item: Dict[str, Any]) -> str:
-    return _text(item.get("rank") or item.get("rango"), "N/A")
-
-
-def _reason(item: Dict[str, Any]) -> str:
-    return _text(
-        item.get("reason")
-        or item.get("motivo")
-        or item.get("block_reason")
-        or item.get("razon_bloqueo")
-        or item.get("close_reason"),
-        "N/A",
-    )
-
-
-def _ai_score(item: Dict[str, Any]) -> float:
-    return _safe_float(item.get("ai_score") or item.get("puntuación_ai"))
-
-
-def _goal_prob(item: Dict[str, Any]) -> float:
-    return _safe_float(item.get("goal_probability") or item.get("probabilidad_de_gol"))
-
-
-def _over_prob(item: Dict[str, Any]) -> float:
-    return _safe_float(item.get("over_probability") or item.get("sobre_probabilidad"))
-
-
-def _under_prob(item: Dict[str, Any]) -> float:
-    return _safe_float(item.get("under_probability") or item.get("bajo_probabilidad"))
-
-
-def _risk_level(item: Dict[str, Any]) -> str:
-    return _text(item.get("risk_level") or item.get("nivel_de_riesgo"), "N/A")
-
-
-def _risk_score(item: Dict[str, Any]) -> float:
-    return _safe_float(item.get("risk_score") or item.get("puntuación_riesgo"))
-
-
-def _data_quality(item: Dict[str, Any]) -> str:
-    return _text(item.get("data_quality") or item.get("calidad_datos"), "N/A")
-
-
-def _context_state(item: Dict[str, Any]) -> str:
-    return _text(item.get("context_state") or item.get("estado_del_contexto"), "N/A")
-
-
-def _odds(item: Dict[str, Any]) -> float:
-    return _safe_float(item.get("odds") or item.get("cuotas"))
-
-
-def _line(item: Dict[str, Any]) -> str:
-    return _text(item.get("line") or item.get("línea"), "AUTO")
-
-
-def _score(item: Dict[str, Any]) -> str:
-    score = item.get("score") or item.get("marcador") or item.get("final_score")
-    if score:
-        return str(score)
-
-    home = _safe_int(
-        item.get("home_score")
-        or item.get("local_score")
-        or item.get("marcador_local")
-    )
-    away = _safe_int(
-        item.get("away_score")
-        or item.get("visitante_score")
-        or item.get("marcador_visitante")
-    )
-    return f"{home}-{away}"
-
-
-def _signal_key(item: Dict[str, Any]) -> str:
-    return _text(item.get("signal_key") or item.get("signal_id") or item.get("opportunity_id"), "")
-
-
-def _attach_league_identity_for_filter(match: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normaliza liga, país, escudos y bandera para que LeagueFilter pueda evaluar.
-
-    Esto permite trabajar tanto con datos planos como con estructura API-Football:
-    - league.name
-    - league.country
-    - league.logo
-    - league.flag
-    - teams.home.logo
-    - teams.away.logo
-    """
-
-    if not isinstance(match, dict):
-        return match
-
-    item = dict(match)
-
-    fixture = item.get("fixture") if isinstance(item.get("fixture"), dict) else {}
-    league_obj = item.get("league") if isinstance(item.get("league"), dict) else {}
-    teams = item.get("teams") if isinstance(item.get("teams"), dict) else {}
-
-    home_obj = teams.get("home") if isinstance(teams.get("home"), dict) else {}
-    away_obj = teams.get("away") if isinstance(teams.get("away"), dict) else {}
-
-    item["fixture_id"] = _first_value(
-        item.get("fixture_id"),
-        item.get("match_id"),
-        fixture.get("id"),
-        item.get("id"),
-    )
-
-    item["match_id"] = _first_value(
-        item.get("match_id"),
-        item.get("fixture_id"),
-        fixture.get("id"),
-        item.get("id"),
-    )
-
-    item["league"] = _first_value(
-        item.get("league") if not isinstance(item.get("league"), dict) else None,
-        item.get("league_name"),
-        item.get("competition"),
-        league_obj.get("name"),
-    )
-
-    item["country"] = _first_value(
-        item.get("country"),
-        item.get("pais"),
-        item.get("country_name"),
-        league_obj.get("country"),
-    )
-
-    item["league_logo"] = _first_value(
-        item.get("league_logo"),
-        league_obj.get("logo"),
-    )
-
-    item["country_flag"] = _first_value(
-        item.get("country_flag"),
-        item.get("flag"),
-        league_obj.get("flag"),
-    )
-
-    item["home_team"] = _first_value(
-        item.get("home_team"),
-        item.get("home"),
-        item.get("local"),
-        home_obj.get("name"),
-    )
-
-    item["away_team"] = _first_value(
-        item.get("away_team"),
-        item.get("away"),
-        item.get("visitor"),
-        item.get("visitante"),
-        away_obj.get("name"),
-    )
-
-    item["home_logo"] = _first_value(
-        item.get("home_logo"),
-        item.get("home_team_logo"),
-        home_obj.get("logo"),
-    )
-
-    item["away_logo"] = _first_value(
-        item.get("away_logo"),
-        item.get("away_team_logo"),
-        away_obj.get("logo"),
-    )
-
-    return item
-
-
-def _filter_priority_leagues(
-    live_matches: List[Dict[str, Any]],
-    league_filter: LeagueFilter,
-) -> Dict[str, Any]:
-    """
-    Filtra partidos antes del escaneo principal.
-
-    Objetivo:
-    - permitir primera y segunda división
-    - permitir torneos internacionales principales
-    - bloquear ligas inferiores, reservas, juveniles, femenino y amistosos menores
-    """
-
-    prepared = [
-        _attach_league_identity_for_filter(match)
-        for match in live_matches or []
-        if isinstance(match, dict)
-    ]
-
-    result = league_filter.filter_matches(prepared)
-
-    allowed = result.get("allowed", []) or []
-    blocked = result.get("blocked_by_league", []) or []
-    summary = result.get("summary", {}) or {}
-
-    for item in blocked:
-        item["block_reason"] = item.get("league_filter_reason") or "BLOCKED_BY_LEAGUE_FILTER"
-        item["reason"] = item.get("league_filter_reason") or "BLOCKED_BY_LEAGUE_FILTER"
-        item["market_status"] = "BLOCKED_BY_LEAGUE"
-        item["is_scannable"] = False
-
-    logger.warning(
-        "🏆 FILTRO LIGAS | recibidos=%s | permitidos=%s | bloqueados=%s",
-        summary.get("received", len(prepared)),
-        summary.get("allowed", len(allowed)),
-        summary.get("blocked_by_league", len(blocked)),
-    )
-
-    if blocked:
-        preview = blocked[:10]
-        for item in preview:
-            logger.warning(
-                "🏆 LIGA BLOQUEADA | %s | liga=%s | pais=%s | motivo=%s",
-                _match_name(item),
-                _text(item.get("league")),
-                _text(item.get("country")),
-                _text(item.get("league_filter_reason")),
-            )
-
-    return {
-        "allowed": allowed,
-        "blocked_by_league": blocked,
-        "summary": summary,
-    }
-
-
-def _ensure_signal_identity(signal: Dict[str, Any]) -> Dict[str, Any]:
-    if not isinstance(signal, dict):
-        return signal
-
-    raw_key = (
-        signal.get("signal_key")
-        or signal.get("signal_id")
-        or signal.get("opportunity_id")
-    )
-
-    if raw_key:
-        key = str(raw_key).strip().upper()
-    else:
-        match_id = signal.get("match_id") or signal.get("id")
-        market = _market(signal).upper()
-
-        if match_id is not None and market != "N/A":
-            key = f"{str(match_id).strip()}:{market}"
-        else:
-            key = f"{_match_name(signal).strip().upper()}:{market}"
-
-    signal["signal_key"] = key
-    signal["signal_id"] = signal.get("signal_id") or key
-    return signal
-
-
-def _is_odds_limit_error(error_text: str) -> bool:
-    text = str(error_text or "").upper()
-    return (
-        "OUT_OF_USAGE_CREDITS" in text
-        or "INVALID_KEY" in text
-        or "MISSING_KEY" in text
-        or "401" in text
-        or "429" in text
-        or "USAGE" in text
-        or "CREDITS" in text
-    )
-
-
-def _mark_internal_only_matches(
-    live_matches: List[Dict[str, Any]],
-    reason: str,
-) -> List[Dict[str, Any]]:
-    for match in live_matches or []:
-        if isinstance(match, dict):
-            match["odds_attached"] = False
-            match["market_status"] = "INTERNAL_ONLY"
-            match["odds_disabled_reason"] = reason
-    return live_matches
-
-
-def _log_live_matches_preview(live_matches: List[Dict[str, Any]]) -> None:
-    preview = live_matches[:8]
-
-    for match in preview:
-        logger.warning(
-            "LIVE | %s | liga=%s | pais=%s | min=%s | score=%s | dq=%s | shots=%s | sot=%s | corners=%s | xg=%s | scannable=%s | source=%s | odds=%s",
-            _match_name(match),
-            _text(match.get("league")),
-            _text(match.get("country")),
-            _minute(match),
-            _score(match),
-            _data_quality(match),
-            _safe_float(match.get("shots")),
-            _safe_float(match.get("shots_on_target")),
-            _safe_float(match.get("corners")),
-            _safe_float(match.get("xg") or match.get("xG")),
-            _text(match.get("is_scannable") or match.get("es_escaneable")),
-            _text(match.get("stats_source") or match.get("fuente_estadísticas")),
-            _text(match.get("odds_attached")),
-        )
-
-    remaining = max(len(live_matches) - len(preview), 0)
-    if remaining > 0:
-        logger.warning("LIVE | ... %s partidos más no mostrados en preview", remaining)
-
-
-def _log_published_signals(signals: List[Dict[str, Any]]) -> None:
-    if not signals:
-        return
-
-    for signal in signals:
-        logger.warning(
-            "SEÑAL | %s | key=%s | market=%s | min=%s | score=%s | rank=%s | ai=%.2f | goal=%.2f | over=%.2f | under=%.2f | risk=%s(%.2f) | odds=%.2f | line=%s | reason=%s",
-            _match_name(signal),
-            _signal_key(signal),
-            _market(signal),
-            _minute(signal),
-            _score(signal),
-            _rank(signal),
-            _ai_score(signal),
-            _goal_prob(signal),
-            _over_prob(signal),
-            _under_prob(signal),
-            _risk_level(signal),
-            _risk_score(signal),
-            _odds(signal),
-            _line(signal),
-            _reason(signal),
-        )
-
-
-def _log_closed_signals(closed_signals: List[Dict[str, Any]]) -> None:
-    if not closed_signals:
-        return
-
-    for signal in closed_signals:
-        logger.warning(
-            "CERRADA | %s | key=%s | market=%s | result=%s | entry_score=%s | final_score=%s | reason=%s",
-            _match_name(signal),
-            _signal_key(signal),
-            _market(signal),
-            _text(signal.get("resultado") or signal.get("status")),
-            _text(signal.get("entry_score")),
-            _text(signal.get("final_score") or signal.get("score")),
-            _reason(signal),
-        )
-
-
-def _log_opportunities(opportunities: List[Dict[str, Any]]) -> None:
-    if not opportunities:
-        return
-
-    preview = opportunities[:12]
-
-    for opp in preview:
-        logger.warning(
-            "OBSERVE | %s | key=%s | min=%s | score=%s | type=%s | rank=%s | ai=%.2f | goal=%.2f | over=%.2f | under=%.2f | risk=%s(%.2f) | dq=%s | ctx=%s | market=%s | reason=%s",
-            _match_name(opp),
-            _signal_key(opp),
-            _minute(opp),
-            _score(opp),
-            _text(opp.get("type") or opp.get("tipo"), "OBSERVE"),
-            _rank(opp),
-            _ai_score(opp),
-            _goal_prob(opp),
-            _over_prob(opp),
-            _under_prob(opp),
-            _risk_level(opp),
-            _risk_score(opp),
-            _data_quality(opp),
-            _context_state(opp),
-            _market(opp),
-            _reason(opp),
-        )
-
-    remaining = max(len(opportunities) - len(preview), 0)
-    if remaining > 0:
-        logger.warning("OBSERVE | ... %s oportunidades más no mostradas en preview", remaining)
-
-
-def _log_blocked(blocked: List[Dict[str, Any]]) -> None:
-    if not blocked:
-        return
-
-    preview = blocked[:12]
-
-    for item in preview:
-        logger.warning(
-            "DESCARTE | %s | liga=%s | pais=%s | min=%s | score=%s | motivo=%s",
-            _match_name(item),
-            _text(item.get("league")),
-            _text(item.get("country")),
-            _minute(item),
-            _score(item),
-            _reason(item),
-        )
-
-    remaining = max(len(blocked) - len(preview), 0)
-    if remaining > 0:
-        logger.warning("DESCARTE | ... %s bloqueados más no mostrados en preview", remaining)
-
-
-def _log_cycle_snapshot(
-    live_matches: List[Dict[str, Any]],
-    published_signals: List[Dict[str, Any]],
-    opportunities: List[Dict[str, Any]],
-    blocked: List[Dict[str, Any]],
-    active_signals: List[Dict[str, Any]],
-    closed_signals: List[Dict[str, Any]],
-    blocked_by_league_count: int,
-) -> None:
-    over_count = 0
-    under_count = 0
-
-    for signal in published_signals:
-        market = _market(signal).upper()
-        if "OVER" in market:
-            over_count += 1
-        elif "UNDER" in market:
-            under_count += 1
-
-    odds_attached_count = sum(
-        1 for match in live_matches if isinstance(match, dict) and match.get("odds_attached") is True
-    )
-
-    logger.warning(
-        "SNAPSHOT | live_filtrados=%s | odds_attached=%s | published=%s | over=%s | under=%s | observe=%s | blocked=%s | blocked_by_league=%s | active=%s | closed=%s",
-        len(live_matches),
-        odds_attached_count,
-        len(published_signals),
-        over_count,
-        under_count,
-        len(opportunities),
-        len(blocked),
-        blocked_by_league_count,
-        len(active_signals),
-        len(closed_signals),
-    )
-
-
-def _register_closed_signals_in_history(
-    history_service: Any,
-    closed_signals: List[Dict[str, Any]],
-) -> int:
-    saved = 0
-
-    for closed in closed_signals:
-        if not isinstance(closed, dict):
-            continue
-
-        closed = _ensure_signal_identity(closed)
-        signal_key = closed.get("signal_key")
-        result = str(closed.get("resultado") or closed.get("status") or "").upper()
-
-        if not signal_key:
-            continue
-
-        if result not in {"WIN", "LOSS", "PUSH", "VOID", "REMOVED", "CANCELLED"}:
-            continue
-
-        try:
-            updated = history_service.update_result(
-                signal_key=str(signal_key),
-                result=result,
-                extra=closed,
-            )
-
-            if updated:
-                saved += 1
-                continue
-
-            history_service.register_closed_signal(closed, result=result)
-            saved += 1
-
-        except Exception as exc:
-            logger.warning(
-                "WORKER: no se pudo guardar señal cerrada en historial | key=%s | error=%s",
-                signal_key,
-                exc,
-            )
-
-    return saved
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def run_worker() -> None:
-    runtime_state = app_container.runtime_state
+    """Continuous live scan.
+
+    This worker never downloads pre-match information globally. The unified
+    engine requests pre-match/odds only after a live candidate passes the first
+    gate, which protects API quota while keeping global discovery broad.
+    """
+    interval = max(15, int(getattr(Config, "SCAN_INTERVAL_SECONDS", 30)))
+    state = app_container.runtime_state
     fetcher = app_container.live_fetcher
-    scan_service = app_container.scan_service
-    live_signal_manager = app_container.live_signal_manager
-    history_service = app_container.history_service
+    adapter = app_container.v17_dashboard_adapter
 
-    odds_fetcher = OddsFetcher()
-    odds_mapper = MatchOddsMapper()
-    league_filter = LeagueFilter()
-
-    odds_disabled_until = 0.0
-    odds_disabled_reason = ""
-
-    logger.warning(
-        "WORKER JHONNY_ELITE_V16 iniciado | intervalo=%ss | filtro_ligas=ON",
-        SCAN_INTERVAL_SECONDS,
-    )
+    post_goal_interval = max(15, int(getattr(Config, "POST_GOAL_RESCAN_SECONDS", 15)))
+    previous_scores: dict[str, tuple[int, int]] = {}
+    logger.info("JHONNY ELITE worker started | interval=%ss | post-goal=%ss", interval, post_goal_interval)
 
     while True:
+        started = time.time()
+        score_changed = False
         try:
-            logger.warning("🔄 NUEVO CICLO DE ESCANEO")
+            raw_live = fetcher.get_live_matches()
 
-            raw_live_matches = fetcher.get_live_matches() or []
+            # Detect score changes. The current cycle already analyzes the new score;
+            # the next cycle is accelerated so the engine can read the post-goal shape.
+            current_scores: dict[str, tuple[int, int]] = {}
+            for item in raw_live:
+                if not isinstance(item, dict):
+                    continue
+                fixture_id = str(item.get("match_id") or item.get("fixture_id") or "")
+                if not fixture_id:
+                    continue
+                score = (int(item.get("home_score") or 0), int(item.get("away_score") or 0))
+                current_scores[fixture_id] = score
+                if fixture_id in previous_scores and previous_scores[fixture_id] != score:
+                    score_changed = True
+            previous_scores = current_scores
 
-            league_result = _filter_priority_leagues(
-                live_matches=raw_live_matches,
-                league_filter=league_filter,
+            # A fixture normally disappears from live=all when it ends. Query only
+            # pending tracked fixtures so UNDER/OVER can be closed with the final score.
+            live_ids = {str(x.get("match_id") or x.get("fixture_id") or "") for x in raw_live if isinstance(x, dict)}
+            pending_ids = {
+                str(x.get("match_id") or x.get("fixture_id") or "")
+                for x in adapter.tracker.pending()
+                if isinstance(x, dict)
+            }
+            missing_tracked = [x for x in pending_ids if x and x not in live_ids]
+            tracking_snapshots = fetcher.get_fixture_statuses(missing_tracked) if missing_tracked else []
+
+            dashboard = adapter.build_from_raw_matches(
+                list(raw_live) + list(tracking_snapshots),
+                source_status="LIVE_API",
             )
 
-            live_matches = league_result.get("allowed", []) or []
-            blocked_by_league = league_result.get("blocked_by_league", []) or []
-            league_summary = league_result.get("summary", {}) or {}
+            live = dashboard.get("live_matches", []) or []
+            signals = dashboard.get("top_signals", []) or []
+            opportunities = (dashboard.get("observe", []) or []) + (dashboard.get("no_bet", []) or [])
+            blocked = (dashboard.get("blocked", []) or []) + (dashboard.get("blocked_by_league", []) or [])
+            stats = dashboard.get("stats", {}) or {}
 
-            now = time.time()
-            odds_events = []
-            odds_attached_count = 0
-
-            try:
-                if not live_matches:
-                    logger.warning("💰 ODDS | omitido porque no hay partidos live permitidos por filtro de liga")
-
-                elif now < odds_disabled_until:
-                    remaining = int(odds_disabled_until - now)
-                    live_matches = _mark_internal_only_matches(
-                        live_matches,
-                        odds_disabled_reason or "ODDS_TEMPORARILY_DISABLED",
-                    )
-                    logger.warning(
-                        "💰 ODDS | desactivado temporalmente %ss | modo INTERNAL_ONLY | reason=%s",
-                        remaining,
-                        odds_disabled_reason or "ODDS_TEMPORARILY_DISABLED",
-                    )
-
-                else:
-                    odds_events = odds_fetcher.get_live_odds() or []
-
-                    if odds_events:
-                        live_matches = odds_mapper.attach_odds(live_matches, odds_events)
-
-                    odds_attached_count = sum(
-                        1
-                        for x in live_matches
-                        if isinstance(x, dict) and x.get("odds_attached") is True
-                    )
-
-                    if not odds_events:
-                        live_matches = _mark_internal_only_matches(
-                            live_matches,
-                            "ODDS_EMPTY_OR_UNAVAILABLE",
-                        )
-
-                    logger.warning(
-                        "💰 ODDS | eventos=%s | partidos_con_cuotas=%s",
-                        len(odds_events),
-                        odds_attached_count,
-                    )
-
-            except Exception as odds_exc:
-                odds_error_text = str(odds_exc)
-
-                if _is_odds_limit_error(odds_error_text):
-                    odds_disabled_until = time.time() + ODDS_COOLDOWN_SECONDS
-                    odds_disabled_reason = odds_error_text
-
-                    logger.warning(
-                        "💰 ODDS | desactivado por límite/error API durante %ss | reason=%s",
-                        ODDS_COOLDOWN_SECONDS,
-                        odds_error_text,
-                    )
-
-                else:
-                    logger.warning(
-                        "ODDS: no se pudieron adjuntar cuotas reales | modo INTERNAL_ONLY | error=%s",
-                        odds_exc,
-                    )
-
-                live_matches = _mark_internal_only_matches(
-                    live_matches,
-                    odds_error_text or "ODDS_ERROR_INTERNAL_ONLY",
-                )
-
-            logger.warning(
-                "⚽ PARTIDOS EN VIVO | raw=%s | permitidos=%s | bloqueados_por_liga=%s",
-                len(raw_live_matches),
-                len(live_matches),
-                len(blocked_by_league),
-            )
-
-            if live_matches:
-                _log_live_matches_preview(live_matches)
-
-            scan_result = scan_service.scan(live_matches) or {}
-
-            published_signals = scan_result.get("published_signals", []) or []
-            opportunities = scan_result.get("opportunities", []) or []
-            blocked = scan_result.get("blocked", []) or []
-            scan_stats = scan_result.get("stats", {}) or {}
-
-            published_signals = [
-                _ensure_signal_identity(signal)
-                for signal in published_signals
-                if isinstance(signal, dict)
-            ]
-
-            opportunities = [
-                _ensure_signal_identity(opp)
-                for opp in opportunities
-                if isinstance(opp, dict)
-            ]
-
-            blocked = [
-                item for item in blocked if isinstance(item, dict)
-            ]
-
-            blocked_total = blocked + blocked_by_league
-
-            logger.warning("📌 CANDIDATAS PUBLICADAS: %s", len(published_signals))
-            logger.warning("👁️ OPORTUNIDADES: %s", len(opportunities))
-            logger.warning("⛔ BLOQUEADOS MOTOR: %s", len(blocked))
-            logger.warning("🏆 BLOQUEADOS POR LIGA: %s", len(blocked_by_league))
-
-            _log_published_signals(published_signals)
-            _log_opportunities(opportunities)
-            _log_blocked(blocked_total)
-
-            for signal in published_signals:
-                try:
-                    history_service.register_published_signal(signal)
-                except Exception as exc:
-                    logger.warning(
-                        "WORKER: no se pudo registrar señal publicada en historial | key=%s | error=%s",
-                        _signal_key(signal),
-                        exc,
-                    )
-
-            sync_stats = live_signal_manager.sync(
-                published_signals=published_signals
-            )
-
-            if not isinstance(sync_stats, dict):
-                sync_stats = {}
-
-            closed_finished = live_signal_manager.resolve_finished_matches(
-                live_matches
-            )
-
-            closed_signals = []
-            if hasattr(live_signal_manager, "pop_recently_closed"):
-                closed_signals = live_signal_manager.pop_recently_closed() or []
-
-            closed_signals = [
-                _ensure_signal_identity(signal)
-                for signal in closed_signals
-                if isinstance(signal, dict)
-            ]
-
-            _log_closed_signals(closed_signals)
-
-            closed_saved = _register_closed_signals_in_history(
-                history_service=history_service,
-                closed_signals=closed_signals,
-            )
-
-            runtime_state.add_closed_signals_to_history(closed_signals)
-
-            if hasattr(runtime_state, "update_history"):
-                runtime_state.update_history(history_service.get_history())
-
-            active_signals = live_signal_manager.get_active_signals()
-
-            if not isinstance(active_signals, list):
-                active_signals = []
-
-            runtime_state.update_live_matches(live_matches)
-            runtime_state.update_active_signals(active_signals)
-            runtime_state.update_opportunities(opportunities)
-            runtime_state.update_blocked(blocked_total)
-
-            history_stats = history_service.get_stats()
-
-            runtime_state.update_stats(
-                {
-                    **history_stats,
-                    **scan_stats,
-                    "sync_created": sync_stats.get("created", 0),
-                    "sync_updated": sync_stats.get("updated", 0),
-                    "sync_invalidated": sync_stats.get("invalidated", 0),
-                    "closed_finished_matches": closed_finished,
-                    "closed_signals_saved": closed_saved,
-
-                    "raw_live_matches_count": len(raw_live_matches),
-                    "live_matches_count": len(live_matches),
-                    "active_signals_count": len(active_signals),
-
-                    "league_filter_enabled": True,
-                    "league_filter_received": league_summary.get("received", len(raw_live_matches)),
-                    "league_filter_allowed": league_summary.get("allowed", len(live_matches)),
-                    "league_filter_blocked": league_summary.get("blocked_by_league", len(blocked_by_league)),
-                    "blocked_by_league_count": len(blocked_by_league),
-
-                    "odds_attached_count": sum(
-                        1 for x in live_matches if isinstance(x, dict) and x.get("odds_attached") is True
-                    ),
-                    "odds_disabled": time.time() < odds_disabled_until,
-                    "odds_disabled_reason": odds_disabled_reason,
-                    "updated_at": utc_now_iso(),
-                    "scan_interval_seconds": SCAN_INTERVAL_SECONDS,
-                }
-            )
-
-            runtime_state.set_health_ok()
-
-            _log_cycle_snapshot(
-                live_matches=live_matches,
-                published_signals=published_signals,
-                opportunities=opportunities,
-                blocked=blocked_total,
-                active_signals=active_signals,
-                closed_signals=closed_signals,
-                blocked_by_league_count=len(blocked_by_league),
-            )
+            state.update_live_matches(live)
+            state.update_active_signals(signals)
+            state.update_opportunities(opportunities)
+            state.update_blocked(blocked)
+            state.update_stats({
+                **stats,
+                "updated_at": now_iso(),
+                "scan_interval_seconds": interval,
+                "cycle_seconds": round(time.time() - started, 3),
+                "worker_mode": "JHONNY_ELITE_UNIFIED",
+            })
+            state.set_health_ok()
 
             logger.info(
-                "WORKER: ciclo OK | interval=%ss | raw=%s | allowed=%s | blocked_by_league=%s | published=%s | opps=%s | blocked=%s | active=%s | closed=%s | saved=%s | history=%s | sync(created=%s updated=%s invalidated=%s)",
-                SCAN_INTERVAL_SECONDS,
-                len(raw_live_matches),
-                len(live_matches),
-                len(blocked_by_league),
-                len(published_signals),
-                len(opportunities),
-                len(blocked_total),
-                len(active_signals),
-                len(closed_signals),
-                closed_saved,
-                history_stats.get("history_items", 0),
-                sync_stats.get("created", 0),
-                sync_stats.get("updated", 0),
-                sync_stats.get("invalidated", 0),
+                "cycle OK | live=%s signals=%s observe=%s blocked=%s precision=%s%%",
+                len(live), len(signals), len(dashboard.get("observe", []) or []),
+                len(blocked), stats.get("precision", 0),
             )
-
         except Exception as exc:
-            logger.exception("WORKER: ciclo falló: %s", exc)
-            runtime_state.set_health_error(str(exc))
+            logger.exception("worker cycle failed: %s", exc)
+            state.set_health_error(str(exc))
 
-        time.sleep(SCAN_INTERVAL_SECONDS)
+        elapsed = time.time() - started
+        next_interval = post_goal_interval if score_changed else interval
+        time.sleep(max(1.0, next_interval - elapsed))
 
 
 def iniciar_worker() -> None:
@@ -833,8 +105,9 @@ def iniciar_worker() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(levelname)s:%(name)s:%(message)s",
-    )
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
     run_worker()
+
+# Legacy compatibility: old dashboard modules may still import this helper.
+def get_last_live_matches():
+    return app_container.runtime_state.get_live_matches()
