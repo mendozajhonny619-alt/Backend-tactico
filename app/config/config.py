@@ -169,30 +169,68 @@ class Config:
     # =========================
     # ⚙️ SISTEMA
     # =========================
-    SHADOW_MODE = os.getenv("SHADOW_MODE", "false").lower() == "true"
     SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", 30))
-    LIVE_BASE_CACHE_TTL_SECONDS = max(15, int(os.getenv("LIVE_BASE_CACHE_TTL_SECONDS", 15)))
+    LIVE_BASE_CACHE_TTL_SECONDS = max(30, int(os.getenv("LIVE_BASE_CACHE_TTL_SECONDS", 60)))
     POST_GOAL_RESCAN_SECONDS = max(15, int(os.getenv("POST_GOAL_RESCAN_SECONDS", 15)))
     WORKER_ENABLED = os.getenv("WORKER_ENABLED", "true").lower() == "true"
     WORKER_SINGLE_PROCESS_ONLY = os.getenv("WORKER_SINGLE_PROCESS_ONLY", "true").lower() == "true"
-    GLOBAL_SENIOR_SCOPE = os.getenv("GLOBAL_SENIOR_SCOPE", "true").lower() == "true"
+    GLOBAL_SENIOR_SCOPE = os.getenv("GLOBAL_SENIOR_SCOPE", "false").lower() == "true"
+    STRICT_COMPETITION_SCOPE = os.getenv("STRICT_COMPETITION_SCOPE", "true").lower() == "true"
+    ENFORCE_ALLOWED_LEAGUE_IDS = os.getenv("ENFORCE_ALLOWED_LEAGUE_IDS", "false").lower() == "true"
+    API_ECONOMY_MODE = os.getenv("API_ECONOMY_MODE", "true").lower() == "true"
+    API_DAILY_RESERVE = max(0, int(os.getenv("API_DAILY_RESERVE", 300)))
+    API_THROTTLE_USED_PERCENT = float(os.getenv("API_THROTTLE_USED_PERCENT", 82.0))
+    API_CRITICAL_USED_PERCENT = float(os.getenv("API_CRITICAL_USED_PERCENT", 92.0))
 
     # Escaneo live profundo por lotes. API-Football soporta hasta 20 ids por petición.
     LIVE_DETAILS_BATCH_SIZE = max(1, min(20, int(os.getenv("LIVE_DETAILS_BATCH_SIZE", 20))))
-    LIVE_DETAILS_MAX_MATCHES = max(20, int(os.getenv("LIVE_DETAILS_MAX_MATCHES", 200)))
-    LIVE_DETAILS_CACHE_TTL_SECONDS = max(15, int(os.getenv("LIVE_DETAILS_CACHE_TTL_SECONDS", 15)))
+    LIVE_DETAILS_MAX_MATCHES = max(20, int(os.getenv("LIVE_DETAILS_MAX_MATCHES", 40)))
+    LIVE_DETAILS_CACHE_TTL_SECONDS = max(60, int(os.getenv("LIVE_DETAILS_CACHE_TTL_SECONDS", 120)))
+    LIVE_FALLBACK_DEEP_MATCHES = max(0, int(os.getenv("LIVE_FALLBACK_DEEP_MATCHES", 2)))
+    LIVE_PLAYER_STATS_ENABLED = os.getenv("LIVE_PLAYER_STATS_ENABLED", "false").lower() == "true"
 
     # Protocolo JHONNY ELITE: OVER puede aparecer en cualquier tramo si la evidencia
     # madura; UNDER se publica tarde por defecto.
-    UNDER_MINUTE_MIN = int(os.getenv("UNDER_MINUTE_MIN", 75))
-    CANDIDATE_PREMATCH_MIN_CONFIDENCE = float(os.getenv("CANDIDATE_PREMATCH_MIN_CONFIDENCE", 58.0))
-    PUBLISH_MIN_CONFIDENCE = float(os.getenv("PUBLISH_MIN_CONFIDENCE", 68.0))
-    STRONG_SIGNAL_CONFIDENCE = float(os.getenv("STRONG_SIGNAL_CONFIDENCE", 82.0))
-    PREMIUM_SIGNAL_CONFIDENCE = float(os.getenv("PREMIUM_SIGNAL_CONFIDENCE", 88.0))
+    UNDER_MINUTE_MIN = int(os.getenv("UNDER_MINUTE_MIN", 60))
+    UNDER_PREFERRED_MINUTE = int(os.getenv("UNDER_PREFERRED_MINUTE", 65))
+    CANDIDATE_PREMATCH_MIN_CONFIDENCE = float(os.getenv("CANDIDATE_PREMATCH_MIN_CONFIDENCE", 72.0))
+    PUBLISH_MIN_CONFIDENCE = float(os.getenv("PUBLISH_MIN_CONFIDENCE", 82.0))
+    STRONG_SIGNAL_CONFIDENCE = float(os.getenv("STRONG_SIGNAL_CONFIDENCE", 89.0))
+    PREMIUM_SIGNAL_CONFIDENCE = float(os.getenv("PREMIUM_SIGNAL_CONFIDENCE", 94.0))
 
     # Las cuotas enriquecen solo candidatos para ahorrar cuota y latencia.
     CANDIDATE_ODDS_ENABLED = os.getenv("CANDIDATE_ODDS_ENABLED", "true").lower() == "true"
     VALUE_REQUIRED_FOR_PREMIUM = os.getenv("VALUE_REQUIRED_FOR_PREMIUM", "true").lower() == "true"
+    MAX_PREMATCH_ENRICHMENTS_PER_CYCLE = max(1, int(os.getenv("MAX_PREMATCH_ENRICHMENTS_PER_CYCLE", 1)))
+    MAX_PUBLISHED_SIGNALS_PER_CYCLE = max(1, min(6, int(os.getenv("MAX_PUBLISHED_SIGNALS_PER_CYCLE", 6))))
+    ODDS_CACHE_TTL_SECONDS = max(60, int(os.getenv("ODDS_CACHE_TTL_SECONDS", 180)))
+    ODDS_MIN_CANDIDATE_SCORE = float(os.getenv("ODDS_MIN_CANDIDATE_SCORE", 78.0))
+    PREMATCH_ECONOMY_MODE = os.getenv("PREMATCH_ECONOMY_MODE", "true").lower() == "true"
+    PREMATCH_MAX_NEW_PACKAGES_PER_HOUR = max(1, int(os.getenv("PREMATCH_MAX_NEW_PACKAGES_PER_HOUR", 8)))
+    PREMATCH_PROVIDER_PREDICTION_ENABLED = os.getenv("PREMATCH_PROVIDER_PREDICTION_ENABLED", "false").lower() == "true"
+    PREMATCH_LEAGUE_SAMPLE_ENABLED = os.getenv("PREMATCH_LEAGUE_SAMPLE_ENABLED", "false").lower() == "true"
+
+    # =========================
+    # 🧠 MASTER PROTOCOL 20
+    # =========================
+    MASTER_PROTOCOL_ENABLED = os.getenv("MASTER_PROTOCOL_ENABLED", "true").lower() == "true"
+    MASTER_MIN_CONSENSUS = max(4, min(5, int(os.getenv("MASTER_MIN_CONSENSUS", 4))))
+    OBSERVATION_MIN_SCORE = float(os.getenv("OBSERVATION_MIN_SCORE", 45.0))
+    EDGE_MIN_PERCENT = float(os.getenv("EDGE_MIN_PERCENT", 4.0))
+    MAX_LIVE_DATA_AGE_SECONDS = max(30, int(os.getenv("MAX_LIVE_DATA_AGE_SECONDS", 150)))
+    MAX_ODDS_AGE_SECONDS = max(30, int(os.getenv("MAX_ODDS_AGE_SECONDS", 180)))
+    PUBLISH_MIN_CONFIDENCE = float(os.getenv("PUBLISH_MIN_CONFIDENCE", 84.0))
+    SHADOW_MODE = os.getenv("SHADOW_MODE", "false").lower() == "true"
+    SIGNAL_MAX_SIMULTANEOUS = max(1, min(6, int(os.getenv("SIGNAL_MAX_SIMULTANEOUS", 6))))
+    REENTRY_COOLDOWN_SECONDS = max(60, int(os.getenv("REENTRY_COOLDOWN_SECONDS", 300)))
+    SIGNAL_REVIEW_5_MIN = max(1, int(os.getenv("SIGNAL_REVIEW_5_MIN", 5)))
+    SIGNAL_REVIEW_10_MIN = max(5, int(os.getenv("SIGNAL_REVIEW_10_MIN", 10)))
+    SIGNAL_REVIEW_15_MIN = max(10, int(os.getenv("SIGNAL_REVIEW_15_MIN", 15)))
+    SIGNAL_REVIEW_20_MIN = max(15, int(os.getenv("SIGNAL_REVIEW_20_MIN", 20)))
+    BANKROLL_STAKE_MIN_PCT = float(os.getenv("BANKROLL_STAKE_MIN_PCT", 1.0))
+    BANKROLL_STAKE_MAX_PCT = float(os.getenv("BANKROLL_STAKE_MAX_PCT", 3.0))
+    BANKROLL_PREMIUM_MAX_PCT = float(os.getenv("BANKROLL_PREMIUM_MAX_PCT", 5.0))
+    BANKROLL_DAILY_LIMIT_PCT = float(os.getenv("BANKROLL_DAILY_LIMIT_PCT", 10.0))
 
     # Seguridad / panel. Separar múltiples orígenes con coma.
     CORS_ORIGINS = [

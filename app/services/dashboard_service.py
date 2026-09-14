@@ -15,7 +15,7 @@ class DashboardService:
     immutable-ish snapshot so the panel remains fast on desktop and mobile.
     """
 
-    VERSION = "JHONNY_ELITE_19.0"
+    VERSION = "JHONNY_ELITE_20.0"
 
     def __init__(self, runtime_state, dashboard_adapter) -> None:
         self.runtime_state = runtime_state
@@ -93,6 +93,9 @@ class DashboardService:
             "closed_history": closed,
             "updated_at": now_iso(),
         }
+
+    def get_match_detail(self, fixture_id: Any, signal_key: Any = None) -> Dict[str, Any]:
+        return self.dashboard_adapter.get_match_detail(fixture_id=fixture_id, signal_key=signal_key)
 
     def get_stats(self) -> Dict[str, Any]:
         data = self._dashboard()
