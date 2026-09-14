@@ -20,18 +20,68 @@ services:
         value: "true"
       - key: WORKER_SINGLE_PROCESS_ONLY
         value: "true"
-      - key: GLOBAL_SENIOR_SCOPE
+      - key: MASTER_PROTOCOL_ENABLED
         value: "true"
+      - key: SHADOW_MODE
+        value: "false"
+      - key: API_ECONOMY_MODE
+        value: "true"
+      - key: API_DAILY_RESERVE
+        value: "300"
+      - key: GLOBAL_SENIOR_SCOPE
+        value: "false"
+      - key: STRICT_COMPETITION_SCOPE
+        value: "true"
+      - key: ENFORCE_ALLOWED_LEAGUE_IDS
+        value: "false"
       - key: SCAN_INTERVAL_SECONDS
         value: "30"
+      - key: LIVE_BASE_CACHE_TTL_SECONDS
+        value: "60"
       - key: POST_GOAL_RESCAN_SECONDS
         value: "15"
       - key: LIVE_DETAILS_BATCH_SIZE
         value: "20"
       - key: LIVE_DETAILS_MAX_MATCHES
-        value: "200"
+        value: "40"
+      - key: LIVE_DETAILS_CACHE_TTL_SECONDS
+        value: "120"
+      - key: LIVE_FALLBACK_DEEP_MATCHES
+        value: "2"
+      - key: LIVE_PLAYER_STATS_ENABLED
+        value: "false"
       - key: UNDER_MINUTE_MIN
-        value: "75"
+        value: "60"
+      - key: UNDER_PREFERRED_MINUTE
+        value: "65"
+      - key: CANDIDATE_PREMATCH_MIN_CONFIDENCE
+        value: "72"
+      - key: PUBLISH_MIN_CONFIDENCE
+        value: "84"
+      - key: MASTER_MIN_CONSENSUS
+        value: "4"
+      - key: SIGNAL_MAX_SIMULTANEOUS
+        value: "6"
+      - key: STRONG_SIGNAL_CONFIDENCE
+        value: "89"
+      - key: PREMIUM_SIGNAL_CONFIDENCE
+        value: "94"
+      - key: MAX_PREMATCH_ENRICHMENTS_PER_CYCLE
+        value: "1"
+      - key: MAX_PUBLISHED_SIGNALS_PER_CYCLE
+        value: "6"
+      - key: ODDS_CACHE_TTL_SECONDS
+        value: "180"
+      - key: ODDS_MIN_CANDIDATE_SCORE
+        value: "78"
+      - key: PREMATCH_ECONOMY_MODE
+        value: "true"
+      - key: PREMATCH_MAX_NEW_PACKAGES_PER_HOUR
+        value: "8"
+      - key: PREMATCH_PROVIDER_PREDICTION_ENABLED
+        value: "false"
+      - key: PREMATCH_LEAGUE_SAMPLE_ENABLED
+        value: "false"
       - key: JHONNY_DEBUG_API_RAW
         value: "0"
       - key: CORS_ORIGINS

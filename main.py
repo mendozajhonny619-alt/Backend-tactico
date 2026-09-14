@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="JHONNY ELITE Football Intelligence",
-    version="19.0",
+    version="20.0",
     description="Live football intelligence: global scan, candidate-first pre-match enrichment, mathematical validation and signal tracking.",
     lifespan=lifespan,
 )
@@ -71,8 +71,8 @@ def root():
     return {
         "ok": True,
         "name": "JHONNY ELITE",
-        "version": "19.0",
-        "protocol": "LIVE -> CANDIDATE -> PREMATCH/ODDS -> MATH -> MASTER -> TRACK",
+        "version": "20.0",
+        "protocol": "LIVE -> NORMALIZE/FUSION -> DATATRUTH -> MEMORY -> CANDIDATE -> PREMATCH/ODDS -> MATH -> MASTER -> TRACK",
         "dashboard": "/v17/dashboard",
         "health": "/v17/health",
     }
@@ -80,4 +80,4 @@ def root():
 
 @app.get("/ready")
 def ready():
-    return {"ok": True, "version": "19.0"}
+    return {"ok": True, "version": "20.0"}

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from app.config.config import Config
 from app.services.app_container import app_container
+from app.services.api_quota_monitor import api_quota_monitor
 
 logger = logging.getLogger("JHONNY_ELITE_WORKER")
 
@@ -82,7 +83,10 @@ def run_worker() -> None:
                 "updated_at": now_iso(),
                 "scan_interval_seconds": interval,
                 "cycle_seconds": round(time.time() - started, 3),
-                "worker_mode": "JHONNY_ELITE_UNIFIED",
+                "worker_mode": "JHONNY_ELITE_20_MASTER_ECONOMY",
+                "api_economy_mode": bool(getattr(Config, "API_ECONOMY_MODE", True)),
+                "api_quota": api_quota_monitor.snapshot(),
+                "api_quota_pressure": api_quota_monitor.pressure_level(high_percent=float(getattr(Config, "API_THROTTLE_USED_PERCENT", 82.0)), critical_percent=float(getattr(Config, "API_CRITICAL_USED_PERCENT", 92.0))),
             })
             state.set_health_ok()
 
@@ -97,6 +101,8 @@ def run_worker() -> None:
 
         elapsed = time.time() - started
         next_interval = post_goal_interval if score_changed else interval
+        # Master Protocol requires a 30s decision cycle. Economy pressure is handled
+        # inside fetch/enrichment budgets rather than by stopping the master loop.
         time.sleep(max(1.0, next_interval - elapsed))
 
 
