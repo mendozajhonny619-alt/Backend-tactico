@@ -449,6 +449,26 @@ def stats() -> Dict[str, Any]:
     }
 
 
+@router.get("/v17/match/{fixture_id}")
+def match_detail(fixture_id: str, signal_key: str | None = None) -> Dict[str, Any]:
+    dashboard_service = _get_dashboard_service()
+    payload = _safe_service_call(
+        "match_detail",
+        lambda: dashboard_service.get_match_detail(fixture_id=fixture_id, signal_key=signal_key),
+        timeout_seconds=1.5,
+    )
+    return {
+        "ok": bool(payload.get("ok", True)),
+        "fixture_id": fixture_id,
+        "signal_key": signal_key,
+        "source": payload.get("source"),
+        "item": payload.get("item", {}),
+        "updated_at": payload.get("updated_at") or _now_iso(),
+        "fallback": payload.get("fallback", False),
+        "timeout": payload.get("timeout", False),
+    }
+
+
 @router.get("/v17/dashboard")
 @router.get("/dashboard")
 def dashboard() -> Dict[str, Any]:
@@ -539,7 +559,7 @@ def dashboard() -> Dict[str, Any]:
 
     return {
         "ok": True,
-        "version": "JHONNY_ELITE_19.0",
+        "version": "JHONNY_ELITE_20.0",
         "updated_at": updated_at,
         "frontend_safe": True,
         "fallback": any_fallback,

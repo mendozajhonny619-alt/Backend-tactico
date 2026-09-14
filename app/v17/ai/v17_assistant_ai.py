@@ -232,7 +232,7 @@ Responde como analista interno de JHONNY ELITE 19.
         summary = snapshot.get("summary", {}) if isinstance(snapshot.get("summary"), dict) else {}
 
         context = {
-            "system_version": snapshot.get("version", "JHONNY_ELITE_19.0"),
+            "system_version": snapshot.get("version", "JHONNY_ELITE_20.0"),
             "updated_at": snapshot.get("updated_at"),
             "message": snapshot.get("message"),
             "summary": summary,

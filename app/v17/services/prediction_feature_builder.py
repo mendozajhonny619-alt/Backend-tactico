@@ -52,7 +52,7 @@ class PredictionFeatureBuilder:
     lectura táctica en un snapshot reproducible para entrenamiento y auditoría.
     """
 
-    VERSION = "JHONNY_ELITE_FEATURES_19.0"
+    VERSION = "JHONNY_ELITE_FEATURES_20.0"
 
     def build(
         self,

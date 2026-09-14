@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 import requests
 
 from app.config.config import Config
+from app.services.api_quota_monitor import api_quota_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +32,9 @@ class CandidateOddsService:
 
     BASE_URL = "https://v3.football.api-sports.io"
 
-    def __init__(self, ttl_seconds: int = 45) -> None:
+    def __init__(self, ttl_seconds: int | None = None) -> None:
         self.api_key = Config.API_FOOTBALL_KEY
-        self.ttl_seconds = ttl_seconds
+        self.ttl_seconds = int(ttl_seconds or getattr(Config, "ODDS_CACHE_TTL_SECONDS", 180))
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._cooldown_until = 0.0
 
@@ -68,6 +70,7 @@ class CandidateOddsService:
                     params={"fixture": fixture_id},
                     timeout=7,
                 )
+                api_quota_monitor.record_response(response, "odds_live_candidate")
                 if response.status_code == 429:
                     self._cooldown_until = now + 300
                     return self._from_existing_match(match, direction, target_line, model_probability, "RATE_LIMIT_429")
@@ -106,7 +109,10 @@ class CandidateOddsService:
             "implied_probability": round(implied, 2),
             "model_probability_for_value": round(model_probability, 2),
             "value_edge": round(edge, 2),
+            "expected_value": round(((model_probability / 100.0) * odds) - 1.0, 4) if model_probability > 0 and odds > 1.0 else 0.0,
             "has_positive_value": bool(edge >= Config.EDGE_MINIMO * 100) if model_probability > 0 else False,
+            "odds_timestamp": datetime.now(timezone.utc).isoformat(),
+            "odds_age_seconds": 0,
             "target_line": target_line,
         }
 
@@ -179,7 +185,10 @@ class CandidateOddsService:
             "implied_probability": round(implied, 2),
             "model_probability_for_value": round(model_probability, 2),
             "value_edge": round(edge, 2),
+            "expected_value": round(((model_probability / 100.0) * odds) - 1.0, 4) if model_probability > 0 and odds > 1.0 else 0.0,
             "has_positive_value": bool(edge >= Config.EDGE_MINIMO * 100) if model_probability > 0 else False,
+            "odds_timestamp": datetime.now(timezone.utc).isoformat() if odds > 1.0 else None,
+            "odds_age_seconds": 0 if odds > 1.0 else None,
             "target_line": target_line,
         }
 
@@ -194,6 +203,9 @@ class CandidateOddsService:
             "odds": 0.0,
             "implied_probability": 0.0,
             "value_edge": 0.0,
+            "expected_value": 0.0,
             "has_positive_value": False,
+            "odds_timestamp": None,
+            "odds_age_seconds": None,
             "target_line": target_line,
         }

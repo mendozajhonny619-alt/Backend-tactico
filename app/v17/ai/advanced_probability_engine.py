@@ -32,7 +32,7 @@ class AdvancedProbabilityEngine:
     revisados por MasterDecisionAI.
     """
 
-    VERSION = "JE_POISSON_HAZARD_19.0"
+    VERSION = "JE_POISSON_HAZARD_20.0"
 
     def evaluate(
         self,
@@ -95,6 +95,17 @@ class AdvancedProbabilityEngine:
         p_goal = 1.0 - p_no_more_goal
         p_two_plus = 1.0 - math.exp(-remaining_lambda) * (1.0 + remaining_lambda)
 
+        # Dedicated temporal horizons.  We do not reuse FT probability as HT/next-window probability.
+        lambda_5 = clamp(rate * min(5.0, remaining_minutes) * intensity_multiplier, 0.0, remaining_lambda)
+        lambda_10 = clamp(rate * min(10.0, remaining_minutes) * intensity_multiplier, 0.0, remaining_lambda)
+        lambda_15 = clamp(rate * min(15.0, remaining_minutes) * intensity_multiplier, 0.0, remaining_lambda)
+        goal_next_5 = 1.0 - math.exp(-lambda_5)
+        goal_next_10 = 1.0 - math.exp(-lambda_10)
+        goal_next_15 = 1.0 - math.exp(-lambda_15)
+
+        halftime_remaining = max(0.0, min(48.0, 48.0 - float(minute)))
+        halftime_lambda = clamp(rate * halftime_remaining * intensity_multiplier, 0.0, remaining_lambda) if halftime_remaining > 0 else 0.0
+
         home_share = self._home_attack_share(match)
         if match.get("dynamics_available"):
             recent_home = sf(match.get("recent_home_threat_score"), 0.0)
@@ -107,6 +118,11 @@ class AdvancedProbabilityEngine:
 
         scenarios = self._score_scenarios(home, away, home_lambda, away_lambda)
         primary = scenarios[0] if scenarios else {"score": f"{home}-{away}", "probability": p_no_more_goal * 100}
+
+        ht_home_lambda = halftime_lambda * home_share
+        ht_away_lambda = halftime_lambda * (1.0 - home_share)
+        ht_scenarios = self._score_scenarios(home, away, ht_home_lambda, ht_away_lambda) if halftime_remaining > 0 else [{"score": f"{home}-{away}", "probability": 100.0, "additional_home_goals": 0, "additional_away_goals": 0}]
+        ht_primary = ht_scenarios[0]
 
         instability = clamp(
             rhythm * 0.30
@@ -135,10 +151,19 @@ class AdvancedProbabilityEngine:
             "away_next_goal_probability": round(p_goal * (1.0 - home_share) * 100, 2),
             "home_attack_share": round(home_share * 100, 2),
             "instability_score": round(instability, 2),
+            "predicted_halftime_score": ht_primary.get("score"),
+            "halftime_score_probability": round(sf(ht_primary.get("probability")), 2),
+            "halftime_alternative_scores": ht_scenarios[1:4],
             "primary_final_score": primary.get("score"),
             "primary_score_probability": round(sf(primary.get("probability")), 2),
             "alternative_scores": alternatives,
-            "score_scenarios": scenarios[:6],
+            "score_scenarios": scenarios[:10],
+            "score_distribution_full": scenarios,
+            "goal_next_5_probability": round(goal_next_5 * 100, 2),
+            "goal_next_10_probability": round(goal_next_10 * 100, 2),
+            "goal_next_15_probability": round(goal_next_15 * 100, 2),
+            "score_change_probability": round(p_goal * 100, 2),
+            "score_stability_probability": round(p_no_more_goal * 100, 2),
             "math_support_over": round(p_goal * 100, 2),
             "math_support_under": round(p_no_more_goal * 100, 2),
             "current_total_goals": current_total,

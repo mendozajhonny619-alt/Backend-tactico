@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from app.config.config import Config
+from app.services.api_quota_monitor import api_quota_monitor
 
 
 def safe_int(value: Any, default: int = 0) -> int:
@@ -65,6 +66,8 @@ class PreMatchDataService:
         self.timeout_seconds = timeout_seconds
 
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self._resource_cache: Dict[str, Dict[str, Any]] = {}
+        self._new_package_timestamps: List[float] = []
 
     def get_pre_match_package(self, match: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -112,6 +115,18 @@ class PreMatchDataService:
             self._set_cached(fixture_id, fallback)
             return fallback
 
+        # Una ficha prepartido nueva puede requerir varias consultas. Nunca se
+        # inicia si comprometería la reserva diaria; el candidato queda observado
+        # y podrá enriquecerse en otro ciclo o tras el reinicio de cuota.
+        if getattr(Config, "API_ECONOMY_MODE", True):
+            reserve = int(getattr(Config, "API_DAILY_RESERVE", 300))
+            estimated_calls = 6 if getattr(Config, "PREMATCH_ECONOMY_MODE", True) else 9
+            if not api_quota_monitor.can_spend(required=estimated_calls, reserve=reserve):
+                return self._fallback_package(match=match, reason="QUOTA_GUARD")
+
+            if not self._reserve_new_package_slot():
+                return self._fallback_package(match=match, reason="PREMATCH_HOURLY_BUDGET")
+
         try:
             package = self._build_package_from_api(
                 match=match,
@@ -133,6 +148,26 @@ class PreMatchDataService:
             self._set_cached(fixture_id, fallback)
             return fallback
 
+    def is_cached(self, match: Dict[str, Any]) -> bool:
+        fixture_id = self._fixture_id(match or {})
+        return bool(fixture_id and self._get_cached(fixture_id))
+
+
+    def _reserve_new_package_slot(self) -> bool:
+        """Limit NEW prematch API packages per hour without affecting cache hits.
+
+        This is an in-memory economy guard: opening match details never consumes a
+        slot, and repeated candidates use the 24h fixture cache.
+        """
+        now = time.time()
+        cutoff = now - 3600.0
+        self._new_package_timestamps = [ts for ts in self._new_package_timestamps if ts >= cutoff]
+        limit = max(1, int(getattr(Config, "PREMATCH_MAX_NEW_PACKAGES_PER_HOUR", 8)))
+        if len(self._new_package_timestamps) >= limit:
+            return False
+        self._new_package_timestamps.append(now)
+        return True
+
     def _build_package_from_api(
         self,
         match: Dict[str, Any],
@@ -142,7 +177,11 @@ class PreMatchDataService:
         league_id: Optional[int],
         season: Optional[int],
     ) -> Dict[str, Any]:
-        fixture_info = self._get_fixture_info(fixture_id)
+        # El live ya trae fixture/team/league/season en la mayoría de casos.
+        # En modo economía evitamos una llamada /fixtures?id=... redundante.
+        fixture_info: Dict[str, Any] = {}
+        if not (home_team_id and away_team_id and league_id and season):
+            fixture_info = self._get_fixture_info(fixture_id)
 
         if fixture_info:
             home_team_id = home_team_id or self._extract_team_id(fixture_info, "home")
@@ -151,36 +190,24 @@ class PreMatchDataService:
             season = season or self._extract_season(fixture_info)
 
         home_last_5 = self._get_last_matches(
-            team_id=home_team_id,
-            league_id=league_id,
-            season=season,
-            count=5,
+            team_id=home_team_id, league_id=league_id, season=season, count=5
         )
-
         away_last_5 = self._get_last_matches(
-            team_id=away_team_id,
-            league_id=league_id,
-            season=season,
-            count=5,
+            team_id=away_team_id, league_id=league_id, season=season, count=5
         )
 
-        # V17.2: mantener últimos 5 como base, pero separar contexto local/visitante.
-        # Esto ayuda a diferenciar equipos fuertes en casa de equipos débiles fuera.
-        home_home_last_5 = self._get_last_matches(
-            team_id=home_team_id,
-            league_id=league_id,
-            season=season,
-            count=5,
-            venue="home",
-        )
-
-        away_away_last_5 = self._get_last_matches(
-            team_id=away_team_id,
-            league_id=league_id,
-            season=season,
-            count=5,
-            venue="away",
-        )
+        # Las separaciones home/away añaden dos llamadas por candidato. En modo
+        # economía se derivan de la muestra general; en modo completo se consultan.
+        if getattr(Config, "PREMATCH_ECONOMY_MODE", True):
+            home_home_last_5 = []
+            away_away_last_5 = []
+        else:
+            home_home_last_5 = self._get_last_matches(
+                team_id=home_team_id, league_id=league_id, season=season, count=5, venue="home"
+            )
+            away_away_last_5 = self._get_last_matches(
+                team_id=away_team_id, league_id=league_id, season=season, count=5, venue="away"
+            )
 
         h2h = self._get_head_to_head(
             home_team_id=home_team_id,
@@ -201,12 +228,16 @@ class PreMatchDataService:
         away_team_statistics = self._get_team_statistics_safe(
             team_id=away_team_id, league_id=league_id, season=season
         )
-        provider_prediction = self._get_provider_prediction_safe(fixture_id)
+        provider_prediction = (
+            self._get_provider_prediction_safe(fixture_id)
+            if getattr(Config, "PREMATCH_PROVIDER_PREDICTION_ENABLED", False)
+            else {}
+        )
 
-        league_recent = self._get_league_recent_matches(
-            league_id=league_id,
-            season=season,
-            count=20,
+        league_recent = (
+            self._get_league_recent_matches(league_id=league_id, season=season, count=12)
+            if getattr(Config, "PREMATCH_LEAGUE_SAMPLE_ENABLED", False)
+            else []
         )
 
         package = {
@@ -261,9 +292,9 @@ class PreMatchDataService:
         return package
 
     def _get_fixture_info(self, fixture_id: str) -> Dict[str, Any]:
-        data = self._request(
-            endpoint="/fixtures",
-            params={"id": fixture_id},
+        data = self._request_cached(
+            cache_key=f"fixture:{fixture_id}", ttl_seconds=6 * 60 * 60,
+            endpoint="/fixtures", params={"id": fixture_id},
         )
         response = data.get("response") or []
         return response[0] if response else {}
@@ -294,9 +325,10 @@ class PreMatchDataService:
             params["venue"] = venue
 
         try:
-            data = self._request(
-                endpoint="/fixtures",
-                params=params,
+            cache_key = f"last:{team_id}:{league_id}:{season}:{count}:{venue or 'all'}"
+            data = self._request_cached(
+                cache_key=cache_key, ttl_seconds=2 * 60 * 60,
+                endpoint="/fixtures", params=params,
             )
             return data.get("response") or []
         except Exception:
@@ -313,12 +345,10 @@ class PreMatchDataService:
         if not home_team_id or not away_team_id:
             return []
 
-        data = self._request(
+        data = self._request_cached(
+            cache_key=f"h2h:{home_team_id}:{away_team_id}:{count}", ttl_seconds=12 * 60 * 60,
             endpoint="/fixtures/headtohead",
-            params={
-                "h2h": f"{home_team_id}-{away_team_id}",
-                "last": count,
-            },
+            params={"h2h": f"{home_team_id}-{away_team_id}", "last": count},
         )
 
         return data.get("response") or []
@@ -333,7 +363,8 @@ class PreMatchDataService:
         if not team_id or not league_id or not season:
             return {}
         try:
-            data = self._request(
+            data = self._request_cached(
+                cache_key=f"teamstats:{team_id}:{league_id}:{season}", ttl_seconds=6 * 60 * 60,
                 endpoint="/teams/statistics",
                 params={"team": team_id, "league": league_id, "season": season},
             )
@@ -346,7 +377,10 @@ class PreMatchDataService:
         if not fixture_id:
             return {}
         try:
-            data = self._request(endpoint="/predictions", params={"fixture": fixture_id})
+            data = self._request_cached(
+                cache_key=f"prediction:{fixture_id}", ttl_seconds=6 * 60 * 60,
+                endpoint="/predictions", params={"fixture": fixture_id}
+            )
             response = data.get("response") or []
             item = response[0] if isinstance(response, list) and response else {}
             return item if isinstance(item, dict) else {}
@@ -392,12 +426,9 @@ class PreMatchDataService:
         if not league_id or not season:
             return []
 
-        data = self._request(
-            endpoint="/standings",
-            params={
-                "league": league_id,
-                "season": season,
-            },
+        data = self._request_cached(
+            cache_key=f"standings:{league_id}:{season}", ttl_seconds=6 * 60 * 60,
+            endpoint="/standings", params={"league": league_id, "season": season},
         )
 
         return data.get("response") or []
@@ -411,16 +442,24 @@ class PreMatchDataService:
         if not league_id or not season:
             return []
 
-        data = self._request(
-            endpoint="/fixtures",
-            params={
-                "league": league_id,
-                "season": season,
-                "last": count,
-            },
+        data = self._request_cached(
+            cache_key=f"league_recent:{league_id}:{season}:{count}", ttl_seconds=6 * 60 * 60,
+            endpoint="/fixtures", params={"league": league_id, "season": season, "last": count},
         )
 
         return data.get("response") or []
+
+    def _request_cached(
+        self, cache_key: str, ttl_seconds: int, endpoint: str, params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        now = time.time()
+        cached = self._resource_cache.get(cache_key)
+        if cached and now - float(cached.get("at") or 0.0) < ttl_seconds:
+            data = cached.get("data")
+            return data if isinstance(data, dict) else {}
+        data = self._request(endpoint=endpoint, params=params)
+        self._resource_cache[cache_key] = {"at": now, "data": data}
+        return data
 
     def _request(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
         url = f"{self.api_base_url.rstrip('/')}/{endpoint.lstrip('/')}"
@@ -435,6 +474,7 @@ class PreMatchDataService:
             params=params,
             timeout=self.timeout_seconds,
         )
+        api_quota_monitor.record_response(response, f"prematch:{endpoint}")
 
         response.raise_for_status()
         data = response.json()

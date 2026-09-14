@@ -101,10 +101,12 @@ class V17DashboardAdapter:
         self.engine = JhonnyEliteEngine()
         self.tracker = SignalTracker()
         self.league_filter = LeagueFilter()
+        self._detail_by_fixture: Dict[str, Dict[str, Any]] = {}
+        self._detail_by_signal: Dict[str, Dict[str, Any]] = {}
 
         self._last_dashboard: Dict[str, Any] = {
             "ok": True,
-            "version": "JHONNY_ELITE_19.0",
+            "version": "JHONNY_ELITE_20.0",
             "updated_at": utc_now_iso(),
             "top_signals": [],
             "observe": [],
@@ -145,6 +147,11 @@ class V17DashboardAdapter:
 
         registered = self.tracker.register_published_signals(top_signals)
         tracking_result = self.tracker.update_with_live_matches(all_analyzed)
+        self._refresh_detail_index(
+            all_analyzed=all_analyzed,
+            pending=tracking_result.get("pending", []),
+            closed=tracking_result.get("closed", []),
+        )
 
         dashboard = self._build_dashboard_payload(
             engine_result=engine_result,
@@ -171,7 +178,7 @@ class V17DashboardAdapter:
         data = self.last_dashboard()
         return {
             "ok": True,
-            "version": "JHONNY_ELITE_19.0",
+            "version": "JHONNY_ELITE_20.0",
             "updated_at": utc_now_iso(),
             "top_signals": data.get("top_signals", []),
             "observe": data.get("observe", []),
@@ -182,7 +189,7 @@ class V17DashboardAdapter:
         data = self.last_dashboard()
         return {
             "ok": True,
-            "version": "JHONNY_ELITE_19.0",
+            "version": "JHONNY_ELITE_20.0",
             "updated_at": utc_now_iso(),
             "history": data.get("history", []),
             "pending_signals": data.get("pending_signals", []),
@@ -192,11 +199,48 @@ class V17DashboardAdapter:
             "performance_analysis": data.get("performance_analysis", {}),
         }
 
+    def get_match_detail(self, fixture_id: Any, signal_key: Any = None) -> Dict[str, Any]:
+        fixture_item = self._detail_by_fixture.get(str(fixture_id or "")) or {}
+        if signal_key:
+            signal_item = self._detail_by_signal.get(str(signal_key)) or {}
+            if signal_item:
+                # La ficha live suele contener más estadísticas que el registro de
+                # tracking; el tracking aporta marcador de entrada/final. Se fusionan
+                # en memoria, sin nuevas llamadas a API-Football.
+                merged = {**fixture_item, **signal_item}
+                return {"ok": True, "source": "SIGNAL+FIXTURE_MEMORY", "item": merged, "updated_at": utc_now_iso()}
+        if fixture_item:
+            return {"ok": True, "source": "FIXTURE_MEMORY", "item": dict(fixture_item), "updated_at": utc_now_iso()}
+        return {"ok": False, "source": "NOT_FOUND", "item": {}, "updated_at": utc_now_iso()}
+
+    def _refresh_detail_index(
+        self,
+        all_analyzed: List[Dict[str, Any]],
+        pending: List[Dict[str, Any]],
+        closed: List[Dict[str, Any]],
+    ) -> None:
+        by_fixture: Dict[str, Dict[str, Any]] = {}
+        by_signal: Dict[str, Dict[str, Any]] = {}
+        for item in list(all_analyzed or []) + list(pending or []) + list(closed or []):
+            if not isinstance(item, dict):
+                continue
+            fixture_id = str(item.get("fixture_id") or item.get("match_id") or "")
+            signal_key = str(item.get("signal_key") or "")
+            if fixture_id:
+                # Tracking records are appended after live analysis, so historical
+                # entry/final fields override only when they actually exist.
+                existing = by_fixture.get(fixture_id, {})
+                by_fixture[fixture_id] = {**existing, **item}
+            if signal_key:
+                by_signal[signal_key] = dict(item)
+        self._detail_by_fixture = by_fixture
+        self._detail_by_signal = by_signal
+
     def get_debug(self) -> Dict[str, Any]:
         data = self.last_dashboard()
         return {
             "ok": True,
-            "version": "JHONNY_ELITE_19.0",
+            "version": "JHONNY_ELITE_20.0",
             "updated_at": utc_now_iso(),
             "source_status": data.get("source_status"),
             "counts": {
@@ -263,6 +307,16 @@ class V17DashboardAdapter:
             "precision": tracking_summary.get("precision", 0),
             "accuracy_rate": tracking_summary.get("precision", 0),
             "total_tracked": tracking_summary.get("total_tracked", 0),
+            "roi": tracking_summary.get("roi", 0),
+            "average_odds": tracking_summary.get("average_odds", 0),
+            "average_edge": tracking_summary.get("average_edge", 0),
+            "average_confidence": tracking_summary.get("average_confidence", 0),
+            "calibration": tracking_summary.get("calibration", {}),
+            "performance_by_league": tracking_summary.get("by_league", {}),
+            "performance_by_line": tracking_summary.get("by_line", {}),
+            "performance_by_risk": tracking_summary.get("by_risk", {}),
+            "performance_by_data_quality": tracking_summary.get("by_data_quality", {}),
+            "performance_by_minute_range": tracking_summary.get("by_minute_range", {}),
             "by_market": by_market,
             "over": tracking_summary.get("over", by_market.get("OVER", {})),
             "under": tracking_summary.get("under", by_market.get("UNDER", {})),
@@ -280,13 +334,13 @@ class V17DashboardAdapter:
 
         return {
             "ok": True,
-            "version": "JHONNY_ELITE_19.0",
+            "version": "JHONNY_ELITE_20.0",
             "updated_at": utc_now_iso(),
             "source_status": source_status,
             "frontend_safe": True,
             "live_matches": self._compact_signals([x for x in all_analyzed if not x.get("tracking_only_terminal")]),
             "top_signals": self._compact_signals(top_signals),
-            "observe": self._compact_signals(observe[:20]),
+            "observe": self._compact_signals(observe),
             "no_bet": self._compact_signals(no_bet[:20]),
             "blocked": self._compact_signals(blocked[:20]),
             "blocked_by_league": self._compact_signals(blocked_by_league[:50]),
@@ -782,7 +836,7 @@ class V17DashboardAdapter:
             probability_pack = self._prediction_probability_pack(item)
 
             compact.append({
-                "version": "JHONNY_ELITE_19.0",
+                "version": "JHONNY_ELITE_20.0",
                 "signal_key": item.get("signal_key"),
                 "signal_id": item.get("signal_id"),
                 "match_id": item.get("match_id"),
@@ -1052,7 +1106,7 @@ class V17DashboardAdapter:
             probability_pack = self._prediction_probability_pack(item)
 
             compact.append({
-                "version": "JHONNY_ELITE_19.0",
+                "version": "JHONNY_ELITE_20.0",
                 "signal_key": item.get("signal_key"),
                 "signal_id": item.get("signal_id"),
                 "match_id": item.get("match_id"),

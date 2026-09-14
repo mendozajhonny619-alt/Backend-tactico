@@ -42,7 +42,7 @@ class PreMatchProfileAI:
     - tendencia de primer tiempo y segundo tiempo
     """
 
-    VERSION = "JHONNY_ELITE_PREMATCH_19.0"
+    VERSION = "JHONNY_ELITE_PREMATCH_20.0"
 
     def analyze(self, pre_match_package: Dict[str, Any], live_match: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         live_match = live_match or {}

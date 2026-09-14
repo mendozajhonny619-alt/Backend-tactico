@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -14,6 +15,7 @@ from app.v17.services.training_data_pipeline import TrainingDataPipeline
 from app.v17.services.model_prediction_service import ModelPredictionService
 from app.v17.ml.model_registry import ModelRegistry
 from app.config.config import Config
+from app.jhonny_elite.master_protocol import CalibrationMetrics
 
 
 def utc_now_iso() -> str:
@@ -136,6 +138,10 @@ class SignalTracker:
                 registered.append(deepcopy(existing))
                 continue
 
+            # Master Protocol: never exceed six simultaneously active official picks.
+            if len(self._pending) >= int(getattr(Config, "SIGNAL_MAX_SIMULTANEOUS", 6)):
+                continue
+
             tracked = self._create_tracking_record(signal)
             self._pending[signal_key] = tracked
             registered.append(deepcopy(tracked))
@@ -167,7 +173,22 @@ class SignalTracker:
                 still_pending[signal_key] = tracked
                 continue
 
-            resolved = self.resolver.resolve(tracked, current_match)
+            current_blockers = set(current_match.get("official_blockers") or current_match.get("hard_blockers") or [])
+            critical_invalidation = any(code in current_blockers for code in {
+                "CLOCK_STALE", "CLOCK_FROZEN", "DATA_INSUFFICIENT", "DATA_CONFLICTED",
+                "STALE_SOURCE", "DATA_QUALITY_COLLAPSE", "SOURCE_CONFLICT"
+            })
+            if critical_invalidation:
+                resolved = {**deepcopy(tracked), **deepcopy(current_match)}
+                resolved.update({
+                    "resolved": True,
+                    "result_status": "INVALIDATED",
+                    "result_label": "INVALIDADA",
+                    "close_reason": "DATA_OR_CLOCK_CONTEXT_BREAK",
+                    "resolved_at": utc_now_iso(),
+                })
+            else:
+                resolved = self.resolver.resolve(tracked, current_match)
 
             resolved["market"] = tracked.get("market") or tracked.get("market_direction") or "OTHER"
             resolved["market_direction"] = normalize_market(resolved.get("market"))
@@ -220,6 +241,20 @@ class SignalTracker:
                     pass  # Don't break resolution if feedback recording fails
             else:
                 resolved["tracking_status"] = "PENDING"
+                entry_minute = safe_int(resolved.get("entry_minute"), 0)
+                current_minute = safe_int(resolved.get("current_minute"), entry_minute)
+                age_minutes = max(0, current_minute - entry_minute)
+                resolved["signal_age_minutes"] = age_minutes
+                if age_minutes >= int(getattr(Config, "SIGNAL_REVIEW_20_MIN", 20)):
+                    resolved["lifecycle_review"] = "STRONG_REVIEW_20"
+                elif age_minutes >= int(getattr(Config, "SIGNAL_REVIEW_15_MIN", 15)):
+                    resolved["lifecycle_review"] = "REVIEW_15"
+                elif age_minutes >= int(getattr(Config, "SIGNAL_REVIEW_10_MIN", 10)):
+                    resolved["lifecycle_review"] = "ALERT_10"
+                elif age_minutes >= int(getattr(Config, "SIGNAL_REVIEW_5_MIN", 5)):
+                    resolved["lifecycle_review"] = "VALIDATE_5"
+                else:
+                    resolved["lifecycle_review"] = "ACTIVE"
                 still_pending[signal_key] = resolved
 
         self._pending = still_pending
@@ -262,6 +297,24 @@ class SignalTracker:
         by_market = self._summary_by_market()
         by_competition_tier = self._summary_by_competition_tier()
 
+        official_closed = [x for x in self._closed if str(x.get("result_status") or "").upper() in {"WON", "LOST", "VOID"}]
+        settled = [x for x in official_closed if str(x.get("result_status") or "").upper() in {"WON", "LOST"}]
+        profits = []
+        for item in official_closed:
+            status = str(item.get("result_status") or "").upper()
+            odds = safe_float(item.get("official_odds") or item.get("odds"), 0.0)
+            if status == "WON" and odds > 1.0:
+                profits.append(odds - 1.0)
+            elif status == "LOST":
+                profits.append(-1.0)
+            elif status == "VOID":
+                profits.append(0.0)
+        roi = round((sum(profits) / max(1, len(profits))) * 100, 2) if profits else 0.0
+        avg_odds = round(sum(safe_float(x.get("official_odds") or x.get("odds"), 0.0) for x in settled) / max(1, len(settled)), 3) if settled else 0.0
+        avg_edge = round(sum(safe_float(x.get("official_value_edge") or x.get("value_edge"), 0.0) for x in settled) / max(1, len(settled)), 2) if settled else 0.0
+        avg_conf = round(sum(safe_float(x.get("official_confidence") or x.get("confidence"), 0.0) for x in settled) / max(1, len(settled)), 2) if settled else 0.0
+        calibration = CalibrationMetrics.evaluate(settled)
+
         return {
             "pending": pending,
             "closed": closed,
@@ -269,9 +322,21 @@ class SignalTracker:
             "losses": losses,
             "voids": voids,
             "precision": precision,
+            "hit_rate": precision,
+            "roi": roi,
+            "average_odds": avg_odds,
+            "average_edge": avg_edge,
+            "average_confidence": avg_conf,
+            "calibration": calibration,
             "total_tracked": pending + closed,
+            "total_signals": pending + len(official_closed),
             "by_market": by_market,
             "by_competition_tier": by_competition_tier,
+            "by_league": self._segmented_summary("league"),
+            "by_line": self._segmented_summary("line"),
+            "by_risk": self._segmented_summary("official_risk"),
+            "by_data_quality": self._segmented_summary("data_truth_status"),
+            "by_minute_range": self._minute_range_summary(),
             "over": by_market.get("OVER", {}),
             "under": by_market.get("UNDER", {}),
         }
@@ -325,6 +390,7 @@ class SignalTracker:
 
         return {
             **deepcopy(signal),
+            "signal_id": str(signal.get("signal_id") or uuid.uuid4()),
             "signal_key": signal_key,
             "tracking_status": "PENDING",
             "result_status": "PENDING",
@@ -431,6 +497,46 @@ class SignalTracker:
                 index[match_id] = match
 
         return index
+
+    def _segmented_summary(self, field: str) -> Dict[str, Dict[str, Any]]:
+        groups: Dict[str, Dict[str, Any]] = {}
+        for item in self._closed:
+            status = str(item.get("result_status") or "").upper()
+            if status not in {"WON", "LOST", "VOID"}:
+                continue
+            key = str(item.get(field) if item.get(field) not in (None, "") else "UNKNOWN")
+            row = groups.setdefault(key, {"total": 0, "wins": 0, "losses": 0, "voids": 0, "precision": 0.0})
+            row["total"] += 1
+            if status == "WON": row["wins"] += 1
+            elif status == "LOST": row["losses"] += 1
+            else: row["voids"] += 1
+        for row in groups.values():
+            row["precision"] = round((row["wins"] / max(1, row["wins"] + row["losses"])) * 100, 2)
+        return groups
+
+    def _minute_range_summary(self) -> Dict[str, Dict[str, Any]]:
+        groups: Dict[str, Dict[str, Any]] = {}
+        def bucket(minute: int) -> str:
+            if minute <= 14: return "01-14"
+            if minute <= 24: return "15-24"
+            if minute <= 45: return "25-45"
+            if minute <= 59: return "46-59"
+            if minute <= 75: return "60-75"
+            if minute <= 85: return "76-85"
+            return "86+"
+        for item in self._closed:
+            status = str(item.get("result_status") or "").upper()
+            if status not in {"WON", "LOST", "VOID"}:
+                continue
+            key = bucket(safe_int(item.get("entry_minute"), 0))
+            row = groups.setdefault(key, {"total": 0, "wins": 0, "losses": 0, "voids": 0, "precision": 0.0})
+            row["total"] += 1
+            if status == "WON": row["wins"] += 1
+            elif status == "LOST": row["losses"] += 1
+            else: row["voids"] += 1
+        for row in groups.values():
+            row["precision"] = round((row["wins"] / max(1, row["wins"] + row["losses"])) * 100, 2)
+        return groups
 
     def _summary_by_market(self) -> Dict[str, Dict[str, Any]]:
         markets = {
@@ -561,9 +667,12 @@ class SignalTracker:
 
         entry_home = safe_int(signal.get("entry_home_score") or signal.get("home_score") or signal.get("current_home_score"), 0)
         entry_away = safe_int(signal.get("entry_away_score") or signal.get("away_score") or signal.get("current_away_score"), 0)
-        score_epoch = entry_home + entry_away
-        line = safe_float(signal.get("line") or signal.get("market_line"), score_epoch + 0.5)
-        return f"JE19:{match_id}:{market_direction}:{line:.1f}:{score_epoch}"
+        current_total = entry_home + entry_away
+        line = safe_float(signal.get("official_line") or signal.get("line") or signal.get("market_line"), current_total + 0.5)
+        # Master Protocol identity: same match + market + line updates the live signal.
+        # A new publication after the previous one is CLOSED may reuse the stable key;
+        # signal_id remains unique for historical auditability.
+        return f"JE20:{match_id}:{market_direction}:{line:.1f}"
 
     def _load_state(self) -> None:
         try:
@@ -587,7 +696,7 @@ class SignalTracker:
             tmp = self._state_path.with_suffix(".tmp")
             tmp.write_text(
                 json.dumps(
-                    {"version": "JHONNY_ELITE_19.0", "pending": self._pending, "closed": self._closed[:500]},
+                    {"version": "JHONNY_ELITE_20.0", "pending": self._pending, "closed": self._closed[:500]},
                     ensure_ascii=False,
                     indent=2,
                     default=str,

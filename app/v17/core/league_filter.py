@@ -30,10 +30,6 @@ ALLOWED_LEAGUE_KEYWORDS: List[str] = [
     "CONCACAF",
     "CONCACAF GOLD CUP",
 
-    "INTERNATIONAL FRIENDLIES",
-    "INTERNATIONAL FRIENDLY",
-    "NATIONAL TEAM FRIENDLY",
-    "FIFA FRIENDLY",
 
     "UEFA CHAMPIONS LEAGUE",
     "CHAMPIONS LEAGUE",
@@ -187,6 +183,41 @@ ALLOWED_LEAGUE_KEYWORDS: List[str] = [
 ]
 
 
+# Alcance JHONNY ELITE 20: primeras/segundas divisiones senior y copas relevantes.
+# Los bloqueos juveniles/reservas/femenino/terceras categorías se evalúan antes.
+GENERIC_TOP_TWO_KEYWORDS: List[str] = [
+    "FIRST DIVISION", "1ST DIVISION", "DIVISION 1", "DIVISIÓN 1",
+    "FIRST LEAGUE", "1ST LEAGUE", "PREMIER DIVISION", "PREMIER LEAGUE",
+    "PRO LEAGUE", "PROFESSIONAL LEAGUE", "SUPER LEAGUE", "SUPERLIGA",
+    "LIGA PROFESIONAL", "DIVISION PROFESIONAL", "DIVISIÓN PROFESIONAL",
+    "SECOND DIVISION", "2ND DIVISION", "DIVISION 2", "DIVISIÓN 2",
+    "SECOND LEAGUE", "2ND LEAGUE", "CHALLENGE LEAGUE",
+    "PRIMERA DIVISION", "PRIMERA DIVISIÓN", "SEGUNDA DIVISION", "SEGUNDA DIVISIÓN",
+    "PRIMERA NACIONAL", "PRIMERA B", "SEGUNDA LIGA", "LIGA 2",
+]
+
+MAJOR_CUP_KEYWORDS: List[str] = [
+    # Europa / UEFA
+    "UEFA CHAMPIONS LEAGUE", "UEFA EUROPA LEAGUE", "UEFA CONFERENCE LEAGUE",
+    "COPA DEL REY", "FA CUP", "EFL CUP", "CARABAO CUP", "COPPA ITALIA",
+    "DFB POKAL", "DFB-POKAL", "COUPE DE FRANCE", "TACA DE PORTUGAL", "TAÇA DE PORTUGAL",
+    "KNVB BEKER", "COPA DE BELGICA", "COPA DE BÉLGICA",
+    # CONMEBOL / América
+    "CONMEBOL LIBERTADORES", "COPA LIBERTADORES", "LIBERTADORES",
+    "CONMEBOL SUDAMERICANA", "COPA SUDAMERICANA", "SUDAMERICANA",
+    "CONMEBOL RECOPA", "RECOPA SUDAMERICANA", "COPA AMERICA", "COPA AMÉRICA",
+    "COPA DO BRASIL", "COPA ARGENTINA", "COPA CHILE", "COPA COLOMBIA",
+    "COPA PARAGUAY", "COPA URUGUAY", "COPA ECUADOR",
+    # CONCACAF / Norte y Centroamérica
+    "CONCACAF CHAMPIONS CUP", "CONCACAF CHAMPIONS LEAGUE", "CONCACAF LEAGUE",
+    "CONCACAF CENTRAL AMERICAN CUP", "CONCACAF CARIBBEAN CUP",
+    "CONCACAF GOLD CUP", "LEAGUES CUP", "US OPEN CUP", "CANADIAN CHAMPIONSHIP",
+    # Selecciones mayores
+    "WORLD CUP", "WORLD CUP QUALIFIERS", "WORLD CUP QUALIFICATION",
+    "UEFA EURO", "EURO CHAMPIONSHIP", "NATIONS LEAGUE",
+]
+
+
 HARD_BLOCKED_LEAGUE_KEYWORDS: List[str] = [
     "U20", "U21", "U23", "U19", "U18", "U17",
     "UNDER 20", "UNDER 21", "UNDER 23", "UNDER 19", "UNDER 18", "UNDER 17",
@@ -239,7 +270,8 @@ class LeagueFilter:
 
         league_text = self._normalize(f"{league} {country}")
 
-        allowed_hits = [x for x in ALLOWED_LEAGUE_KEYWORDS if self._normalize(x) in league_text]
+        allowed_catalog = ALLOWED_LEAGUE_KEYWORDS + GENERIC_TOP_TWO_KEYWORDS + MAJOR_CUP_KEYWORDS
+        allowed_hits = [x for x in allowed_catalog if self._normalize(x) in league_text]
         hard_blocked_hits = [x for x in HARD_BLOCKED_LEAGUE_KEYWORDS if self._normalize(x) in league_text]
         soft_blocked_hits = [x for x in SOFT_BLOCKED_LEAGUE_KEYWORDS if self._normalize(x) in league_text]
         country_hits = [x for x in COUNTRY_ALLOWED_HINTS if self._normalize(x) in league_text]
@@ -258,18 +290,6 @@ class LeagueFilter:
                 competition_weight=0,
             )
 
-        if allowed_hits:
-            return self._result(
-                allowed=True,
-                status="ALLOWED_PRIORITY_LEAGUE",
-                reason=f"Liga permitida: {allowed_hits[0]}",
-                allowed_hits=allowed_hits,
-                blocked_hits=soft_blocked_hits,
-                country_hits=country_hits,
-                competition_tier=competition_tier,
-                competition_weight=self._competition_weight(competition_tier),
-            )
-
         if soft_blocked_hits:
             return self._result(
                 allowed=False,
@@ -282,7 +302,19 @@ class LeagueFilter:
                 competition_weight=0,
             )
 
-        if country_hits:
+        if allowed_hits:
+            return self._result(
+                allowed=True,
+                status="ALLOWED_PRIORITY_LEAGUE",
+                reason=f"Liga permitida: {allowed_hits[0]}",
+                allowed_hits=allowed_hits,
+                blocked_hits=soft_blocked_hits,
+                country_hits=country_hits,
+                competition_tier=competition_tier,
+                competition_weight=self._competition_weight(competition_tier),
+            )
+
+        if country_hits and not getattr(Config, "STRICT_COMPETITION_SCOPE", True):
             return self._result(
                 allowed=True,
                 status="ALLOWED_BY_COUNTRY_NEEDS_REVIEW",
@@ -294,7 +326,7 @@ class LeagueFilter:
                 competition_weight=45,
             )
 
-        if getattr(Config, "GLOBAL_SENIOR_SCOPE", True) and league.strip():
+        if getattr(Config, "GLOBAL_SENIOR_SCOPE", False) and league.strip() and not getattr(Config, "STRICT_COMPETITION_SCOPE", True):
             return self._result(
                 allowed=True,
                 status="ALLOWED_GLOBAL_SENIOR_COMPETITION",
@@ -309,7 +341,7 @@ class LeagueFilter:
         return self._result(
             allowed=False,
             status="BLOCKED_UNKNOWN_LOW_PRIORITY",
-            reason="Liga no identificada como competición senior operable.",
+            reason="Competición fuera del alcance estricto: solo primeras/segundas divisiones senior y copas prioritarias.",
             allowed_hits=allowed_hits,
             blocked_hits=[],
             country_hits=country_hits,
@@ -371,14 +403,20 @@ class LeagueFilter:
         if any(x in league_text for x in ["WORLD CUP", "COPA MUNDIAL", "MUNDIAL"]):
             return "WORLD_CUP_ELITE"
 
-        if any(x in league_text for x in ["CHAMPIONS LEAGUE", "EUROPA LEAGUE", "LIBERTADORES", "SUDAMERICANA"]):
+        if any(x in league_text for x in ["CHAMPIONS LEAGUE", "EUROPA LEAGUE", "CONFERENCE LEAGUE", "LIBERTADORES", "SUDAMERICANA", "CHAMPIONS CUP"]):
             return "INTERNATIONAL_CLUB_ELITE"
 
-        if any(x in league_text for x in ["COPA AMERICA", "EURO", "AFRICA CUP", "ASIAN CUP", "GOLD CUP"]):
+        if any(x in league_text for x in ["COPA AMERICA", "UEFA EURO", "AFRICA CUP", "ASIAN CUP", "GOLD CUP", "NATIONS LEAGUE"]):
             return "NATIONAL_TEAM_ELITE"
 
+        if any(self._normalize(x) in league_text for x in MAJOR_CUP_KEYWORDS):
+            return "DOMESTIC_OR_MAJOR_CUP"
+
+        if any(x in league_text for x in ["SECOND", "2ND", "SEGUNDA", "LIGA 2", "SERIE B", "CHAMPIONSHIP"]):
+            return "SECOND_DIVISION"
+
         if allowed_hits:
-            return "PRIORITY_LEAGUE"
+            return "FIRST_DIVISION"
 
         return "UNKNOWN"
 
@@ -387,6 +425,9 @@ class LeagueFilter:
             "WORLD_CUP_ELITE": 100,
             "INTERNATIONAL_CLUB_ELITE": 90,
             "NATIONAL_TEAM_ELITE": 88,
+            "DOMESTIC_OR_MAJOR_CUP": 82,
+            "FIRST_DIVISION": 78,
+            "SECOND_DIVISION": 68,
             "PRIORITY_LEAGUE": 75,
             "COUNTRY_REVIEW": 45,
             "GLOBAL_SENIOR": 55,
