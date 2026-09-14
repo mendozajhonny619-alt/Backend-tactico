@@ -1,5 +1,5 @@
 import React from "react";
-import { Flame, Snowflake, TrendingUp } from "lucide-react";
+import { ChevronRight, Flame, Snowflake, TrendingUp } from "lucide-react";
 import ClockStatusBadge from "./ClockStatusBadge";
 
 function pct(value) {
@@ -40,7 +40,7 @@ function dominantTeam(signal) {
   return safe(signal.recent_dominant_team, "Sin dominio");
 }
 
-export default function SignalCardV17({ signal, compact = false }) {
+export default function SignalCardV17({ signal, compact = false, dense = false, onDetail }) {
   const market = String(signal.market !== "OTHER" ? signal.market : signal.suggested_market || "OBSERVE").toUpperCase();
   const strength = signal.signal_strength || signal.elite_rank || signal.master_rank || (signal.can_publish ? "MEDIA" : "OBSERVE");
   const confidence = signal.official_confidence ?? signal.master_confidence ?? signal.elite_score ?? signal.candidate_score;
@@ -48,7 +48,7 @@ export default function SignalCardV17({ signal, compact = false }) {
   const score = signal.scoreline || signal.current_score || `${safe(signal.home_score, 0)}-${safe(signal.away_score, 0)}`;
 
   return (
-    <article className={`v17-signal-card ${rankClass(strength)}`}>
+    <article className={`v17-signal-card ${rankClass(strength)} ${dense ? "dense" : ""}`}>
       <div className="v17-signal-accent" />
       <div className="v17-signal-top">
         <div className="v17-match-title">
@@ -68,16 +68,23 @@ export default function SignalCardV17({ signal, compact = false }) {
         <div><small>CUOTA</small><strong>{signal.odds_available ? Number(signal.odds).toFixed(2) : "—"}</strong></div>
       </div>
 
-      <ClockStatusBadge status={signal.clock_status} apiMinute={signal.api_minute} estimatedMinute={signal.estimated_minute} age={signal.data_age_seconds} />
+      {!dense ? (
+        <ClockStatusBadge status={signal.clock_status} apiMinute={signal.api_minute} estimatedMinute={signal.estimated_minute} age={signal.data_age_seconds} />
+      ) : (
+        <div className="v17-dense-meta">
+          <span>MIN {safe(signal.display_minute || signal.api_minute, "—")}</span>
+          <span>{dynamicState(signal.dynamic_match_state)}</span>
+        </div>
+      )}
 
       <div className="v17-signal-grid">
         <div><small>Próx. gol</small><strong>{pct(signal.probability_next_goal)}</strong></div>
         <div><small>Sin más gol</small><strong>{pct(signal.probability_no_more_goals)}</strong></div>
-        <div><small>Riesgo</small><strong>{safe(signal.risk_status || signal.risk_level)}</strong></div>
-        <div><small>Valor</small><strong>{signal.odds_available ? `${Number(signal.value_edge || 0).toFixed(1)} pp` : "N/D"}</strong></div>
+        {!dense ? <div><small>Riesgo</small><strong>{safe(signal.risk_status || signal.risk_level)}</strong></div> : null}
+        {!dense ? <div><small>Valor</small><strong>{signal.odds_available ? `${Number(signal.value_edge || 0).toFixed(1)} pp` : "N/D"}</strong></div> : null}
       </div>
 
-      {signal.dynamics_available ? (
+      {!dense && signal.dynamics_available ? (
         <div className="v17-dynamics-strip">
           <div><small>Ritmo reciente</small><strong>{pct(signal.recent_threat_score)}</strong></div>
           <div><small>Partido</small><strong>{dynamicState(signal.dynamic_match_state)}</strong></div>
@@ -86,7 +93,7 @@ export default function SignalCardV17({ signal, compact = false }) {
         </div>
       ) : null}
 
-      {!compact ? (
+      {!compact && !dense ? (
         <>
           <div className="v17-score-prediction">
             <div><small>Resultado principal</small><strong>{safe(signal.primary_final_score || signal.official_probable_score || signal.prediction_final_score)}</strong></div>
@@ -119,6 +126,12 @@ export default function SignalCardV17({ signal, compact = false }) {
             <div className="v17-tags blocked">{signal.hard_blockers.slice(0, 4).map((x) => <span key={x}>{x}</span>)}</div>
           ) : null}
         </>
+      ) : null}
+
+      {onDetail ? (
+        <button className="v17-detail-button" type="button" onClick={() => onDetail(signal)}>
+          Ver detalle <ChevronRight size={16}/>
+        </button>
       ) : null}
     </article>
   );

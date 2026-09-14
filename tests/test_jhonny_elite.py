@@ -134,7 +134,7 @@ def test_v17_routes_are_mounted():
         response = client.get("/v17/dashboard")
         assert response.status_code == 200
         body = response.json()
-        assert body["version"] == "JHONNY_ELITE_19.0"
+        assert body["version"] == "JHONNY_ELITE_20.0"
         assert "top_signals" in body
         assert "live_matches" in body
 

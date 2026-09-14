@@ -4,7 +4,7 @@ import { fetchV17Dashboard } from "../services/apiV17";
 const POLLING_MS = Math.max(5000, Number(import.meta.env.VITE_DASHBOARD_POLL_MS || 15000));
 const EMPTY_DASHBOARD = {
   ok: false,
-  version: "JHONNY_ELITE_19.0",
+  version: "JHONNY_ELITE_20.0",
   live_matches: [],
   top_signals: [],
   observe: [],

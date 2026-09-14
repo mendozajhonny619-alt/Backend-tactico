@@ -46,4 +46,10 @@ export async function fetchV17History() {
   return fetchWithTimeout(`${V17_BASE}/history`, {}, DEFAULT_TIMEOUT);
 }
 
+export async function fetchV17MatchDetail(fixtureId, signalKey = "") {
+  if (!fixtureId) throw new Error("No se encontró el fixture del partido.");
+  const params = signalKey ? `?signal_key=${encodeURIComponent(signalKey)}` : "";
+  return fetchWithTimeout(`${V17_BASE}/match/${encodeURIComponent(fixtureId)}${params}`, {}, 8000);
+}
+
 export const V17_API_BASE = V17_BASE;
