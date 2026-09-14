@@ -13,6 +13,7 @@ import requests
 
 from app.config.config import Config
 from app.v17.core.league_filter import LeagueFilter
+from app.services.api_quota_monitor import api_quota_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,9 @@ class LiveMatchFetcher:
     FOOTBALL_DATA_URL = "https://api.football-data.org/v4/matches"
 
     LIVE_CACHE_TTL_SECONDS = max(15, int(getattr(Config, "LIVE_BASE_CACHE_TTL_SECONDS", 15)))
-    STATS_CACHE_TTL_SECONDS = 60
-    EVENTS_CACHE_TTL_SECONDS = 60
-    PLAYERS_CACHE_TTL_SECONDS = 300
+    STATS_CACHE_TTL_SECONDS = 120
+    EVENTS_CACHE_TTL_SECONDS = 90
+    PLAYERS_CACHE_TTL_SECONDS = 600
 
     # V17 DEBUG RAW API
     # Guarda respuestas crudas de API-Football para auditar qué datos reales
@@ -38,7 +39,7 @@ class LiveMatchFetcher:
     DEBUG_RAW_DIR_ENV = "JHONNY_DEBUG_API_RAW_DIR"
     DEBUG_RAW_DEFAULT_DIR = "debug_api_football"
 
-    MAX_DEEP_SCAN_MATCHES = 6
+    MAX_DEEP_SCAN_MATCHES = max(0, int(getattr(Config, "LIVE_FALLBACK_DEEP_MATCHES", 2)))
 
     MAX_OPERABLE_MINUTE = 97
     MAX_TRACKING_MINUTE = 130
@@ -95,6 +96,7 @@ class LiveMatchFetcher:
         self._events_cache: Dict[str, Dict[str, Any]] = {}
         self._players_cache: Dict[str, Dict[str, Any]] = {}
         self._details_cache: Dict[str, Dict[str, Any]] = {}
+        self._detail_rotation_cursor: int = 0
         self._api_football_cooldown_until: float = 0.0
 
         self._clock_memory: Dict[str, Dict[str, Any]] = {}
@@ -291,6 +293,7 @@ class LiveMatchFetcher:
                 headers=self.api_football_headers,
                 timeout=self.PRIMARY_TIMEOUT_SECONDS,
             )
+            api_quota_monitor.record_response(response, "fixtures_live")
 
             if response.status_code == 429:
                 self._activate_429_cooldown()
@@ -347,20 +350,39 @@ class LiveMatchFetcher:
         if time.time() < self._api_football_cooldown_until:
             return raw_matches
 
-        max_matches = max(1, int(getattr(Config, "LIVE_DETAILS_MAX_MATCHES", 120)))
+        reserve = int(getattr(Config, "API_DAILY_RESERVE", 300))
+        if getattr(Config, "API_ECONOMY_MODE", True) and not api_quota_monitor.can_spend(required=1, reserve=reserve):
+            logger.warning("LIVE_FETCHER: detalle por lotes omitido por reserva diaria de cuota.")
+            return raw_matches
+
+        max_matches = max(1, int(getattr(Config, "LIVE_DETAILS_MAX_MATCHES", 40)))
         batch_size = max(1, min(20, int(getattr(Config, "LIVE_DETAILS_BATCH_SIZE", 20))))
         ttl = max(10, int(getattr(Config, "LIVE_DETAILS_CACHE_TTL_SECONDS", 30)))
         now = time.time()
 
-        selected = []
-        for item in raw_matches:
-            if not isinstance(item, dict):
-                continue
-            fixture_id = ((item.get("fixture") or {}).get("id"))
-            if fixture_id and self._is_priority_league(item):
-                selected.append(str(fixture_id))
-            if len(selected) >= max_matches:
-                break
+        # Economy rotation: la mitad inicial (hasta un batch) queda reservada
+        # para los partidos de mayor prioridad; los demás espacios rotan por el
+        # resto del universo elegible. Así no se gastan créditos en todos a la
+        # vez, pero tampoco se condenan siempre los mismos fixtures a modo básico.
+        prioritized_raw = sorted(
+            [x for x in raw_matches if isinstance(x, dict) and self._is_priority_league(x)],
+            key=self._detail_priority_score,
+            reverse=True,
+        )
+        eligible_ids = [
+            str(((item.get("fixture") or {}).get("id")))
+            for item in prioritized_raw
+            if ((item.get("fixture") or {}).get("id"))
+        ]
+        priority_count = min(len(eligible_ids), batch_size, max_matches)
+        selected = eligible_ids[:priority_count]
+        rotating_pool = eligible_ids[priority_count:]
+        rotating_slots = max(0, max_matches - len(selected))
+        if rotating_pool and rotating_slots:
+            start = self._detail_rotation_cursor % len(rotating_pool)
+            for offset in range(min(rotating_slots, len(rotating_pool))):
+                selected.append(rotating_pool[(start + offset) % len(rotating_pool)])
+            self._detail_rotation_cursor = (start + rotating_slots) % len(rotating_pool)
 
         details_by_id: Dict[str, Dict[str, Any]] = {}
         missing_ids: List[str] = []
@@ -375,6 +397,9 @@ class LiveMatchFetcher:
             ids = missing_ids[start:start + batch_size]
             if not ids:
                 continue
+            if getattr(Config, "API_ECONOMY_MODE", True) and not api_quota_monitor.can_spend(required=1, reserve=reserve):
+                logger.warning("LIVE_FETCHER: se detienen lotes de detalle para proteger reserva diaria.")
+                break
             try:
                 response = requests.get(
                     f"{self.API_BASE}/fixtures",
@@ -382,6 +407,7 @@ class LiveMatchFetcher:
                     params={"ids": "-".join(ids)},
                     timeout=self.PRIMARY_TIMEOUT_SECONDS,
                 )
+                api_quota_monitor.record_response(response, "fixtures_ids_batch")
                 if response.status_code == 429:
                     self._activate_429_cooldown()
                     logger.warning("LIVE_FETCHER batch details -> 429")
@@ -448,6 +474,7 @@ class LiveMatchFetcher:
                     params={"ids": "-".join(batch)},
                     timeout=self.PRIMARY_TIMEOUT_SECONDS,
                 )
+                api_quota_monitor.record_response(response, "fixtures_tracking_ids")
                 if response.status_code == 429:
                     self._activate_429_cooldown()
                     break
@@ -510,6 +537,9 @@ class LiveMatchFetcher:
         if now < self._api_football_cooldown_until:
             return self._clone_list(cached["data"]) if cached else []
 
+        if getattr(Config, "API_ECONOMY_MODE", True) and not api_quota_monitor.can_spend(required=1, reserve=int(getattr(Config, "API_DAILY_RESERVE", 300))):
+            return self._clone_list(cached["data"]) if cached else []
+
         try:
             response = requests.get(
                 self.API_FOOTBALL_STATISTICS_URL,
@@ -517,6 +547,7 @@ class LiveMatchFetcher:
                 params={"fixture": fixture_id},
                 timeout=self.STATS_TIMEOUT_SECONDS,
             )
+            api_quota_monitor.record_response(response, "fixtures_statistics")
 
             if response.status_code == 429:
                 self._activate_429_cooldown()
@@ -572,6 +603,9 @@ class LiveMatchFetcher:
         if now < self._api_football_cooldown_until:
             return self._clone_list(cached["data"]) if cached else []
 
+        if getattr(Config, "API_ECONOMY_MODE", True) and not api_quota_monitor.can_spend(required=1, reserve=int(getattr(Config, "API_DAILY_RESERVE", 300))):
+            return self._clone_list(cached["data"]) if cached else []
+
         try:
             response = requests.get(
                 self.API_FOOTBALL_EVENTS_URL,
@@ -579,6 +613,7 @@ class LiveMatchFetcher:
                 params={"fixture": fixture_id},
                 timeout=self.EVENTS_TIMEOUT_SECONDS,
             )
+            api_quota_monitor.record_response(response, "fixtures_events")
 
             if response.status_code == 429:
                 self._activate_429_cooldown()
@@ -634,6 +669,9 @@ class LiveMatchFetcher:
         if now < self._api_football_cooldown_until:
             return self._clone_list(cached["data"]) if cached else []
 
+        if getattr(Config, "API_ECONOMY_MODE", True) and not api_quota_monitor.can_spend(required=1, reserve=int(getattr(Config, "API_DAILY_RESERVE", 300))):
+            return self._clone_list(cached["data"]) if cached else []
+
         try:
             response = requests.get(
                 self.API_FOOTBALL_PLAYERS_URL,
@@ -641,6 +679,7 @@ class LiveMatchFetcher:
                 params={"fixture": fixture_id},
                 timeout=self.PLAYERS_TIMEOUT_SECONDS,
             )
+            api_quota_monitor.record_response(response, "fixtures_players")
 
             if response.status_code == 429:
                 self._activate_429_cooldown()
@@ -766,6 +805,21 @@ class LiveMatchFetcher:
             )
             return True
 
+    def _detail_priority_score(self, raw_match: Dict[str, Any]) -> float:
+        """Prioriza qué fixtures merecen detalle sin gastar llamadas en ligas irrelevantes."""
+        try:
+            league_meta = self.league_filter.evaluate(raw_match or {})
+            weight = float(league_meta.get("competition_weight") or 0.0)
+            fixture = (raw_match or {}).get("fixture", {}) or {}
+            status = fixture.get("status", {}) or {}
+            minute = float(status.get("elapsed") or 0.0)
+            goals = (raw_match or {}).get("goals", {}) or {}
+            total_goals = float(goals.get("home") or 0) + float(goals.get("away") or 0)
+            # La competición manda; minuto y marcador solo desempatan.
+            return weight * 10.0 + min(95.0, minute) * 0.35 + total_goals * 2.0
+        except Exception:
+            return 0.0
+
     def _normalize_api_football(self, raw_matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         normalized_list: List[Dict[str, Any]] = []
         deep_scan_used = 0
@@ -789,7 +843,7 @@ class LiveMatchFetcher:
 
                 league_id = league.get("id")
                 if (
-                    not getattr(Config, "GLOBAL_SENIOR_SCOPE", True)
+                    getattr(Config, "ENFORCE_ALLOWED_LEAGUE_IDS", False)
                     and self._allowed_league_ids
                     and league_id not in self._allowed_league_ids
                     and not self._should_bypass_allowed_league_ids(item=item, league_id=league_id)
@@ -850,7 +904,8 @@ class LiveMatchFetcher:
                 )
 
                 should_fetch_players = (
-                    deep_scan_used < self.MAX_DEEP_SCAN_MATCHES
+                    bool(getattr(Config, "LIVE_PLAYER_STATS_ENABLED", False))
+                    and deep_scan_used < self.MAX_DEEP_SCAN_MATCHES
                     and self._should_fetch_player_stats(effective_minute)
                     and not tracking_only
                 )
@@ -953,6 +1008,7 @@ class LiveMatchFetcher:
                     "home_id": home_team.get("id"),
                     "away_id": away_team.get("id"),
                     "league_id": league_id,
+                    "season": league.get("season"),
 
                     "home_logo": home_logo,
                     "away_logo": away_logo,
