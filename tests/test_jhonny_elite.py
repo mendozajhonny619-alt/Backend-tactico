@@ -190,3 +190,33 @@ def test_asian_integer_total_push_is_void():
     final = {"home_score": 2, "away_score": 1, "api_minute": 90, "status_short": "FT"}
     assert resolver.resolve(over, final)["result_status"] == "VOID"
     assert resolver.resolve(under, final)["result_status"] == "VOID"
+
+
+def test_official_results_archive_survives_tracker_restart(tmp_path, monkeypatch):
+    monkeypatch.setattr(Config, "DATA_DIR", str(tmp_path))
+    first = SignalTracker()
+    signal = {
+        "match_id": "901", "fixture_id": "901", "market": "OVER", "can_publish": True,
+        "home_team": "A", "away_team": "B", "home_score": 0, "away_score": 0,
+        "api_minute": 62, "line": 0.5, "official_line": 0.5,
+        "official_odds": 1.75, "official_confidence": 92,
+    }
+    first.register_published_signals([signal])
+    out = first.update_with_live_matches([{
+        "match_id": "901", "fixture_id": "901", "home_score": 1, "away_score": 0,
+        "api_minute": 67, "status_short": "2H"
+    }])
+    assert out["newly_closed"][0]["result_status"] == "WON"
+    second = SignalTracker()
+    rows = second.closed(limit=50)
+    assert any(x.get("match_id") == "901" and x.get("result_status") == "WON" for x in rows)
+
+
+def test_result_day_cutoff_is_2330_bolivia(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    monkeypatch.setattr(Config, "DATA_DIR", str(tmp_path))
+    tracker = SignalTracker()
+    before = datetime(2026, 9, 16, 3, 29, tzinfo=timezone.utc)  # 23:29 del 15 en Bolivia
+    after = datetime(2026, 9, 16, 3, 30, tzinfo=timezone.utc)   # 23:30 del 15 en Bolivia
+    assert tracker._logical_day_for_datetime(before) == "2026-09-15"
+    assert tracker._logical_day_for_datetime(after) == "2026-09-16"

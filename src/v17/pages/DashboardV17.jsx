@@ -59,7 +59,7 @@ function LiveMatchStrip({ matches = [], onDetail }) {
 
 function FocusPanel({ focus, data, onDetail, onClose }) {
   if (!focus) return null;
-  const closed = data.closed_history || [];
+  const closed = data.today_results || [];
   const config = {
     signals: { title: "Todas las señales activas", items: data.top_signals || [], type: "signals" },
     strong: { title: "Señales fuertes", items: (data.top_signals || []).filter(isStrong), type: "signals" },
@@ -188,7 +188,7 @@ export default function DashboardV17() {
             </section>
           ) : null}
 
-          {tab === "history" ? <HistoryPanelV17 pending={data.pending_signals} closed={data.closed_history} learning={data.performance_analysis} onDetail={setSelected}/> : null}
+          {tab === "history" ? <HistoryPanelV17 pending={data.pending_signals} closed={data.closed_history} groups={data.history_groups} learning={data.performance_analysis} onDetail={setSelected}/> : null}
 
           {tab === "system" ? (
             <>

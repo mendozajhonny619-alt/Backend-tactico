@@ -50,7 +50,7 @@ def test_master_requires_real_odds_line_and_value():
         contradiction={"critical_contradictions": []},
     )
     assert result["official_can_publish"] is False
-    assert "MISSING_REAL_LINE_OR_ODDS" in result["official_warnings"]
+    assert "MISSING_OR_OUT_OF_RANGE_REAL_ODDS" in result["official_warnings"]
 
 
 def test_master_can_confirm_with_four_of_five_layers():
@@ -107,3 +107,44 @@ def test_calibration_metrics_are_native():
     assert metrics["brier_score"] > 0
     assert metrics["log_loss"] > 0
     assert metrics["calibration_error"] >= 0
+
+
+
+def test_under_can_publish_in_target_window_75_with_full_evidence():
+    master = MasterDecisionAI20()
+    result = master.decide(
+        match={"api_minute": 75, "home_score": 1, "away_score": 0, "recent_threat_score": 12},
+        direction="UNDER", candidate_score=97, candidate=True, blockers=[],
+        clock={"clock_status": "CLOCK_OK"},
+        data_truth={"data_truth_status": "EXCELLENT", "data_truth_score": 98},
+        context={"over_context_score": 10, "under_context_score": 94, "rhythm_score": 15},
+        tactical={"tactical_score": 92, "false_pressure_risk": 5},
+        risk={"risk_score": 10, "risk_status": "LOW"},
+        pre_match={"pre_match_available": True, "under_pre_match_score": 92},
+        math_evidence={"math_support_under": 95, "primary_final_score": "1-0", "probability_no_more_goals": 94},
+        odds={"odds_available": True, "line": 2.5, "odds": 1.75, "has_positive_value": True, "value_edge": 15.0, "expected_value": 0.18, "implied_probability": 57.14},
+        contradiction={"critical_contradictions": []},
+    )
+    assert result["official_can_publish"] is True
+    assert result["official_market"] == "UNDER"
+    assert result["official_line"] == 2.5
+    assert result["official_odds"] == 1.75
+
+
+def test_under_new_signal_is_blocked_at_hard_late_cutoff():
+    master = MasterDecisionAI20()
+    result = master.decide(
+        match={"api_minute": 84, "home_score": 1, "away_score": 0, "recent_threat_score": 5},
+        direction="UNDER", candidate_score=99, candidate=True, blockers=[],
+        clock={"clock_status": "CLOCK_OK"},
+        data_truth={"data_truth_status": "EXCELLENT", "data_truth_score": 99},
+        context={"over_context_score": 5, "under_context_score": 98, "rhythm_score": 8},
+        tactical={"tactical_score": 95, "false_pressure_risk": 3},
+        risk={"risk_score": 5, "risk_status": "LOW"},
+        pre_match={"pre_match_available": True, "under_pre_match_score": 95},
+        math_evidence={"math_support_under": 98, "primary_final_score": "1-0", "probability_no_more_goals": 97},
+        odds={"odds_available": True, "line": 2.5, "odds": 1.72, "has_positive_value": True, "value_edge": 18.0, "expected_value": 0.21},
+        contradiction={"critical_contradictions": []},
+    )
+    assert result["official_can_publish"] is False
+    assert "UNDER_TOO_LATE_FOR_NEW_SIGNAL" in result["official_warnings"]

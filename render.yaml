@@ -16,6 +16,8 @@ services:
         sync: false
       - key: OPENAI_MODEL
         sync: false
+      - key: DATABASE_URL
+        sync: false
       - key: WORKER_ENABLED
         value: "true"
       - key: WORKER_SINGLE_PROCESS_ONLY
@@ -50,30 +52,64 @@ services:
         value: "2"
       - key: LIVE_PLAYER_STATS_ENABLED
         value: "false"
+      - key: UNDER_PREP_MINUTE
+        value: "68"
       - key: UNDER_MINUTE_MIN
-        value: "60"
+        value: "72"
       - key: UNDER_PREFERRED_MINUTE
-        value: "65"
+        value: "75"
+      - key: UNDER_TARGET_WINDOW_END
+        value: "79"
+      - key: UNDER_LATE_ENTRY_MINUTE
+        value: "80"
+      - key: UNDER_HARD_CUTOFF_MINUTE
+        value: "84"
+      - key: UNDER_CANDIDATE_MIN_CONFIDENCE
+        value: "66"
       - key: CANDIDATE_PREMATCH_MIN_CONFIDENCE
         value: "72"
       - key: PUBLISH_MIN_CONFIDENCE
-        value: "84"
+        value: "88"
+      - key: OVER_PUBLISH_MIN_CONFIDENCE
+        value: "88"
+      - key: UNDER_PUBLISH_MIN_CONFIDENCE
+        value: "90"
       - key: MASTER_MIN_CONSENSUS
         value: "4"
       - key: SIGNAL_MAX_SIMULTANEOUS
         value: "6"
       - key: STRONG_SIGNAL_CONFIDENCE
-        value: "89"
+        value: "92"
       - key: PREMIUM_SIGNAL_CONFIDENCE
-        value: "94"
+        value: "95"
       - key: MAX_PREMATCH_ENRICHMENTS_PER_CYCLE
         value: "1"
       - key: MAX_PUBLISHED_SIGNALS_PER_CYCLE
         value: "6"
       - key: ODDS_CACHE_TTL_SECONDS
-        value: "180"
+        value: "300"
       - key: ODDS_MIN_CANDIDATE_SCORE
-        value: "78"
+        value: "76"
+      - key: UNDER_ODDS_PREFETCH_MIN_SCORE
+        value: "66"
+      - key: THE_ODDS_FALLBACK_ENABLED
+        value: "true"
+      - key: THE_ODDS_REGION
+        value: "eu"
+      - key: EDGE_MIN_PERCENT
+        value: "5"
+      - key: MIN_EXPECTED_VALUE
+        value: "0.03"
+      - key: MIN_DATA_TRUTH_SCORE
+        value: "72"
+      - key: MAX_SIGNAL_RISK_SCORE
+        value: "45"
+      - key: MIN_MATH_SUPPORT_OVER
+        value: "72"
+      - key: MIN_MATH_SUPPORT_UNDER
+        value: "70"
+      - key: REQUIRE_PREMATCH_FOR_OFFICIAL
+        value: "true"
       - key: PREMATCH_ECONOMY_MODE
         value: "true"
       - key: PREMATCH_MAX_NEW_PACKAGES_PER_HOUR
@@ -82,6 +118,16 @@ services:
         value: "false"
       - key: PREMATCH_LEAGUE_SAMPLE_ENABLED
         value: "false"
+      - key: RESULTS_TIMEZONE
+        value: "America/La_Paz"
+      - key: RESULTS_CUTOFF_HOUR
+        value: "23"
+      - key: RESULTS_CUTOFF_MINUTE
+        value: "30"
+      - key: RESULTS_RETENTION_DAYS
+        value: "365"
+      - key: OFFICIAL_RESULTS_LIMIT
+        value: "5000"
       - key: JHONNY_DEBUG_API_RAW
         value: "0"
       - key: CORS_ORIGINS

@@ -121,6 +121,7 @@ export default function MatchDetailModal({ selection, onClose }) {
           <DetailMetric label="Riesgo" value={detail.risk_status || detail.risk_level || "—"} />
           <DetailMetric label="Línea oficial" value={detail.official_line ? num(detail.official_line).toFixed(1) : detail.line ? num(detail.line).toFixed(1) : "N/D"} />
           <DetailMetric label="Cuota oficial" value={detail.official_odds ? num(detail.official_odds).toFixed(2) : detail.odds_available ? num(detail.odds).toFixed(2) : "N/D"} />
+          <DetailMetric label="Fuente cuota" value={detail.odds_source || detail.odds_provider || detail.bookmaker || "N/D"} />
         </div>
 
         {loading ? <div className="v17-detail-notice">Cargando ficha completa desde la memoria del motor…</div> : null}
