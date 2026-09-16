@@ -190,13 +190,29 @@ class Config:
     LIVE_PLAYER_STATS_ENABLED = os.getenv("LIVE_PLAYER_STATS_ENABLED", "false").lower() == "true"
 
     # Protocolo JHONNY ELITE: OVER puede aparecer en cualquier tramo si la evidencia
-    # madura; UNDER se publica tarde por defecto.
-    UNDER_MINUTE_MIN = int(os.getenv("UNDER_MINUTE_MIN", 60))
-    UNDER_PREFERRED_MINUTE = int(os.getenv("UNDER_PREFERRED_MINUTE", 65))
+    # madura. UNDER se prepara antes, pero su ventana operativa objetivo es ~75'.
+    # Esto evita esperar hasta 80-85' solo porque prepartido/cuotas se solicitaron tarde.
+    UNDER_PREP_MINUTE = int(os.getenv("UNDER_PREP_MINUTE", 68))
+    UNDER_MINUTE_MIN = int(os.getenv("UNDER_MINUTE_MIN", 72))
+    UNDER_PREFERRED_MINUTE = int(os.getenv("UNDER_PREFERRED_MINUTE", 75))
+    UNDER_TARGET_WINDOW_END = int(os.getenv("UNDER_TARGET_WINDOW_END", 79))
+    UNDER_LATE_ENTRY_MINUTE = int(os.getenv("UNDER_LATE_ENTRY_MINUTE", 80))
+    UNDER_HARD_CUTOFF_MINUTE = int(os.getenv("UNDER_HARD_CUTOFF_MINUTE", 84))
+    UNDER_CANDIDATE_MIN_CONFIDENCE = float(os.getenv("UNDER_CANDIDATE_MIN_CONFIDENCE", 66.0))
     CANDIDATE_PREMATCH_MIN_CONFIDENCE = float(os.getenv("CANDIDATE_PREMATCH_MIN_CONFIDENCE", 72.0))
-    PUBLISH_MIN_CONFIDENCE = float(os.getenv("PUBLISH_MIN_CONFIDENCE", 82.0))
-    STRONG_SIGNAL_CONFIDENCE = float(os.getenv("STRONG_SIGNAL_CONFIDENCE", 89.0))
-    PREMIUM_SIGNAL_CONFIDENCE = float(os.getenv("PREMIUM_SIGNAL_CONFIDENCE", 94.0))
+
+    # Precision-first: publicar menos señales, pero con evidencia más uniforme.
+    PUBLISH_MIN_CONFIDENCE = float(os.getenv("PUBLISH_MIN_CONFIDENCE", 88.0))
+    OVER_PUBLISH_MIN_CONFIDENCE = float(os.getenv("OVER_PUBLISH_MIN_CONFIDENCE", 88.0))
+    UNDER_PUBLISH_MIN_CONFIDENCE = float(os.getenv("UNDER_PUBLISH_MIN_CONFIDENCE", 90.0))
+    STRONG_SIGNAL_CONFIDENCE = float(os.getenv("STRONG_SIGNAL_CONFIDENCE", 92.0))
+    PREMIUM_SIGNAL_CONFIDENCE = float(os.getenv("PREMIUM_SIGNAL_CONFIDENCE", 95.0))
+    MIN_DATA_TRUTH_SCORE = float(os.getenv("MIN_DATA_TRUTH_SCORE", 72.0))
+    MAX_SIGNAL_RISK_SCORE = float(os.getenv("MAX_SIGNAL_RISK_SCORE", 45.0))
+    MIN_MATH_SUPPORT_OVER = float(os.getenv("MIN_MATH_SUPPORT_OVER", 72.0))
+    MIN_MATH_SUPPORT_UNDER = float(os.getenv("MIN_MATH_SUPPORT_UNDER", 70.0))
+    MIN_EXPECTED_VALUE = float(os.getenv("MIN_EXPECTED_VALUE", 0.03))
+    REQUIRE_PREMATCH_FOR_OFFICIAL = os.getenv("REQUIRE_PREMATCH_FOR_OFFICIAL", "true").lower() == "true"
 
     # Las cuotas enriquecen solo candidatos para ahorrar cuota y latencia.
     CANDIDATE_ODDS_ENABLED = os.getenv("CANDIDATE_ODDS_ENABLED", "true").lower() == "true"
@@ -204,7 +220,12 @@ class Config:
     MAX_PREMATCH_ENRICHMENTS_PER_CYCLE = max(1, int(os.getenv("MAX_PREMATCH_ENRICHMENTS_PER_CYCLE", 1)))
     MAX_PUBLISHED_SIGNALS_PER_CYCLE = max(1, min(6, int(os.getenv("MAX_PUBLISHED_SIGNALS_PER_CYCLE", 6))))
     ODDS_CACHE_TTL_SECONDS = max(60, int(os.getenv("ODDS_CACHE_TTL_SECONDS", 180)))
-    ODDS_MIN_CANDIDATE_SCORE = float(os.getenv("ODDS_MIN_CANDIDATE_SCORE", 78.0))
+    ODDS_MIN_CANDIDATE_SCORE = float(os.getenv("ODDS_MIN_CANDIDATE_SCORE", 76.0))
+    UNDER_ODDS_PREFETCH_MIN_SCORE = float(os.getenv("UNDER_ODDS_PREFETCH_MIN_SCORE", 66.0))
+    ODDS_REQUIRE_REAL_MARKET = os.getenv("ODDS_REQUIRE_REAL_MARKET", "true").lower() == "true"
+    THE_ODDS_FALLBACK_ENABLED = os.getenv("THE_ODDS_FALLBACK_ENABLED", "true").lower() == "true"
+    THE_ODDS_REGION = os.getenv("THE_ODDS_REGION", "eu").strip() or "eu"
+    THE_ODDS_CACHE_TTL_SECONDS = max(120, int(os.getenv("THE_ODDS_CACHE_TTL_SECONDS", 300)))
     PREMATCH_ECONOMY_MODE = os.getenv("PREMATCH_ECONOMY_MODE", "true").lower() == "true"
     PREMATCH_MAX_NEW_PACKAGES_PER_HOUR = max(1, int(os.getenv("PREMATCH_MAX_NEW_PACKAGES_PER_HOUR", 8)))
     PREMATCH_PROVIDER_PREDICTION_ENABLED = os.getenv("PREMATCH_PROVIDER_PREDICTION_ENABLED", "false").lower() == "true"
@@ -216,10 +237,10 @@ class Config:
     MASTER_PROTOCOL_ENABLED = os.getenv("MASTER_PROTOCOL_ENABLED", "true").lower() == "true"
     MASTER_MIN_CONSENSUS = max(4, min(5, int(os.getenv("MASTER_MIN_CONSENSUS", 4))))
     OBSERVATION_MIN_SCORE = float(os.getenv("OBSERVATION_MIN_SCORE", 45.0))
-    EDGE_MIN_PERCENT = float(os.getenv("EDGE_MIN_PERCENT", 4.0))
+    EDGE_MIN_PERCENT = float(os.getenv("EDGE_MIN_PERCENT", 5.0))
     MAX_LIVE_DATA_AGE_SECONDS = max(30, int(os.getenv("MAX_LIVE_DATA_AGE_SECONDS", 150)))
     MAX_ODDS_AGE_SECONDS = max(30, int(os.getenv("MAX_ODDS_AGE_SECONDS", 180)))
-    PUBLISH_MIN_CONFIDENCE = float(os.getenv("PUBLISH_MIN_CONFIDENCE", 84.0))
+    PUBLISH_MIN_CONFIDENCE = float(os.getenv("PUBLISH_MIN_CONFIDENCE", 88.0))
     SHADOW_MODE = os.getenv("SHADOW_MODE", "false").lower() == "true"
     SIGNAL_MAX_SIMULTANEOUS = max(1, min(6, int(os.getenv("SIGNAL_MAX_SIMULTANEOUS", 6))))
     REENTRY_COOLDOWN_SECONDS = max(60, int(os.getenv("REENTRY_COOLDOWN_SECONDS", 300)))
@@ -239,6 +260,13 @@ class Config:
             "http://localhost:5173,http://127.0.0.1:5173"
         ).split(",") if x.strip()
     ]
+
+    # Historial oficial. El día operativo cambia a las 23:30 hora Bolivia.
+    RESULTS_TIMEZONE = os.getenv("RESULTS_TIMEZONE", "America/La_Paz").strip() or "America/La_Paz"
+    RESULTS_CUTOFF_HOUR = max(0, min(23, int(os.getenv("RESULTS_CUTOFF_HOUR", 23))))
+    RESULTS_CUTOFF_MINUTE = max(0, min(59, int(os.getenv("RESULTS_CUTOFF_MINUTE", 30))))
+    RESULTS_RETENTION_DAYS = max(30, int(os.getenv("RESULTS_RETENTION_DAYS", 365)))
+    OFFICIAL_RESULTS_LIMIT = max(500, int(os.getenv("OFFICIAL_RESULTS_LIMIT", 5000)))
 
     # Persistencia local del tracker/caches. En hosts efímeros se debe montar
     # DATA_DIR sobre disco persistente. DATABASE_URL queda reservado para una

@@ -32,7 +32,7 @@ class AdvancedProbabilityEngine:
     revisados por MasterDecisionAI.
     """
 
-    VERSION = "JE_POISSON_HAZARD_20.0"
+    VERSION = "JE_POISSON_HAZARD_20.1_RECENCY_CALIBRATED"
 
     def evaluate(
         self,
@@ -57,6 +57,14 @@ class AdvancedProbabilityEngine:
         xg_proxy = max(xg, sot * 0.24 + max(0.0, shots - sot) * 0.055 + dangerous * 0.004)
         live_rate_per_min = xg_proxy / max(12.0, float(minute))
 
+        # 20.1: el acumulado del partido no puede dominar una prediccion tardia.
+        # Si el partido fue abierto al 30' pero se congelo entre 60'-75', el
+        # hazard debe reflejar esa desaceleracion. A la inversa, una aceleracion
+        # reciente eleva el riesgo de gol aunque el acumulado global sea modesto.
+        recent_rate_per_min, recent_threat = self._recent_hazard(match)
+        if recent_rate_per_min is not None:
+            live_rate_per_min = live_rate_per_min * 0.56 + recent_rate_per_min * 0.44
+
         prematch_avg = sf(pre.get("pre_match_avg_total_goals"), 0.0)
         if prematch_avg <= 0:
             prematch_avg = 2.45
@@ -69,7 +77,7 @@ class AdvancedProbabilityEngine:
         recent_attack = max(sf(tactical.get("recent_attack_proxy"), 35.0), sf(match.get("recent_threat_score"), 0.0))
         dynamic_instability = sf(match.get("dynamic_instability_score"), 0.0)
 
-        rate = live_rate_per_min * 0.58 + prematch_rate_per_min * 0.42
+        rate = live_rate_per_min * 0.62 + prematch_rate_per_min * 0.38
         intensity_multiplier = clamp(
             0.55
             + pressure / 230.0
@@ -81,6 +89,19 @@ class AdvancedProbabilityEngine:
             0.55,
             1.85,
         )
+
+        # El comportamiento de los ultimos 5/10/15 minutos ajusta el hazard.
+        # Solo se aplica cuando existe memoria temporal real; no se inventa una
+        # tendencia por ausencia de datos.
+        if recent_threat is not None:
+            if recent_threat <= 22 and rhythm <= 38 and pressure <= 42:
+                intensity_multiplier *= 0.78
+            elif recent_threat <= 35 and rhythm <= 48:
+                intensity_multiplier *= 0.90
+            elif recent_threat >= 72:
+                intensity_multiplier *= 1.18
+            elif recent_threat >= 58:
+                intensity_multiplier *= 1.08
 
         # Marcadores amplios pueden provocar cierre; empates/margen mínimo suelen
         # sostener necesidad de gol. La capa táctica aún puede contradecirlo.
@@ -143,6 +164,9 @@ class AdvancedProbabilityEngine:
 
         return {
             "math_engine_version": self.VERSION,
+            "recent_hazard_available": recent_rate_per_min is not None,
+            "recent_hazard_rate_per_min": round(recent_rate_per_min, 5) if recent_rate_per_min is not None else None,
+            "recent_hazard_threat": round(recent_threat, 2) if recent_threat is not None else None,
             "expected_goals_remaining": round(remaining_lambda, 3),
             "probability_next_goal": round(p_goal * 100, 2),
             "probability_no_more_goals": round(p_no_more_goal * 100, 2),
@@ -169,6 +193,33 @@ class AdvancedProbabilityEngine:
             "current_total_goals": current_total,
             "remaining_minutes_model": round(remaining_minutes, 1),
         }
+
+    def _recent_hazard(self, match: Dict[str, Any]) -> Tuple[float | None, float | None]:
+        if not match.get("temporal_memory_ready"):
+            return None, None
+
+        weighted_rate = 0.0
+        weighted_threat = 0.0
+        weight_total = 0.0
+        for window, weight in ((5, 0.50), (10, 0.30), (15, 0.20)):
+            data = match.get(f"window_{window}") if isinstance(match.get(f"window_{window}"), dict) else {}
+            if not data.get("available"):
+                continue
+            minutes = max(1.0, sf(data.get("observed_minutes"), float(window)))
+            dxg = max(0.0, sf(data.get("delta_xg"), 0.0))
+            dsot = max(0.0, sf(data.get("delta_sot"), 0.0))
+            dshots = max(0.0, sf(data.get("delta_shots"), 0.0))
+            ddanger = max(0.0, sf(data.get("delta_dangerous_attacks"), 0.0))
+            # xG es la señal principal; los demas canales solo completan cuando
+            # el proveedor no actualiza xG con la misma frecuencia.
+            goal_equivalent = max(dxg, dsot * 0.16 + max(0.0, dshots - dsot) * 0.035 + ddanger * 0.0025)
+            weighted_rate += (goal_equivalent / minutes) * weight
+            weighted_threat += sf(data.get("threat_score"), 0.0) * weight
+            weight_total += weight
+
+        if weight_total <= 0:
+            return None, None
+        return weighted_rate / weight_total, weighted_threat / weight_total
 
     def _home_attack_share(self, match: Dict[str, Any]) -> float:
         hs = match.get("home_stats") if isinstance(match.get("home_stats"), dict) else {}

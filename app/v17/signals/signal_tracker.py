@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List
+from zoneinfo import ZoneInfo
 
 from app.v17.signals.learning_memory import LearningMemory
 from app.v17.signals.result_resolver import ResultResolver
@@ -16,6 +17,7 @@ from app.v17.services.model_prediction_service import ModelPredictionService
 from app.v17.ml.model_registry import ModelRegistry
 from app.config.config import Config
 from app.jhonny_elite.master_protocol import CalibrationMetrics
+from app.v17.services.official_results_store import OfficialResultsStore
 
 
 def utc_now_iso() -> str:
@@ -89,8 +91,13 @@ class SignalTracker:
         self.max_pending = max_pending
         self._pending: Dict[str, Dict[str, Any]] = {}
         self._closed: List[Dict[str, Any]] = []
-        self._state_path = Path(getattr(Config, "DATA_DIR", "app/v17/storage")) / "signal_tracker_state.json"
+        self._archive: List[Dict[str, Any]] = []
+        data_dir = Path(getattr(Config, "DATA_DIR", "app/v17/storage"))
+        self._state_path = data_dir / "signal_tracker_state.json"
+        self._archive_path = data_dir / "official_results_archive.json"
+        self.official_results_store = OfficialResultsStore()
         self._load_state()
+        self._load_archive()
 
         self.resolver = ResultResolver()
         self.learning_memory = LearningMemory()
@@ -198,6 +205,7 @@ class SignalTracker:
                 resolved["tracking_status"] = "CLOSED"
                 newly_closed.append(deepcopy(resolved))
                 self._closed.insert(0, deepcopy(resolved))
+                self._archive_result(resolved)
                 self.learning_memory.add_result(resolved)
                 try:
                     self.training_service.record_resolution(resolved)
@@ -263,9 +271,12 @@ class SignalTracker:
 
         return {
             "pending": self.pending(),
-            "closed": self.closed(),
+            "closed": self.closed(limit=500),
+            "today_results": self.today_results(limit=500),
+            "history_groups": self.history_groups(limit_per_group=250),
             "newly_closed": newly_closed,
             "summary": self.summary(),
+            "daily_summary": self.daily_summary(),
             "learning": self.learning_memory.summary(),
             "performance_analysis": self.learning_memory.performance_analysis(),
         }
@@ -278,7 +289,9 @@ class SignalTracker:
         )
 
     def closed(self, limit: int = 100) -> List[Dict[str, Any]]:
-        return deepcopy(self._closed[:limit])
+        # El panel lee del archivo oficial persistente, no solo de la memoria de
+        # este proceso. Asi los aciertos/fallos no desaparecen al cerrar el match.
+        return self.official_results(limit=limit)
 
     def history(self, limit: int = 100) -> List[Dict[str, Any]]:
         items = self.closed(limit=limit) + self.pending()
@@ -286,18 +299,19 @@ class SignalTracker:
 
     def summary(self) -> Dict[str, Any]:
         pending = len(self._pending)
-        closed = len(self._closed)
+        official_source = self._official_results_source()
+        closed = len(official_source)
 
-        wins = sum(1 for x in self._closed if x.get("result_status") == "WON")
-        losses = sum(1 for x in self._closed if x.get("result_status") == "LOST")
-        voids = sum(1 for x in self._closed if x.get("result_status") == "VOID")
+        wins = sum(1 for x in official_source if x.get("result_status") == "WON")
+        losses = sum(1 for x in official_source if x.get("result_status") == "LOST")
+        voids = sum(1 for x in official_source if x.get("result_status") == "VOID")
 
         precision = round((wins / max(1, wins + losses)) * 100, 2)
 
         by_market = self._summary_by_market()
         by_competition_tier = self._summary_by_competition_tier()
 
-        official_closed = [x for x in self._closed if str(x.get("result_status") or "").upper() in {"WON", "LOST", "VOID"}]
+        official_closed = [x for x in official_source if str(x.get("result_status") or "").upper() in {"WON", "LOST", "VOID"}]
         settled = [x for x in official_closed if str(x.get("result_status") or "").upper() in {"WON", "LOST"}]
         profits = []
         for item in official_closed:
@@ -339,6 +353,9 @@ class SignalTracker:
             "by_minute_range": self._minute_range_summary(),
             "over": by_market.get("OVER", {}),
             "under": by_market.get("UNDER", {}),
+            "today": self.daily_summary(),
+            "results_cutoff_local": f"{int(getattr(Config, 'RESULTS_CUTOFF_HOUR', 23)):02d}:{int(getattr(Config, 'RESULTS_CUTOFF_MINUTE', 30)):02d}",
+            "results_timezone": str(getattr(Config, "RESULTS_TIMEZONE", "America/La_Paz")),
         }
 
     def get_tracking_summary(self) -> Dict[str, Any]:
@@ -500,7 +517,7 @@ class SignalTracker:
 
     def _segmented_summary(self, field: str) -> Dict[str, Dict[str, Any]]:
         groups: Dict[str, Dict[str, Any]] = {}
-        for item in self._closed:
+        for item in self._official_results_source():
             status = str(item.get("result_status") or "").upper()
             if status not in {"WON", "LOST", "VOID"}:
                 continue
@@ -524,7 +541,7 @@ class SignalTracker:
             if minute <= 75: return "60-75"
             if minute <= 85: return "76-85"
             return "86+"
-        for item in self._closed:
+        for item in self._official_results_source():
             status = str(item.get("result_status") or "").upper()
             if status not in {"WON", "LOST", "VOID"}:
                 continue
@@ -551,7 +568,7 @@ class SignalTracker:
             markets[market]["pending"] += 1
             markets[market]["total"] += 1
 
-        for item in self._closed:
+        for item in self._official_results_source():
             market = normalize_market(item.get("market") or item.get("market_direction"))
             markets.setdefault(market, self._empty_market_summary(market))
 
@@ -584,7 +601,7 @@ class SignalTracker:
             tiers[tier]["pending"] += 1
             tiers[tier]["total"] += 1
 
-        for item in self._closed:
+        for item in self._official_results_source():
             tier = str(item.get("competition_tier") or "UNKNOWN").upper()
             tiers.setdefault(tier, self._empty_competition_summary(tier))
 
@@ -690,6 +707,36 @@ class SignalTracker:
             self._pending = {}
             self._closed = []
 
+    def _load_archive(self) -> None:
+        try:
+            if self._archive_path.exists():
+                payload = json.loads(self._archive_path.read_text(encoding="utf-8"))
+                rows = payload.get("results", []) if isinstance(payload, dict) else []
+                if isinstance(rows, list):
+                    self._archive = rows
+
+            # PostgreSQL, cuando esta configurado, es la fuente durable entre
+            # deploys. Se fusiona con el JSON local para no perder resultados
+            # existentes al activar DATABASE_URL por primera vez.
+            durable_rows = self.official_results_store.load(limit=int(getattr(Config, "OFFICIAL_RESULTS_LIMIT", 5000)))
+            if durable_rows:
+                merged = {}
+                for row in list(durable_rows) + list(self._archive):
+                    identity = str(row.get("signal_id") or "") or f"{row.get('signal_key')}|{row.get('resolved_at')}"
+                    if identity and identity not in merged:
+                        merged[identity] = row
+                self._archive = list(merged.values())
+                self._archive.sort(key=lambda x: str(x.get("resolved_at") or ""), reverse=True)
+            # Migracion: si es la primera ejecucion del parche, no perder los
+            # resultados cerrados que ya estaban en signal_tracker_state.json.
+            if not self._archive and self._closed:
+                for row in reversed(self._closed):
+                    self._archive_result(row, persist=False)
+                self._persist_archive()
+            self._prune_archive()
+        except Exception:
+            self._archive = [deepcopy(x) for x in self._closed if str(x.get("result_status") or "").upper() in {"WON", "LOST", "VOID"}]
+
     def _persist_state(self) -> None:
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -704,8 +751,161 @@ class SignalTracker:
                 encoding="utf-8",
             )
             tmp.replace(self._state_path)
+            self._persist_archive()
         except Exception:
             pass
+
+    def _result_timezone(self) -> ZoneInfo:
+        try:
+            return ZoneInfo(str(getattr(Config, "RESULTS_TIMEZONE", "America/La_Paz")))
+        except Exception:
+            return ZoneInfo("America/La_Paz")
+
+    def _logical_day_for_datetime(self, dt: datetime) -> str:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        local = dt.astimezone(self._result_timezone())
+        cutoff_h = int(getattr(Config, "RESULTS_CUTOFF_HOUR", 23))
+        cutoff_m = int(getattr(Config, "RESULTS_CUTOFF_MINUTE", 30))
+        if (local.hour, local.minute) >= (cutoff_h, cutoff_m):
+            local = local + timedelta(days=1)
+        return local.date().isoformat()
+
+    def _logical_day_for_iso(self, value: Any) -> str:
+        try:
+            text = str(value or "").replace("Z", "+00:00")
+            return self._logical_day_for_datetime(datetime.fromisoformat(text))
+        except Exception:
+            return self._logical_day_for_datetime(datetime.now(timezone.utc))
+
+    def _today_day_key(self) -> str:
+        return self._logical_day_for_datetime(datetime.now(timezone.utc))
+
+    def _archive_result(self, result: Dict[str, Any], persist: bool = True) -> None:
+        if str(result.get("result_status") or "").upper() not in {"WON", "LOST", "VOID"}:
+            return
+        row = deepcopy(result)
+        row["result_day_key"] = self._logical_day_for_iso(row.get("resolved_at") or utc_now_iso())
+        row["archived_at"] = row.get("archived_at") or utc_now_iso()
+        identity = str(row.get("signal_id") or "") or f"{row.get('signal_key')}|{row.get('resolved_at')}"
+        for index, existing in enumerate(self._archive):
+            existing_id = str(existing.get("signal_id") or "") or f"{existing.get('signal_key')}|{existing.get('resolved_at')}"
+            if existing_id == identity:
+                self._archive[index] = row
+                self.official_results_store.upsert(row)
+                if persist:
+                    self._persist_archive()
+                return
+        self._archive.insert(0, row)
+        self._prune_archive()
+        self.official_results_store.upsert(row)
+        if persist:
+            self._persist_archive()
+
+    def _prune_archive(self) -> None:
+        retention = int(getattr(Config, "RESULTS_RETENTION_DAYS", 365))
+        max_rows = int(getattr(Config, "OFFICIAL_RESULTS_LIMIT", 5000))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention + 2)
+        kept: List[Dict[str, Any]] = []
+        for row in self._archive:
+            try:
+                stamp = datetime.fromisoformat(str(row.get("resolved_at") or "").replace("Z", "+00:00"))
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=timezone.utc)
+                if stamp < cutoff:
+                    continue
+            except Exception:
+                pass
+            kept.append(row)
+            if len(kept) >= max_rows:
+                break
+        self._archive = kept
+
+    def _persist_archive(self) -> None:
+        try:
+            self._archive_path.parent.mkdir(parents=True, exist_ok=True)
+            self._prune_archive()
+            tmp = self._archive_path.with_suffix(".tmp")
+            tmp.write_text(
+                json.dumps(
+                    {
+                        "version": "JHONNY_ELITE_OFFICIAL_RESULTS_20.1",
+                        "timezone": str(getattr(Config, "RESULTS_TIMEZONE", "America/La_Paz")),
+                        "cutoff": f"{int(getattr(Config, 'RESULTS_CUTOFF_HOUR', 23)):02d}:{int(getattr(Config, 'RESULTS_CUTOFF_MINUTE', 30)):02d}",
+                        "updated_at": utc_now_iso(),
+                        "results": self._archive,
+                    },
+                    ensure_ascii=False, indent=2, default=str,
+                ),
+                encoding="utf-8",
+            )
+            tmp.replace(self._archive_path)
+        except Exception:
+            pass
+
+    def _official_results_source(self) -> List[Dict[str, Any]]:
+        return self._archive if self._archive else self._closed
+
+    def official_results(self, limit: int = 500) -> List[Dict[str, Any]]:
+        rows = [deepcopy(x) for x in self._official_results_source() if str(x.get("result_status") or "").upper() in {"WON", "LOST", "VOID"}]
+        rows.sort(key=lambda x: str(x.get("resolved_at") or ""), reverse=True)
+        return rows[:limit]
+
+    def today_results(self, limit: int = 500) -> List[Dict[str, Any]]:
+        today = self._today_day_key()
+        rows = []
+        for item in self.official_results(limit=int(getattr(Config, "OFFICIAL_RESULTS_LIMIT", 5000))):
+            day_key = str(item.get("result_day_key") or self._logical_day_for_iso(item.get("resolved_at")))
+            if day_key == today:
+                item["result_day_key"] = day_key
+                item["relative_day_label"] = "HOY"
+                rows.append(item)
+        return rows[:limit]
+
+    def daily_summary(self) -> Dict[str, Any]:
+        rows = self.today_results(limit=int(getattr(Config, "OFFICIAL_RESULTS_LIMIT", 5000)))
+        wins = sum(1 for x in rows if str(x.get("result_status") or "").upper() == "WON")
+        losses = sum(1 for x in rows if str(x.get("result_status") or "").upper() == "LOST")
+        voids = sum(1 for x in rows if str(x.get("result_status") or "").upper() == "VOID")
+        settled = wins + losses
+        return {
+            "day_key": self._today_day_key(),
+            "wins": wins,
+            "losses": losses,
+            "voids": voids,
+            "closed": len(rows),
+            "precision": round((wins / settled) * 100, 2) if settled else 0.0,
+        }
+
+    def history_groups(self, limit_per_group: int = 250) -> Dict[str, List[Dict[str, Any]]]:
+        today = datetime.fromisoformat(self._today_day_key()).date()
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for item in self.official_results(limit=int(getattr(Config, "OFFICIAL_RESULTS_LIMIT", 5000))):
+            day_key = str(item.get("result_day_key") or self._logical_day_for_iso(item.get("resolved_at")))
+            try:
+                day = datetime.fromisoformat(day_key).date()
+                delta = (today - day).days
+            except Exception:
+                delta = 9999
+            if delta <= 0:
+                label = "HOY"
+            elif delta == 1:
+                label = "AYER"
+            elif delta < 7:
+                label = f"HACE_{delta}_DIAS"
+            elif delta < 14:
+                label = "HACE_1_SEMANA"
+            elif delta < 21:
+                label = "HACE_2_SEMANAS"
+            else:
+                label = day_key
+            row = deepcopy(item)
+            row["result_day_key"] = day_key
+            row["relative_day_label"] = label
+            groups.setdefault(label, [])
+            if len(groups[label]) < limit_per_group:
+                groups[label].append(row)
+        return groups
 
     def _trim_pending(self) -> None:
         if len(self._pending) <= self.max_pending:

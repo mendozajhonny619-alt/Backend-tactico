@@ -115,6 +115,9 @@ class V17DashboardAdapter:
             "blocked_by_league": [],
             "live_matches": [],
             "history": [],
+            "today_results": [],
+            "history_groups": {},
+            "daily_summary": {},
             "stats": {},
             "summary": {},
             "source_status": "EMPTY_INITIAL_STATE",
@@ -194,6 +197,9 @@ class V17DashboardAdapter:
             "history": data.get("history", []),
             "pending_signals": data.get("pending_signals", []),
             "closed_history": data.get("closed_history", []),
+            "today_results": data.get("today_results", []),
+            "history_groups": data.get("history_groups", {}),
+            "daily_summary": data.get("daily_summary", {}),
             "stats": data.get("stats", {}),
             "learning": data.get("learning", {}),
             "performance_analysis": data.get("performance_analysis", {}),
@@ -274,6 +280,9 @@ class V17DashboardAdapter:
 
         pending_signals = tracking_result.get("pending", [])
         closed_history = tracking_result.get("closed", [])
+        today_results = tracking_result.get("today_results", [])
+        history_groups = tracking_result.get("history_groups", {})
+        daily_summary = tracking_result.get("daily_summary", {})
         history = pending_signals + closed_history
 
         tracking_summary = tracking_result.get("summary", {})
@@ -300,12 +309,21 @@ class V17DashboardAdapter:
             "blocked_by_league": len(blocked_by_league),
             "league_filter": engine_result.get("league_filter_summary", {}),
             "pending": tracking_summary.get("pending", 0),
-            "closed": tracking_summary.get("closed", 0),
-            "wins": tracking_summary.get("wins", 0),
-            "losses": tracking_summary.get("losses", 0),
-            "voids": tracking_summary.get("voids", 0),
-            "precision": tracking_summary.get("precision", 0),
-            "accuracy_rate": tracking_summary.get("precision", 0),
+            # Los contadores principales son DEL DIA LOGICO actual. Permanecen
+            # visibles hasta las 23:30 de Bolivia; luego pasan al grupo AYER.
+            "closed": daily_summary.get("closed", 0),
+            "wins": daily_summary.get("wins", 0),
+            "losses": daily_summary.get("losses", 0),
+            "voids": daily_summary.get("voids", 0),
+            "precision": daily_summary.get("precision", 0),
+            "accuracy_rate": daily_summary.get("precision", 0),
+            "today_results": daily_summary,
+            # El acumulado no se pierde: queda disponible para auditoria/rendimiento.
+            "lifetime_closed": tracking_summary.get("closed", 0),
+            "lifetime_wins": tracking_summary.get("wins", 0),
+            "lifetime_losses": tracking_summary.get("losses", 0),
+            "lifetime_voids": tracking_summary.get("voids", 0),
+            "lifetime_precision": tracking_summary.get("precision", 0),
             "total_tracked": tracking_summary.get("total_tracked", 0),
             "roi": tracking_summary.get("roi", 0),
             "average_odds": tracking_summary.get("average_odds", 0),
@@ -346,6 +364,9 @@ class V17DashboardAdapter:
             "blocked_by_league": self._compact_signals(blocked_by_league[:50]),
             "pending_signals": self._compact_history(pending_signals),
             "closed_history": self._compact_history(closed_history),
+            "today_results": self._compact_history(today_results),
+            "history_groups": {key: self._compact_history(value) for key, value in history_groups.items()},
+            "daily_summary": daily_summary,
             "history": self._compact_history(history),
             "registered_signals": self._compact_history(registered),
             "stats": stats,
