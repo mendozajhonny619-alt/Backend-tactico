@@ -1,9 +1,16 @@
+databases:
+  - name: jhonny-elite-db
+    plan: free
+    databaseName: jhonny_elite
+    user: jhonny_elite
+
 services:
   - type: web
     runtime: python
     name: jhonny-elite-api
+    plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 1 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --timeout 120
+    startCommand: python -m uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /ready
     envVars:
       - key: API_FOOTBALL_KEY
@@ -17,7 +24,9 @@ services:
       - key: OPENAI_MODEL
         sync: false
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: jhonny-elite-db
+          property: connectionString
       - key: WORKER_ENABLED
         value: "true"
       - key: WORKER_SINGLE_PROCESS_ONLY

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from contextlib import asynccontextmanager
 from threading import Thread
 
@@ -18,19 +19,50 @@ _worker_lock_handle = None
 
 
 def _acquire_worker_lock() -> bool:
-    """Prevent duplicate scanners when the process manager forks workers."""
+    """Prevent duplicate scanners without disabling the worker on Windows.
+
+    Linux/Render uses ``fcntl`` while local Windows uses ``msvcrt``.  The old
+    implementation imported ``fcntl`` unconditionally, so the API could start
+    on Windows while the scanner silently remained read-only.
+    """
     global _worker_lock_handle
     if not getattr(Config, "WORKER_SINGLE_PROCESS_ONLY", True):
         return True
+
+    path = os.getenv("JHONNY_WORKER_LOCK") or os.path.join(
+        tempfile.gettempdir(), "jhonny_elite_worker.lock"
+    )
     try:
-        import fcntl
-        path = os.getenv("JHONNY_WORKER_LOCK", "/tmp/jhonny_elite_worker.lock")
-        _worker_lock_handle = open(path, "w", encoding="utf-8")
-        fcntl.flock(_worker_lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _worker_lock_handle = open(path, "a+", encoding="utf-8")
+        _worker_lock_handle.seek(0)
+
+        if os.name == "nt":
+            import msvcrt
+
+            # msvcrt.locking needs at least one byte to lock.
+            if not _worker_lock_handle.read(1):
+                _worker_lock_handle.seek(0)
+                _worker_lock_handle.write("0")
+                _worker_lock_handle.flush()
+            _worker_lock_handle.seek(0)
+            msvcrt.locking(_worker_lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(_worker_lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        _worker_lock_handle.seek(0)
+        _worker_lock_handle.truncate()
         _worker_lock_handle.write(str(os.getpid()))
         _worker_lock_handle.flush()
         return True
     except Exception as exc:
+        try:
+            if _worker_lock_handle is not None:
+                _worker_lock_handle.close()
+        except Exception:
+            pass
+        _worker_lock_handle = None
         logger.warning("worker lock not acquired; API process will stay read-only: %s", exc)
         return False
 
