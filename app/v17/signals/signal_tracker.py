@@ -356,6 +356,8 @@ class SignalTracker:
             "today": self.daily_summary(),
             "results_cutoff_local": f"{int(getattr(Config, 'RESULTS_CUTOFF_HOUR', 23)):02d}:{int(getattr(Config, 'RESULTS_CUTOFF_MINUTE', 30)):02d}",
             "results_timezone": str(getattr(Config, "RESULTS_TIMEZONE", "America/La_Paz")),
+            "persistence_backend": "POSTGRES" if self.official_results_store.enabled else "LOCAL_JSON",
+            "persistence_durable": bool(self.official_results_store.enabled),
         }
 
     def get_tracking_summary(self) -> Dict[str, Any]:

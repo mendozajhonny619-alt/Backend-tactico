@@ -106,6 +106,12 @@ def _timeout_payload(name: str) -> Dict[str, Any]:
             "tracking_total_available": 0,
             "tracking_summary": {},
             "performance_analysis": {},
+            "pending_signals": [],
+            "closed_history": [],
+            "today_results": [],
+            "history_groups": {},
+            "daily_summary": {},
+            "learning": {},
         }
 
     if name == "stats":
@@ -286,6 +292,10 @@ def _normalize_history(payload: Dict[str, Any]) -> Dict[str, Any]:
         "performance_analysis": _safe_dict(payload.get("performance_analysis")),
         "pending_signals": _safe_list(payload.get("pending_signals")),
         "closed_history": _safe_list(payload.get("closed_history")),
+        "today_results": _safe_list(payload.get("today_results")),
+        "history_groups": _safe_dict(payload.get("history_groups")),
+        "daily_summary": _safe_dict(payload.get("daily_summary")),
+        "learning": _safe_dict(payload.get("learning")),
         "updated_at": payload.get("updated_at") or _now_iso(),
         "fallback": payload.get("fallback", False),
         "timeout": payload.get("timeout", False),
@@ -550,11 +560,15 @@ def dashboard() -> Dict[str, Any]:
     )
 
     opportunity_sections = opportunities_data.get("sections", {}) or {}
-    observe_items = (
-        opportunity_sections.get("over_candidates", [])
-        + opportunity_sections.get("under_candidates", [])
-        + opportunity_sections.get("observe", [])
-    )
+    strong_candidate_items = opportunity_sections.get("strong_candidates", []) or []
+    opportunity_items = opportunity_sections.get("opportunities", []) or []
+    observation_items = opportunity_sections.get("observations", []) or []
+    observe_items = strong_candidate_items + opportunity_items + observation_items
+    if not observe_items:
+        # Compatibility with snapshots generated before protocol-stage buckets
+        # existed.  Unlike the previous implementation, this fallback is not
+        # concatenated with OVER/UNDER aliases, so cards are never duplicated.
+        observe_items = opportunity_sections.get("observe", []) or []
     no_bet_items = opportunity_sections.get("rejected", [])
 
     return {
@@ -566,11 +580,18 @@ def dashboard() -> Dict[str, Any]:
         "timeout": any_timeout,
         "live_matches": live_data.get("items", []),
         "top_signals": signals_data.get("items", []),
+        "strong_candidates": strong_candidate_items,
+        "opportunities": opportunity_items,
+        "observations": observation_items,
         "observe": observe_items,
         "no_bet": no_bet_items,
         "blocked": blocked_data.get("items", []),
         "pending_signals": history_data.get("pending_signals", []),
         "closed_history": history_data.get("closed_history", []),
+        "today_results": history_data.get("today_results", []),
+        "history_groups": history_data.get("history_groups", {}),
+        "daily_summary": history_data.get("daily_summary", {}),
+        "learning": history_data.get("learning", {}),
         "history": history_data.get("history", []),
         "stats": stats_data,
         "summary": opportunities_data.get("summary", {}),

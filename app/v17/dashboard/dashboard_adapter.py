@@ -271,7 +271,15 @@ class V17DashboardAdapter:
         registered: List[Dict[str, Any]],
         source_status: str,
     ) -> Dict[str, Any]:
-        top_signals = engine_result.get("top_signals", [])
+        # The engine proposes publishable signals for the current scan, but the
+        # tracker owns the lifecycle across scans.  Therefore ACTIVE signals in
+        # the dashboard must come from tracker.pending(), not from the temporary
+        # per-cycle engine list.  This guarantees the six-signal global cap and
+        # makes closed signals disappear immediately from Active.
+        cycle_top_signals = engine_result.get("top_signals", [])
+        strong_candidates = engine_result.get("strong_candidates", [])
+        opportunities = engine_result.get("opportunities", [])
+        observations = engine_result.get("observations", [])
         observe = engine_result.get("observe", [])
         no_bet = engine_result.get("no_bet", [])
         blocked = engine_result.get("blocked", [])
@@ -279,6 +287,41 @@ class V17DashboardAdapter:
         all_analyzed = engine_result.get("all_analyzed", [])
 
         pending_signals = tracking_result.get("pending", [])
+        top_signals = pending_signals
+
+        # If the engine found more valid signals than the remaining global slots,
+        # SignalTracker correctly refuses the excess.  They are still genuine
+        # opportunities, so keep them visible as STRONG_CANDIDATE instead of
+        # making them disappear from the panel.
+        pending_keys = {str(x.get("signal_key") or "") for x in pending_signals if isinstance(x, dict)}
+        capacity_suppressed: List[Dict[str, Any]] = []
+        for item in cycle_top_signals:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("signal_key") or "")
+            if not key:
+                market_direction = normalize_market(
+                    item.get("official_market") or item.get("market") or item.get("suggested_market")
+                )
+                if market_direction in {"OVER", "UNDER"}:
+                    key = self.tracker._stable_signal_key(item, market_direction)
+            if key and key in pending_keys:
+                continue
+            candidate = dict(item)
+            candidate["can_publish"] = False
+            candidate["official_can_publish"] = False
+            candidate["decision_status"] = "STRONG_CANDIDATE"
+            candidate["official_status"] = "STRONG_CANDIDATE"
+            candidate["market"] = "NO_BET"
+            candidate["official_market"] = "NO_BET"
+            candidate["capacity_suppressed"] = True
+            candidate["main_reading"] = "Oportunidad sólida detectada, pero el máximo de señales activas ya está ocupado."
+            capacity_suppressed.append(candidate)
+
+        if capacity_suppressed:
+            strong_candidates = capacity_suppressed + strong_candidates
+            observe = capacity_suppressed + observe
+
         closed_history = tracking_result.get("closed", [])
         today_results = tracking_result.get("today_results", [])
         history_groups = tracking_result.get("history_groups", {})
@@ -303,6 +346,10 @@ class V17DashboardAdapter:
             "live_matches": engine_result.get("live_count", 0),
             "analyzed_matches": engine_result.get("analyzed_count", 0),
             "published_signals": len(top_signals),
+            "new_signals_this_cycle": len(cycle_top_signals),
+            "strong_candidates": len(strong_candidates),
+            "opportunities": len(opportunities),
+            "observations": len(observations),
             "observe": len(observe),
             "no_bet": len(no_bet),
             "blocked": len(blocked),
@@ -348,6 +395,8 @@ class V17DashboardAdapter:
             "daily_performance": temporal_dashboard.get("daily", {}),
             "weekly_performance": temporal_dashboard.get("weekly", {}),
             "monthly_performance": temporal_dashboard.get("monthly", {}),
+            "persistence_backend": tracking_summary.get("persistence_backend", "LOCAL_JSON"),
+            "persistence_durable": tracking_summary.get("persistence_durable", False),
         }
 
         return {
@@ -358,6 +407,9 @@ class V17DashboardAdapter:
             "frontend_safe": True,
             "live_matches": self._compact_signals([x for x in all_analyzed if not x.get("tracking_only_terminal")]),
             "top_signals": self._compact_signals(top_signals),
+            "strong_candidates": self._compact_signals(strong_candidates),
+            "opportunities": self._compact_signals(opportunities),
+            "observations": self._compact_signals(observations),
             "observe": self._compact_signals(observe),
             "no_bet": self._compact_signals(no_bet[:20]),
             "blocked": self._compact_signals(blocked[:20]),
@@ -376,6 +428,8 @@ class V17DashboardAdapter:
             "summary": {
                 **engine_result.get("summary", {}),
                 **tracking_summary,
+                "active_signals": len(top_signals),
+                "new_signals_this_cycle": len(cycle_top_signals),
                 "league_filter": engine_result.get("league_filter_summary", {}),
             },
             "learning": learning,
@@ -922,9 +976,21 @@ class V17DashboardAdapter:
                 "signal_strength": item.get("signal_strength"),
                 "candidate_score": item.get("candidate_score"),
                 "candidate_detected": item.get("candidate_detected"),
+                "capacity_suppressed": item.get("capacity_suppressed", False),
                 "pre_match_triggered": item.get("pre_match_triggered"),
                 "pre_match_available": item.get("pre_match_available"),
+                "pre_match_queued": item.get("pre_match_queued"),
                 "pre_match_source": item.get("pre_match_source"),
+                "pre_match_avg_total_goals": item.get("pre_match_avg_total_goals"),
+                "season_expected_total_goals": item.get("season_expected_total_goals"),
+                "over_pre_match_score": item.get("over_pre_match_score"),
+                "under_pre_match_score": item.get("under_pre_match_score"),
+                "home_last_5": item.get("home_last_5", []),
+                "away_last_5": item.get("away_last_5", []),
+                "head_to_head_last_5": item.get("head_to_head_last_5", []),
+                "standings_context": item.get("standings_context", {}),
+                "home_team_statistics": item.get("home_team_statistics", {}),
+                "away_team_statistics": item.get("away_team_statistics", {}),
                 "expected_goals_remaining": item.get("expected_goals_remaining"),
                 "probability_next_goal": item.get("probability_next_goal"),
                 "probability_no_more_goals": item.get("probability_no_more_goals"),
@@ -934,9 +1000,17 @@ class V17DashboardAdapter:
                 "official_next_goal_team": item.get("official_next_goal_team"),
                 "line": item.get("line"),
                 "odds": item.get("odds"),
+                "official_line": item.get("official_line") if item.get("official_line") is not None else item.get("line"),
+                "official_odds": item.get("official_odds") if item.get("official_odds") is not None else item.get("odds"),
+                "odds_source": item.get("odds_source") or item.get("odds_provider"),
+                "odds_provider": item.get("odds_provider") or item.get("odds_source"),
                 "odds_available": item.get("odds_available"),
                 "implied_probability": item.get("implied_probability"),
                 "value_edge": item.get("value_edge"),
+                "official_value_edge": item.get("official_value_edge") if item.get("official_value_edge") is not None else item.get("value_edge"),
+                "expected_value": item.get("expected_value"),
+                "official_expected_value": item.get("official_expected_value") if item.get("official_expected_value") is not None else item.get("expected_value"),
+                "official_consensus": item.get("official_consensus"),
                 "has_positive_value": item.get("has_positive_value"),
                 "support_points": item.get("support_points", []),
                 "caution_points": item.get("caution_points", []),
@@ -1079,6 +1153,14 @@ class V17DashboardAdapter:
                 "why_over_not_ready": item.get("why_over_not_ready"),
 
                 "data_quality": item.get("data_quality"),
+                "data_truth_status": item.get("data_truth_status"),
+                "data_truth_score": item.get("data_truth_score"),
+                "data_source_quality": item.get("data_source_quality"),
+                "has_live_stats": item.get("has_live_stats"),
+                "stats_completeness_score": item.get("stats_completeness_score"),
+                "home_stats": item.get("home_stats", {}),
+                "away_stats": item.get("away_stats", {}),
+                "events": (item.get("events") or [])[-12:],
                 "scan_phase": item.get("scan_phase"),
                 "scan_reason": item.get("scan_reason"),
                 "stats_source": item.get("stats_source"),
@@ -1093,6 +1175,17 @@ class V17DashboardAdapter:
                 "xG": item.get("xg") or item.get("xG"),
                 "dangerous_attacks": item.get("dangerous_attacks"),
                 "red_cards": item.get("red_cards"),
+                "window_5": item.get("window_5", {}),
+                "window_10": item.get("window_10", {}),
+                "window_15": item.get("window_15", {}),
+                "temporal_memory_ready": item.get("temporal_memory_ready"),
+                "temporal_memory_points": item.get("temporal_memory_points"),
+                "goal_next_5_probability": item.get("goal_next_5_probability"),
+                "goal_next_10_probability": item.get("goal_next_10_probability"),
+                "goal_next_15_probability": item.get("goal_next_15_probability"),
+                "score_stability_probability": item.get("score_stability_probability"),
+                "official_blockers": item.get("official_blockers", []),
+                "official_warnings": item.get("official_warnings", []),
 
                 "updated_at": item.get("updated_at"),
             })
