@@ -48,22 +48,36 @@ class DashboardService:
 
     def get_opportunities(self) -> Dict[str, Any]:
         data = self._dashboard()
-        observe = data.get("observe", []) or []
+
+        # Protocol promotion stages are mutually exclusive.  Keep ``observe``
+        # as a backwards-compatible combined view, but do not duplicate the same
+        # item again under OVER/UNDER when building the API payload.
+        strong_candidates = data.get("strong_candidates", []) or []
+        opportunities = data.get("opportunities", []) or []
+        observations = data.get("observations", []) or []
+        observe = data.get("observe", []) or (strong_candidates + opportunities + observations)
         no_bet = data.get("no_bet", []) or []
-        over = [x for x in observe if str(x.get("suggested_market") or x.get("market")).upper() == "OVER"]
-        under = [x for x in observe if str(x.get("suggested_market") or x.get("market")).upper() == "UNDER"]
+
+        active_analysis = strong_candidates + opportunities + observations
+        if not active_analysis:
+            active_analysis = list(observe)
+
+        over = [x for x in active_analysis if str(x.get("suggested_market") or x.get("market")).upper() == "OVER"]
+        under = [x for x in active_analysis if str(x.get("suggested_market") or x.get("market")).upper() == "UNDER"]
         sections = {
+            "strong_candidates": strong_candidates,
+            "opportunities": opportunities,
+            "observations": observations,
             "over_candidates": over,
             "under_candidates": under,
-            "observe": observe,
+            "observe": active_analysis,
             "rejected": no_bet,
         }
-        items = over + under + [x for x in observe if x not in over and x not in under] + no_bet
         return {
             "ok": True,
             "summary": data.get("summary", {}),
             "sections": sections,
-            "items": items,
+            "items": active_analysis + no_bet,
             "updated_at": now_iso(),
         }
 
@@ -91,6 +105,10 @@ class DashboardService:
             "performance_analysis": data.get("performance_analysis", {}),
             "pending_signals": pending,
             "closed_history": closed,
+            "today_results": data.get("today_results", []),
+            "history_groups": data.get("history_groups", {}),
+            "daily_summary": data.get("daily_summary", {}),
+            "learning": data.get("learning", {}),
             "updated_at": now_iso(),
         }
 
