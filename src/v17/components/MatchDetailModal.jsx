@@ -4,7 +4,8 @@ import { fetchV17MatchDetail } from "../services/apiV17";
 
 const safe = (value, fallback = "—") => value === null || value === undefined || value === "" ? fallback : value;
 const num = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
-const pct = (value) => Number.isFinite(Number(value)) ? `${Number(value).toFixed(0)}%` : "—";
+const pct = (value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)) ? `${Number(value).toFixed(0)}%` : "—";
+const fixed = (value, digits = 2) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "—";
 
 function scoreOf(item) {
   return item.current_score || item.scoreline || item.score || item.marcador || `${safe(item.home_score, 0)}-${safe(item.away_score, 0)}`;
@@ -17,7 +18,7 @@ function DetailMetric({ label, value, accent = false }) {
 function TeamStat({ label, home, away }) {
   return (
     <div className="v17-team-stat">
-      <strong>{safe(home, 0)}</strong><span>{label}</span><strong>{safe(away, 0)}</strong>
+      <strong>{safe(home)}</strong><span>{label}</span><strong>{safe(away)}</strong>
     </div>
   );
 }
@@ -96,6 +97,19 @@ export default function MatchDetailModal({ selection, onClose }) {
 
   const homeStats = detail.home_stats || {};
   const awayStats = detail.away_stats || {};
+  const liveStatsAvailable = detail.has_live_stats === true || (
+    detail.has_live_stats !== false &&
+    !String(detail.stats_source || "").toLowerCase().includes("fixture_only") &&
+    (Object.keys(homeStats).length > 0 || Object.keys(awayStats).length > 0)
+  );
+  const stat = (value) => liveStatsAvailable ? value : undefined;
+  const prematchHasDetail = Boolean(
+    detail.pre_match_avg_total_goals !== null && detail.pre_match_avg_total_goals !== undefined ||
+    detail.season_expected_total_goals !== null && detail.season_expected_total_goals !== undefined ||
+    (Array.isArray(detail.home_last_5) && detail.home_last_5.length) ||
+    (Array.isArray(detail.away_last_5) && detail.away_last_5.length) ||
+    (Array.isArray(detail.head_to_head_last_5) && detail.head_to_head_last_5.length)
+  );
   const market = String(detail.official_market || detail.market || detail.suggested_market || "OBSERVE").toUpperCase();
   const confidence = detail.official_confidence ?? detail.master_confidence ?? detail.elite_score ?? detail.candidate_score;
   const alternatives = useMemo(() => detail.alternative_scores || detail.prediction_score_scenarios || [], [detail]);
@@ -165,20 +179,21 @@ export default function MatchDetailModal({ selection, onClose }) {
           {tab === "live" ? (
             <>
               <div className="v17-detail-section-title"><Gauge size={17}/><h3>Estadísticas en vivo</h3></div>
-              <div className="v17-team-stat-head"><strong>{safe(detail.home_team)}</strong><span>LIVE</span><strong>{safe(detail.away_team)}</strong></div>
+              {!liveStatsAvailable ? <div className="v17-detail-notice">El proveedor todavía no entregó estadísticas live confiables para este fixture. Se muestra N/A y esta ausencia no debe interpretarse como UNDER.</div> : null}
+              <div className="v17-team-stat-head"><strong>{safe(detail.home_team)}</strong><span>{liveStatsAvailable ? "LIVE" : "N/A"}</span><strong>{safe(detail.away_team)}</strong></div>
               <div className="v17-team-stats">
-                <TeamStat label="Tiros" home={homeStats.shots ?? homeStats.total_shots} away={awayStats.shots ?? awayStats.total_shots}/>
-                <TeamStat label="Al arco" home={homeStats.shots_on_target} away={awayStats.shots_on_target}/>
-                <TeamStat label="xG" home={homeStats.xg ?? homeStats.xG} away={awayStats.xg ?? awayStats.xG}/>
-                <TeamStat label="Córners" home={homeStats.corners} away={awayStats.corners}/>
-                <TeamStat label="Posesión" home={homeStats.possession ?? detail.possession_home} away={awayStats.possession ?? detail.possession_away}/>
-                <TeamStat label="Ataques peligrosos" home={homeStats.dangerous_attacks} away={awayStats.dangerous_attacks}/>
-                <TeamStat label="Tiros bloqueados" home={homeStats.blocked_shots} away={awayStats.blocked_shots}/>
-                <TeamStat label="Dentro del área" home={homeStats.shots_inside_box} away={awayStats.shots_inside_box}/>
-                <TeamStat label="Faltas" home={homeStats.fouls} away={awayStats.fouls}/>
-                <TeamStat label="Tarjetas amarillas" home={homeStats.yellow_cards} away={awayStats.yellow_cards}/>
-                <TeamStat label="Tarjetas rojas" home={homeStats.red_cards} away={awayStats.red_cards}/>
-                <TeamStat label="Atajadas" home={homeStats.goalkeeper_saves} away={awayStats.goalkeeper_saves}/>
+                <TeamStat label="Tiros" home={stat(homeStats.shots ?? homeStats.total_shots)} away={stat(awayStats.shots ?? awayStats.total_shots)}/>
+                <TeamStat label="Al arco" home={stat(homeStats.shots_on_target)} away={stat(awayStats.shots_on_target)}/>
+                <TeamStat label="xG" home={stat(homeStats.xg ?? homeStats.xG)} away={stat(awayStats.xg ?? awayStats.xG)}/>
+                <TeamStat label="Córners" home={stat(homeStats.corners)} away={stat(awayStats.corners)}/>
+                <TeamStat label="Posesión" home={stat(homeStats.possession ?? detail.possession_home)} away={stat(awayStats.possession ?? detail.possession_away)}/>
+                <TeamStat label="Ataques peligrosos" home={stat(homeStats.dangerous_attacks)} away={stat(awayStats.dangerous_attacks)}/>
+                <TeamStat label="Tiros bloqueados" home={stat(homeStats.blocked_shots)} away={stat(awayStats.blocked_shots)}/>
+                <TeamStat label="Dentro del área" home={stat(homeStats.shots_inside_box)} away={stat(awayStats.shots_inside_box)}/>
+                <TeamStat label="Faltas" home={stat(homeStats.fouls)} away={stat(awayStats.fouls)}/>
+                <TeamStat label="Tarjetas amarillas" home={stat(homeStats.yellow_cards)} away={stat(awayStats.yellow_cards)}/>
+                <TeamStat label="Tarjetas rojas" home={stat(homeStats.red_cards)} away={stat(awayStats.red_cards)}/>
+                <TeamStat label="Atajadas" home={stat(homeStats.goalkeeper_saves)} away={stat(awayStats.goalkeeper_saves)}/>
               </div>
               <div className="v17-detail-grid">
                 <DetailMetric label="Ritmo" value={pct(detail.rhythm_score)} />
@@ -202,7 +217,7 @@ export default function MatchDetailModal({ selection, onClose }) {
             <>
               <div className="v17-detail-section-title"><Calculator size={17}/><h3>Cálculo matemático y predicción</h3></div>
               <div className="v17-detail-grid">
-                <DetailMetric label="xG restante" value={num(detail.expected_goals_remaining).toFixed(2)} accent />
+                <DetailMetric label="xG restante" value={fixed(detail.expected_goals_remaining, 2)} accent />
                 <DetailMetric label="Prob. próximo gol" value={pct(detail.probability_next_goal)} />
                 <DetailMetric label="Prob. sin más goles" value={pct(detail.probability_no_more_goals)} />
                 <DetailMetric label="Prob. 2+ goles" value={pct(detail.probability_two_plus_goals)} />
@@ -229,7 +244,7 @@ export default function MatchDetailModal({ selection, onClose }) {
             <>
               <div className="v17-detail-section-title"><ShieldCheck size={17}/><h3>Memoria prepartido</h3></div>
               <div className="v17-detail-grid">
-                <DetailMetric label="Estado" value={detail.pre_match_available ? "DISPONIBLE" : detail.pre_match_queued ? "EN COLA ECONOMÍA" : "NO REQUERIDO"} accent={detail.pre_match_available}/>
+                <DetailMetric label="Estado" value={detail.pre_match_available ? (prematchHasDetail ? "DISPONIBLE" : "PARCIAL") : detail.pre_match_queued ? "EN COLA ECONOMÍA" : "NO REQUERIDO"} accent={detail.pre_match_available && prematchHasDetail}/>
                 <DetailMetric label="Fuente" value={detail.pre_match_source} />
                 <DetailMetric label="Refuerzo OVER" value={pct(detail.over_pre_match_score)} />
                 <DetailMetric label="Refuerzo UNDER" value={pct(detail.under_pre_match_score)} />
@@ -245,6 +260,7 @@ export default function MatchDetailModal({ selection, onClose }) {
                 {detail.away_team_statistics && Object.keys(detail.away_team_statistics).length ? <div><h4>Temporada visitante</h4><JsonFallback value={detail.away_team_statistics}/></div> : null}
               </div>
               {!detail.pre_match_available ? <div className="v17-detail-notice">El prepartido solo se consulta cuando el live supera el filtro de candidato; así se ahorran créditos.</div> : null}
+              {detail.pre_match_available && !prematchHasDetail ? <div className="v17-detail-notice">Existe respuesta prepartido, pero el proveedor no devolvió todavía suficientes métricas detalladas para mostrar últimos 5, H2H o promedios. No se rellenan con valores inventados.</div> : null}
             </>
           ) : null}
 

@@ -7,6 +7,9 @@ const EMPTY_DASHBOARD = {
   version: "JHONNY_ELITE_20.0",
   live_matches: [],
   top_signals: [],
+  strong_candidates: [],
+  opportunities: [],
+  observations: [],
   observe: [],
   no_bet: [],
   blocked: [],
@@ -33,6 +36,9 @@ function normalizeDashboard(payload) {
     ...payload,
     live_matches: arr(payload.live_matches),
     top_signals: arr(payload.top_signals),
+    strong_candidates: arr(payload.strong_candidates),
+    opportunities: arr(payload.opportunities),
+    observations: arr(payload.observations),
     observe: arr(payload.observe),
     no_bet: arr(payload.no_bet),
     blocked: arr(payload.blocked),
@@ -56,10 +62,15 @@ export function useV17LiveData() {
   const [error, setError] = useState("");
   const [lastFetchAt, setLastFetchAt] = useState(null);
   const mountedRef = useRef(true);
+  const inFlightRef = useRef(false);
+  const firstLoadRef = useRef(true);
 
   async function load() {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     try {
-      const payload = await fetchV17Dashboard();
+      const payload = await fetchV17Dashboard({ coldStart: firstLoadRef.current });
+      firstLoadRef.current = false;
       if (!mountedRef.current) return;
       setData(normalizeDashboard(payload));
       setError("");
@@ -67,6 +78,7 @@ export function useV17LiveData() {
     } catch (err) {
       if (mountedRef.current) setError(err?.message || "Error al cargar JHONNY ELITE");
     } finally {
+      inFlightRef.current = false;
       if (mountedRef.current) setLoading(false);
     }
   }

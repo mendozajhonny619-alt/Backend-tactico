@@ -216,4 +216,4 @@ export default function ChatAssistantV17({ data, selectedMatch = null }) {
       </form>
     </section>
   );
-                      }
+}

@@ -13,8 +13,8 @@ function safe(value, fallback = "—") {
 
 function rankClass(value) {
   const v = String(value || "").toUpperCase();
-  if (v.includes("FUERTE") || v.includes("PREMIUM")) return "strong";
-  if (v.includes("MEDIA")) return "good";
+  if (v.includes("FUERTE") || v.includes("STRONG") || v.includes("PREMIUM")) return "strong";
+  if (v.includes("MEDIA") || v.includes("GOOD")) return "good";
   if (v.includes("BLOCK")) return "blocked";
   return "observe";
 }
@@ -42,7 +42,7 @@ function dominantTeam(signal) {
 
 export default function SignalCardV17({ signal, compact = false, dense = false, onDetail }) {
   const market = String(signal.market !== "OTHER" ? signal.market : signal.suggested_market || "OBSERVE").toUpperCase();
-  const strength = signal.signal_strength || signal.elite_rank || signal.master_rank || (signal.can_publish ? "MEDIA" : "OBSERVE");
+  const strength = signal.signal_strength || signal.signal_tier || signal.elite_rank || signal.master_rank || (signal.can_publish ? "MEDIA" : "OBSERVE");
   const confidence = signal.official_confidence ?? signal.master_confidence ?? signal.elite_score ?? signal.candidate_score;
   const isOver = market === "OVER";
   const score = signal.scoreline || signal.current_score || `${safe(signal.home_score, 0)}-${safe(signal.away_score, 0)}`;

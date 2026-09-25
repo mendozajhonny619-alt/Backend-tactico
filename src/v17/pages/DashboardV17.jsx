@@ -17,8 +17,8 @@ function dynamicLabel(value) {
 }
 
 function isStrong(item) {
-  const value = String(item?.signal_strength || item?.elite_rank || item?.master_rank || "").toUpperCase();
-  return value.includes("FUERTE") || value.includes("PREMIUM");
+  const value = String(item?.signal_strength || item?.signal_tier || item?.elite_rank || item?.master_rank || "").toUpperCase();
+  return value.includes("FUERTE") || value.includes("STRONG") || value.includes("PREMIUM");
 }
 
 function resultIs(item, wanted) {
@@ -89,7 +89,9 @@ export default function DashboardV17() {
   const [selected, setSelected] = useState(null);
 
   const health = data.health || {};
-  const statusOnline = !error && health.status !== "ERROR";
+  const healthStatus = String(health.status || "STARTING").toUpperCase();
+  const statusOnline = !error && healthStatus === "OK" && health.active === true;
+  const statusLabel = statusOnline ? "LIVE" : healthStatus === "STARTING" && !error ? "INICIANDO" : "OFFLINE";
   const strongSignals = useMemo(() => (data.top_signals || []).filter(isStrong), [data.top_signals]);
   const quota = data.stats?.api_quota || {};
   const leagueFilter = data.stats?.league_filter || data.summary?.league_filter || {};
@@ -112,7 +114,7 @@ export default function DashboardV17() {
 
         <div className="v17-app-actions">
           <div className={`v17-system-pill ${statusOnline ? "online" : "offline"}`}>
-            <span /> {statusOnline ? "LIVE" : "OFFLINE"}
+            <span /> {statusLabel}
           </div>
           <button className="v17-icon-button" onClick={reload} title="Actualizar"><RefreshCw size={18} /></button>
         </div>
@@ -166,14 +168,36 @@ export default function DashboardV17() {
               />
 
               <SectionPanelV17
-                title="Observación prioritaria"
-                subtitle="Candidatos que todavía no superan el umbral final."
-                items={data.observe}
+                title="Candidatos fuertes"
+                subtitle="Lecturas muy avanzadas que todavía no cumplen todos los controles críticos de publicación."
+                items={data.strong_candidates}
                 dense
                 limit={4}
                 onDetail={setSelected}
                 onViewAll={() => openFocus("observe")}
-                emptyText="No hay candidatos parciales en este instante."
+                emptyText="No hay candidatos fuertes pendientes en este instante."
+              />
+
+              <SectionPanelV17
+                title="Oportunidades"
+                subtitle="Oportunidades detectadas que continúan en validación de contexto, mercado o value."
+                items={data.opportunities}
+                dense
+                limit={4}
+                onDetail={setSelected}
+                onViewAll={() => openFocus("observe")}
+                emptyText="No hay oportunidades en validación en este instante."
+              />
+
+              <SectionPanelV17
+                title="Observación"
+                subtitle="Lecturas tempranas que todavía no alcanzan nivel de oportunidad."
+                items={data.observations.length ? data.observations : data.observe}
+                dense
+                limit={4}
+                onDetail={setSelected}
+                onViewAll={() => openFocus("observe")}
+                emptyText="No hay partidos en observación prioritaria en este instante."
               />
             </>
           ) : null}
@@ -214,7 +238,9 @@ export default function DashboardV17() {
                   <div className="v17-detail-metric"><small>Llamadas observadas</small><strong>{safe(quota.observed_requests, 0)}</strong></div>
                   <div className="v17-detail-metric"><small>Intervalo</small><strong>{safe(data.stats?.scan_interval_seconds, "—")} s</strong></div>
                   <div className="v17-detail-metric"><small>Último endpoint</small><strong>{safe(quota.last_endpoint, "—")}</strong></div>
+                  <div className={`v17-detail-metric ${data.stats?.persistence_durable ? "accent" : ""}`}><small>Historial</small><strong>{data.stats?.persistence_durable ? "POSTGRES DURABLE" : "LOCAL / NO DURABLE"}</strong></div>
                 </div>
+                {!data.stats?.persistence_durable ? <div className="v17-detail-notice">En Render, el historial local puede perderse al reiniciar o redesplegar el servicio. Configure DATABASE_URL con PostgreSQL para conservar aciertos y fallos entre reinicios.</div> : null}
               </section>
 
               <section className="v17-economy-panel">
