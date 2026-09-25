@@ -1,0 +1,146 @@
+/* src/v16/styles/animations.css */
+
+/* =========================
+   GLOBAL PREMIUM ANIMATIONS
+========================= */
+
+@keyframes v16GlowPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 20px rgba(0, 200, 255, 0.12),
+      inset 0 0 18px rgba(255,255,255,0.03);
+  }
+
+  50% {
+    box-shadow:
+      0 0 34px rgba(0, 240, 255, 0.28),
+      inset 0 0 22px rgba(255,255,255,0.05);
+  }
+}
+
+@keyframes v16SoftFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes v16ScanLine {
+  0% {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+
+  40% {
+    opacity: .35;
+  }
+
+  100% {
+    transform: translateY(120%);
+    opacity: 0;
+  }
+}
+
+@keyframes v16Shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+/* =========================
+   APPLY EFFECTS
+========================= */
+
+.glass-card {
+  animation: v16GlowPulse 4.5s ease-in-out infinite;
+}
+
+.match-hero-panel,
+.premium-radar-card,
+.premium-momentum-panel,
+.premium-live-card,
+.premium-stats-grid,
+.premium-risk-meter,
+.premium-live-feed {
+  position: relative;
+}
+
+.match-hero-panel::after,
+.premium-radar-card::after,
+.premium-momentum-panel::after,
+.premium-live-card::after,
+.premium-stats-grid::after,
+.premium-risk-meter::after,
+.premium-live-feed::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -80%;
+  height: 70%;
+  background:
+    linear-gradient(
+      180deg,
+      transparent,
+      rgba(0, 240, 255, 0.08),
+      transparent
+    );
+  animation: v16ScanLine 6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.hero-detail-btn,
+.v16-detail-btn,
+.v16-back-btn,
+.v16-nav button.active {
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-detail-btn::after,
+.v16-detail-btn::after,
+.v16-back-btn::after,
+.v16-nav button.active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      rgba(255,255,255,.22),
+      transparent
+    );
+  transform: translateX(-120%);
+  animation: v16Shimmer 3.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.radar-status,
+.pulse-live,
+.live-mini-badge,
+.live-badge,
+.system-pill.active {
+  animation: v16SoftFloat 2.4s ease-in-out infinite;
+}
+
+/* =========================
+   REDUCE MOTION SUPPORT
+========================= */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+    }

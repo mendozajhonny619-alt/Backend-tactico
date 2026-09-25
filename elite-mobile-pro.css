@@ -1,0 +1,99 @@
+@media (max-width: 768px) {
+  .elite-detail-pro {
+    padding: 10px;
+  }
+
+  .elite-hero-card,
+  .elite-card-pro {
+    border-radius: 18px;
+  }
+
+  .elite-hero-card {
+    padding: 14px;
+  }
+
+  .elite-league-line {
+    flex-direction: column;
+    gap: 4px;
+    text-align: center;
+    font-size: 11px;
+  }
+
+  .elite-scoreboard {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .elite-team img {
+    width: 54px;
+    height: 54px;
+  }
+
+  .elite-team h3 {
+    font-size: 15px;
+  }
+
+  .elite-score-center {
+    order: -1;
+    min-width: unset;
+  }
+
+  .elite-score {
+    font-size: 46px;
+  }
+
+  .elite-grid-pro {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .elite-main-reading {
+    grid-column: span 1;
+  }
+
+  .elite-pill-grid,
+  .elite-prob-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .elite-card-pro {
+    padding: 14px;
+  }
+
+  .elite-stat-row {
+    grid-template-columns: 60px 1fr 60px;
+    gap: 8px;
+    font-size: 13px;
+  }
+
+  .elite-event-row {
+    grid-template-columns: 38px 1fr;
+  }
+
+  .elite-event-row small {
+    grid-column: 2;
+  }
+
+  .sidebar,
+  .elite-sidebar {
+    transform: translateX(-100%);
+  }
+
+  .main-content,
+  .dashboard-content,
+  .app-content {
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .elite-pill-grid,
+  .elite-prob-list {
+    grid-template-columns: 1fr;
+  }
+
+  .elite-score {
+    font-size: 40px;
+  }
+}
