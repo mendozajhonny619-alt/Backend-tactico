@@ -1,5 +1,5 @@
-import DashboardV17 from "./v17/pages/DashboardV17";
+import JhonnyEliteLiveDashboard from "./components/JhonnyEliteDashboard";
 
 export default function App() {
-  return <DashboardV17 />;
+  return <JhonnyEliteLiveDashboard />;
 }
