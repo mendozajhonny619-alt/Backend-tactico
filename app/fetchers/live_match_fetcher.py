@@ -97,6 +97,7 @@ class LiveMatchFetcher:
         self._players_cache: Dict[str, Dict[str, Any]] = {}
         self._details_cache: Dict[str, Dict[str, Any]] = {}
         self._detail_rotation_cursor: int = 0
+        self._stats_rotation_cursor: int = 0
         self._api_football_cooldown_until: float = 0.0
 
         self._clock_memory: Dict[str, Dict[str, Any]] = {}
@@ -820,10 +821,92 @@ class LiveMatchFetcher:
         except Exception:
             return 0.0
 
+    def _select_deep_scan_fixture_ids(self, raw_matches: List[Dict[str, Any]]) -> set[str]:
+        """Choose statistics calls fairly across the live universe.
+
+        The old implementation always spent the small deep-scan budget on the
+        first fixtures returned by the provider.  In practice those same games
+        could monopolize /fixtures/statistics for the whole match, leaving many
+        fixtures in fixture-only mode until very late.  That is exactly the
+        opposite of the protocol: OVER must be discoverable early while UNDER
+        should mature around its late window.
+
+        With the default budget of two calls per cycle we reserve, when possible,
+        one rotating slot for the pre-UNDER window and one for the UNDER window.
+        Cached statistics remain available without spending a new call.
+        """
+        limit = max(0, int(self.MAX_DEEP_SCAN_MATCHES))
+        if limit <= 0:
+            return set()
+
+        under_prep = int(getattr(Config, "UNDER_PREP_MINUTE", 68))
+        under_cutoff = int(getattr(Config, "UNDER_HARD_CUTOFF_MINUTE", 84))
+        early: List[tuple[str, Dict[str, Any], int]] = []
+        under_window: List[tuple[str, Dict[str, Any], int]] = []
+        other: List[tuple[str, Dict[str, Any], int]] = []
+
+        for item in raw_matches or []:
+            if not isinstance(item, dict) or not self._is_priority_league(item):
+                continue
+            fixture = item.get("fixture", {}) or {}
+            status = fixture.get("status", {}) or {}
+            fixture_id = fixture.get("id")
+            if not fixture_id:
+                continue
+            minute = self._safe_int(status.get("elapsed"))
+            extra = self._safe_int(status.get("extra"))
+            effective = minute + extra if extra > 0 else minute
+            if effective < 5 or effective > self.MAX_OPERABLE_MINUTE:
+                continue
+            row = (str(fixture_id), item, effective)
+            if effective < under_prep:
+                early.append(row)
+            elif effective < under_cutoff:
+                under_window.append(row)
+            else:
+                other.append(row)
+
+        def ranked(pool: List[tuple[str, Dict[str, Any], int]], under_mode: bool = False):
+            if under_mode:
+                target = int(getattr(Config, "UNDER_PREFERRED_MINUTE", 75))
+                return sorted(pool, key=lambda row: (abs(row[2] - target), -self._detail_priority_score(row[1])))
+            return sorted(pool, key=lambda row: self._detail_priority_score(row[1]), reverse=True)
+
+        early = ranked(early)
+        under_window = ranked(under_window, under_mode=True)
+        other = ranked(other)
+
+        selected: List[str] = []
+        used: set[str] = set()
+
+        # Give both strategic windows a chance on every cycle when budget allows.
+        if early and len(selected) < limit:
+            idx = self._stats_rotation_cursor % len(early)
+            selected.append(early[idx][0]); used.add(early[idx][0])
+        if under_window and len(selected) < limit:
+            idx = self._stats_rotation_cursor % len(under_window)
+            if under_window[idx][0] not in used:
+                selected.append(under_window[idx][0]); used.add(under_window[idx][0])
+
+        remaining = [row for row in early + under_window + other if row[0] not in used]
+        if remaining and len(selected) < limit:
+            start = self._stats_rotation_cursor % len(remaining)
+            for offset in range(len(remaining)):
+                fixture_id = remaining[(start + offset) % len(remaining)][0]
+                if fixture_id in used:
+                    continue
+                selected.append(fixture_id); used.add(fixture_id)
+                if len(selected) >= limit:
+                    break
+
+        universe = max(1, len(early) + len(under_window) + len(other))
+        self._stats_rotation_cursor = (self._stats_rotation_cursor + max(1, limit)) % universe
+        return set(selected)
+
     def _normalize_api_football(self, raw_matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         normalized_list: List[Dict[str, Any]] = []
-        deep_scan_used = 0
         blocked_by_league = 0
+        deep_scan_ids = self._select_deep_scan_fixture_ids(raw_matches)
 
         for item in raw_matches:
             try:
@@ -898,20 +981,17 @@ class LiveMatchFetcher:
                 is_added_time = elapsed_plus > 0
 
                 should_fetch_deep = (
-                    deep_scan_used < self.MAX_DEEP_SCAN_MATCHES
+                    str(fixture_id) in deep_scan_ids
                     and self._should_fetch_detailed_stats(item, effective_minute)
                     and not tracking_only
                 )
 
                 should_fetch_players = (
                     bool(getattr(Config, "LIVE_PLAYER_STATS_ENABLED", False))
-                    and deep_scan_used < self.MAX_DEEP_SCAN_MATCHES
+                    and should_fetch_deep
                     and self._should_fetch_player_stats(effective_minute)
                     and not tracking_only
                 )
-
-                if should_fetch_deep:
-                    deep_scan_used += 1
 
                 home_team = teams.get("home", {}) or {}
                 away_team = teams.get("away", {}) or {}
@@ -1899,7 +1979,7 @@ class LiveMatchFetcher:
         elif has_live_stats:
             data_source_quality = "MEDIUM"
         else:
-            data_source_quality = "MEDIUM"
+            data_source_quality = "LOW_FIXTURE_ONLY"
 
         metadata = {
             "data_source_quality": data_source_quality,

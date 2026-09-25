@@ -69,6 +69,21 @@ class DataTruthAI:
         xg = sf(match.get("xg") or match.get("xG"), -1)
         minute = si(match.get("effective_minute") or match.get("api_minute") or match.get("minute"), 0)
         has_live_stats = bool(match.get("has_live_stats"))
+        fusion_conflicts = {str(x).upper() for x in (match.get("fusion_conflicts") or []) if x}
+        critical_fusion_conflicts = fusion_conflicts.intersection({
+            "SCORE_CONFLICT", "CLOCK_CONFLICT", "EVENT_CONFLICT"
+        })
+        stale_fusion = "STALE_SOURCE" in fusion_conflicts
+
+        if critical_fusion_conflicts:
+            score -= 55
+            issues.extend(sorted(critical_fusion_conflicts))
+        if "STATS_CONFLICT" in fusion_conflicts:
+            score -= 25
+            issues.append("STATS_CONFLICT")
+        if stale_fusion:
+            score -= 35
+            issues.append("STALE_SOURCE")
 
         if not base_quality.get("data_valid", True):
             score -= 45
@@ -107,7 +122,11 @@ class DataTruthAI:
             issues.append("STALE_SOURCE")
 
         score = clamp(score)
-        if score >= 90:
+        if critical_fusion_conflicts:
+            state = "CONFLICTED"
+        elif stale_fusion:
+            state = "STALE"
+        elif score >= 90:
             state = "EXCELLENT"
         elif score >= 78:
             state = "HIGH"
@@ -295,6 +314,15 @@ class MasterDecisionAI20:
         if clock.get("clock_stale") or clock.get("clock_frozen"):
             hard.append("CLOCK_STALE")
 
+        # Publication requires a real live-statistics snapshot. Fixture-only
+        # metadata can keep a match visible/tracked, but it is never evidence
+        # for an official OVER/UNDER decision (NO DATA != UNDER).
+        scan_phase = str(match.get("scan_phase") or "").upper()
+        if ("has_live_stats" in match and not bool(match.get("has_live_stats"))) or (scan_phase and scan_phase != "FULL_SCAN"):
+            hard.append("NO_LIVE_STATS")
+        if match.get("can_publish_signal") is False:
+            hard.append("SCAN_NOT_PUBLISHABLE")
+
         if hard:
             return self._result("BLOCKED", "NO_BET", 0.0, "EXTREME", False, "Bloqueo crítico: " + ", ".join(sorted(set(hard))[:5]), line, price, match, math_evidence, odds, hard, [])
         if not candidate or market == "NO_BET":
@@ -384,11 +412,16 @@ class MasterDecisionAI20:
         risk_ready = risk_score <= sf(getattr(Config, "MAX_SIGNAL_RISK_SCORE", 45.0), 45.0)
         prematch_ready = prematch_available or not bool(getattr(Config, "REQUIRE_PREMATCH_FOR_OFFICIAL", True))
 
-        # Fragilidad de linea UNDER: si queda menos de un gol completo de margen,
-        # una sola accion destruye la apuesta y no se publica.
+        # Operability/fragility of the real total line.  A stale OVER line that
+        # is already below the current score is already settled and must never
+        # become a new official signal.  UNDER remains stricter: keep at least
+        # one full goal of margin.
         current_total = si(match.get("home_score"), 0) + si(match.get("away_score"), 0)
         line_margin = line - current_total if line > 0 else -999.0
+        over_line_ready = market != "OVER" or line >= current_total
         under_line_ready = market != "UNDER" or line_margin >= 1.0
+        if market == "OVER" and not over_line_ready:
+            warnings.append("OVER_LINE_ALREADY_SETTLED")
         if market == "UNDER" and not under_line_ready:
             warnings.append("UNDER_FRAGILE_LINE")
 
@@ -417,6 +450,7 @@ class MasterDecisionAI20:
             and risk_ready
             and prematch_ready
             and under_timing_ready
+            and over_line_ready
             and under_line_ready
             and late_under_ready
         )

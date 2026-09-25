@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from app.config.config import Config
 from app.jhonny_elite.live_dynamics import LiveDynamicsMemory
-from app.jhonny_elite.data_fusion import ApiFootballProvider, DataFusionEngine
+from app.fetchers.jhonny_elite.data_fusion import ApiFootballProvider, DataFusionEngine
 from app.jhonny_elite.master_protocol import (
     ContradictionJudgeMaster,
     DataTruthAI,

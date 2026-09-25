@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from app.config.config import Config
 from app.jhonny_elite.live_dynamics import LiveDynamicsMemory
-from app.jhonny_elite.data_fusion import ApiFootballProvider, DataFusionEngine
+from app.fetchers.jhonny_elite.data_fusion import ApiFootballProvider, DataFusionEngine
 from app.jhonny_elite.master_protocol import (
     ContradictionJudgeMaster,
     DataTruthAI,
@@ -131,18 +131,41 @@ class JhonnyEliteEngine:
         for item in overflow:
             item["can_publish"] = False
             item["official_can_publish"] = False
-            item["decision_status"] = "OBSERVE"
-            item["official_status"] = "OBSERVE"
+            # It passed the publication gates but there is no free official slot.
+            # Keep it visible as a strong candidate instead of downgrading it to
+            # a generic observation or silently hiding a real opportunity.
+            item["decision_status"] = "STRONG_CANDIDATE"
+            item["official_status"] = "STRONG_CANDIDATE"
             item["market"] = "NO_BET"
             item["official_market"] = "NO_BET"
             item["economy_suppressed"] = True
-            item["main_reading"] = "Buena lectura, pero quedó fuera del TOP del ciclo para mantener máxima selectividad."
+            item["main_reading"] = "Oportunidad sólida sin cupo oficial disponible; permanece como candidato fuerte hasta liberar un slot."
 
-        observe = sorted(
-            [x for x in analyzed if x.get("decision_status") == "OBSERVE" and not x.get("can_publish")],
+        # MasterDecisionAI uses the protocol promotion states below.  Older
+        # code only collected the literal status ``OBSERVE`` and silently lost
+        # real OPPORTUNITY/CANDIDATE/STRONG_CANDIDATE/OBSERVATION items from
+        # the dashboard.  Keep one compatibility list (observe) while exposing
+        # the protocol stages explicitly.
+        observation_statuses = {"OBSERVE", "OBSERVATION"}
+        opportunity_statuses = {"OPPORTUNITY", "CANDIDATE"}
+        strong_candidate_statuses = {"STRONG_CANDIDATE"}
+
+        observations = sorted(
+            [x for x in analyzed if x.get("decision_status") in observation_statuses and not x.get("can_publish")],
             key=lambda x: sf(x.get("candidate_score")),
             reverse=True,
         )
+        opportunities = sorted(
+            [x for x in analyzed if x.get("decision_status") in opportunity_statuses and not x.get("can_publish")],
+            key=lambda x: sf(x.get("candidate_score")),
+            reverse=True,
+        )
+        strong_candidates = sorted(
+            [x for x in analyzed if x.get("decision_status") in strong_candidate_statuses and not x.get("can_publish")],
+            key=lambda x: (sf(x.get("official_confidence")), sf(x.get("candidate_score"))),
+            reverse=True,
+        )
+        observe = strong_candidates + opportunities + observations
         blocked = [x for x in analyzed if x.get("decision_status") == "BLOCKED"]
         no_bet = [x for x in analyzed if x.get("decision_status") == "NO_BET"]
 
@@ -153,12 +176,18 @@ class JhonnyEliteEngine:
             "live_count": len(matches or []),
             "analyzed_count": len(analyzed),
             "top_signals": published,
+            "strong_candidates": strong_candidates,
+            "opportunities": opportunities,
+            "observations": observations,
             "observe": observe,
             "no_bet": no_bet,
             "blocked": blocked,
             "all_analyzed": analyzed,
             "summary": {
                 "published": len(published),
+                "strong_candidates": len(strong_candidates),
+                "opportunities": len(opportunities),
+                "observations": len(observations),
                 "observe": len(observe),
                 "no_bet": len(no_bet),
                 "blocked": len(blocked),
@@ -183,11 +212,20 @@ class JhonnyEliteEngine:
 
     def analyze_match(self, match: Dict[str, Any]) -> Dict[str, Any]:
         match = self._normalize_aliases(deepcopy(match))
-        # Normalize provider-specific names into a common model before AI layers.
+        # Normalize provider-specific names into a common model and pass the
+        # snapshot through DataFusion before any AI layer.  With one provider the
+        # result is simply CONSISTENT; when additional normalized snapshots are
+        # supplied later, the same gate can surface SCORE/CLOCK/STATS conflicts.
         try:
-            normalized = self.api_football_provider.normalize(match).to_dict()
+            normalized_item = self.api_football_provider.normalize(match)
+            source_name = str(match.get("source") or normalized_item.source or "API_FOOTBALL").strip().upper()
+            normalized_item.source = source_name.replace("-", "_").replace(" ", "_")
+            fused = self.data_fusion.fuse([normalized_item])
+            normalized = fused.get("match") if fused.get("ok") else normalized_item.to_dict()
             match = {**match, **{k: v for k, v in normalized.items() if v not in (None, "", {})}}
         except Exception:
+            # Provider normalization is evidence enrichment; a malformed adapter
+            # must not stop the fixture-level analysis.
             pass
         match = self.live_dynamics.enrich(match)
         match = self.temporal_memory.enrich(match)
