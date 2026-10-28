@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a111e"><title>JHONNY ELITE V3 | Elite Live Intelligence</title>
+<style>
+:root{color-scheme:dark;--bg:#090f19;--panel:#121e30;--sub:#1a2940;--border:#2b3950;--txt:#f0f5ff;--mute:#9aacc7;--cyan:#38bdf8;--green:#39d0a0;--amber:#ffcc77;--red:#ff778d}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(140deg,#09111f,#0b111e 60%,#101625);color:var(--txt);font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px}
+button{font:inherit;cursor:pointer}header{position:sticky;top:0;z-index:10;background:rgba(8,15,27,.95);border-bottom:1px solid var(--border);backdrop-filter:blur(12px)}
+.head{max-width:1340px;margin:auto;display:flex;align-items:center;justify-content:space-between;padding:15px 20px;gap:10px}.brand{display:flex;align-items:center;gap:12px}
+.logo{display:grid;place-items:center;font-weight:900;color:#08101c;background:var(--cyan);width:42px;height:42px;border-radius:12px}.brand h1{font-size:18px;margin:0;font-weight:850;letter-spacing:.03em}.brand small{color:var(--mute);letter-spacing:.11em;font-size:10px}
+.status{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:8px 12px;color:var(--mute)}.status.ok{color:var(--green);border-color:#1c6d58}.status.err{color:var(--red);border-color:#7c3040}
+main{max-width:1340px;margin:0 auto;padding:24px 20px 72px}.intro{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:20px}.intro h2{font-size:23px;margin:0 0 4px}.intro p{color:var(--mute);margin:0}.btn{padding:10px 13px;background:#152c43;color:#d4ebfc;border:1px solid #36516c;border-radius:10px}
+.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:11px;margin-bottom:22px}.metric,.panel{background:var(--panel);border:1px solid var(--border);border-radius:14px}.metric{padding:15px;min-height:91px}.metric b{display:block;font-size:25px;line-height:1.2;padding-top:7px}.metric span{color:var(--mute);font-size:12px}
+.tabs{display:flex;overflow-x:auto;gap:7px;padding-bottom:12px;margin-bottom:13px}.tab{border:1px solid var(--border);background:transparent;color:var(--mute);border-radius:10px;padding:11px 14px;white-space:nowrap}.tab.active{background:#153249;color:#e6f8ff;border-color:#336a85}
+.panel{padding:18px;margin-bottom:16px}.panel h3{margin:0;font-size:16px}.panel .sub{color:var(--mute);font-size:12px;margin:7px 0 16px}.pill{display:inline-flex;padding:4px 8px;border:1px solid var(--border);border-radius:7px;font-size:11px;color:var(--mute)}.pill.shadow{color:var(--amber);border-color:#735527}.pill.official{color:var(--green);border-color:#287259}.pill.block{color:var(--red);border-color:#733345}
+.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.card{background:#0f1929;border:1px solid #2b3a52;border-radius:12px;padding:14px}.cardtop{display:flex;justify-content:space-between;align-items:center;gap:8px;color:var(--mute);font-size:12px}.teams{font-size:16px;font-weight:750;margin:12px 0 5px}.small{color:var(--mute);font-size:12px}.cardfooter{display:flex;align-items:center;justify-content:space-between;margin-top:12px;gap:7px}.cardfoot b{color:var(--cyan)}.empty{border:1px dashed var(--border);border-radius:11px;padding:25px;color:var(--mute);text-align:center}.notice{padding:11px 14px;border-radius:10px;border:1px solid #80663c;background:#2d251c;color:#ffd89b;margin-bottom:18px}
+.tablebox{overflow:auto}.table{width:100%;border-collapse:collapse;min-width:610px}.table th,.table td{padding:11px 9px;text-align:left;border-bottom:1px solid var(--border)}.table th{color:var(--mute);font-weight:500;font-size:12px}.muted{color:var(--mute)}
+.dialog{position:fixed;inset:0;z-index:99;background:#020713db;overflow-y:auto;display:none;padding:15px}.dialog.open{display:block}.detail{margin:25px auto;width:min(840px,100%);background:#131f32;border:1px solid #37445c;border-radius:14px;padding:22px}.detailtop{display:flex;justify-content:space-between;gap:12px;align-items:center}.detailtop h2{margin:4px 0 0}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0}.stat{background:#0c1726;border-radius:9px;padding:12px}.stat b{display:block;font-size:18px}.stat small{color:var(--mute)}.footnote{margin:24px 0;color:var(--mute);font-size:12px}
+@media(max-width:900px){.grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:650px){.head{padding:12px}.brand h1{font-size:15px}.logo{width:35px;height:35px}.status{font-size:10px}.intro{display:block}.intro .btn{margin-top:12px}main{padding:16px 12px 90px}.cards{grid-template-columns:1fr}.grid{grid-template-columns:repeat(2,1fr)}.metric{min-height:75px;padding:12px}.metric b{font-size:22px}.stats{grid-template-columns:repeat(2,1fr)}.detail{margin:0;padding:15px}}
+</style>
+</head>
+<body>
+<header><div class="head"><div class="brand"><div class="logo">JE</div><div><small>ELITE LIVE INTELLIGENCE</small><h1>JHONNY ELITE <span style="color:var(--cyan)">V3</span></h1></div></div><span id="status" class="status">INICIANDO</span></div></header>
+<main>
+ <section class="intro"><div><h2>Centro de inteligencia LIVE</h2><p>Un motor, dos pantallas · PC y teléfono sincronizados</p></div><button class="btn" id="refresh">Actualizar ahora</button></section>
+ <div id="warning" class="notice" hidden></div>
+ <div class="grid" id="metrics"></div>
+ <nav class="tabs" id="tabs"><button class="tab active" data-tab="signals">Señales</button><button class="tab" data-tab="live">Partidos LIVE</button><button class="tab" data-tab="shadow">Shadow</button><button class="tab" data-tab="observe">Oportunidades</button><button class="tab" data-tab="history">Historial</button><button class="tab" data-tab="system">Sistema</button></nav>
+ <div id="content"><section class="panel"><div class="empty">Conectando con el motor...</div></section></div>
+ <p class="footnote">JHONNY ELITE V3 · Sin apuestas automáticas · Las probabilidades no garantizan resultados. Los datos sin fuente verificable se presentan como N/A. Modo Shadow para investigación.</p>
+</main>
+<div class="dialog" id="dialog" role="dialog" aria-modal="true" aria-label="Detalle del partido"><div class="detail" id="detail"></div></div>
+<script>
+'use strict';
+const $=(s)=>document.querySelector(s);
+const h=(v)=>String(v??'N/A').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const safe=(v,f='N/A')=>v===null||v===undefined||v===''?f:v;
+let state={tab:'signals',payload:null};
+const arr=(v)=>Array.isArray(v)?v:[];
+const label=(v)=>h(safe(v));
+async function get(url){const c=new AbortController();const t=setTimeout(()=>c.abort(),18000);try{const r=await fetch(url,{signal:c.signal,cache:'no-store'});if(!r.ok)throw new Error('Error HTTP '+r.status);return await r.json()}finally{clearTimeout(t)}}
+function metric(name,value){return `<div class="metric"><span>${h(name)}</span><b>${h(safe(value,0))}</b></div>`}
+function card(v,kind){const id=safe(v.fixture_id??v.match_id,'');const status=kind==='official'?'OFICIAL':kind==='shadow'?'SIMULACIÓN':'ANÁLISIS';
+ const sc=safe(v.current_score??v.scoreline??v.score,`${safe(v.home_score,0)}-${safe(v.away_score,0)}`);
+ const dataId=encodeURIComponent(String(id));return `<article class="card"><div class="cardtop"><span>${label(v.country)} · ${label(v.league)}</span><span>Min ${label(v.display_minute??v.api_minute??v.minute)}</span></div><div class="teams">${label(v.home_team)} ${h(sc)} ${label(v.away_team)}</div><div class="cardtop"><span>${h(safe(v.suggested_market??v.market,'OBSERVACIÓN'))} ${v.line!=null?'· '+h(v.line):''}</span><span class="pill ${kind==='official'?'official':kind==='shadow'?'shadow':'block'}">${status}</span></div><div class="cardfooter"><span class="small">Calidad: ${label(v.data_truth_status??v.data_quality)}</span><button class="btn" data-fixture="${h(dataId)}">Ver detalle</button></div></article>`}
+function section(title,desc,items,kind){return `<section class="panel"><h3>${h(title)} <span class="pill">${items.length}</span></h3><p class="sub">${h(desc)}</p>${items.length?`<div class="cards">${items.slice(0,70).map(v=>card(v,kind)).join('')}</div>`:`<div class="empty">Sin registros para esta sección por ahora.</div>`}</section>`}
+function render(){const p=state.payload||{};const s=p.stats||{},health=p.health||{},shadow=arr(p.shadow_candidates);const status=$('#status');
+ const online=health.status==='OK'&&health.active;status.textContent=online?'LIVE · MOTOR ACTIVO':health.status==='ERROR'?'ERROR DE MOTOR':'ESPERANDO ESCÁNER';status.className='status '+(online?'ok':health.status==='ERROR'?'err':'');
+ $('#warning').hidden=!(p.fallback||p.timeout||health.status==='ERROR');$('#warning').textContent=health.status==='ERROR'?`Error del worker: ${health.error||'revisa PowerShell'}`:'Hay componentes del backend sin respuesta o con datos en caché. Comprueba el estado de las fuentes.';
+ $('#metrics').innerHTML=metric('Partidos LIVE',s.live_matches??arr(p.live_matches).length)+metric('Señales oficiales',arr(p.top_signals).length)+metric('Hipótesis Shadow',shadow.length)+metric('Oportunidades',arr(p.opportunities).length)+metric('Observación',arr(p.observe).length)+metric('Aciertos / Fallos',`${s.wins??0} / ${s.losses??0}`);
+ const active=arr(p.top_signals), live=arr(p.live_matches),observe=arr(p.observe),hist=arr(p.closed_history),blocked=arr(p.blocked);
+ let out='';if(state.tab==='signals')out=section('Señales oficiales · validación final','Publicadas únicamente si MasterDecisionAI autoriza y la operación no está en Shadow.',active,'official')+section('Candidatos fuertes','Aún sin publicación oficial.',arr(p.strong_candidates),'observe');
+ if(state.tab==='live')out=section('Partidos en vivo','Todos los partidos elegibles y normalizados; un solo worker para ambos dispositivos.',live,'observe');
+ if(state.tab==='shadow')out=section('Investigación Shadow · no oficial','Hipótesis que pasarían los filtros, pero NO se publican ni se cuentan como aciertos oficiales.',shadow,'shadow');
+ if(state.tab==='observe')out=section('Oportunidades','En validación; no constituyen señales oficiales.',arr(p.opportunities),'observe')+section('Observación','Lecturas que no superan filtros.',arr(p.observations),'observe')+section('Bloqueos','Razones por las que no se publica una señal.',blocked,'observe');
+ if(state.tab==='history')out=section('Historial y liquidación','Historial del tracker, sin reiniciar datos al cambio de día.',hist,'official');
+ if(state.tab==='system')out=`<section class="panel"><h3>Salud y economía API</h3><p class="sub">La aplicación local no genera llamadas API desde el teléfono.</p><div class="stats">${['scan_interval_seconds','cycle_seconds','api_economy_mode','persistence_backend'].map(k=>`<div class="stat"><small>${h(k)}</small><b>${label(s[k])}</b></div>`).join('')}</div><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${h(JSON.stringify({status:health,quota:s.api_quota,summary:p.summary},null,2))}</pre></section>`;
+ $('#content').innerHTML=out;
+}
+async function refresh(){try{const p=await get('/v17/dashboard');state.payload=p;render()}catch(e){$('#status').textContent='DESCONECTADO';$('#status').className='status err';$('#warning').hidden=false;$('#warning').textContent=`No fue posible leer el backend: ${e.message}. Revisa PowerShell, red Wi-Fi y contraseña.`}}
+async function detail(fi){const box=$('#dialog'),div=$('#detail');box.classList.add('open');div.innerHTML='<p>Cargando ficha...</p>';
+ try{const p=await get('/v17/match/'+encodeURIComponent(fi));const m=p.item||{};const c=m.comparison23||{};
+ div.innerHTML=`<div class="detailtop"><div><small>${label(m.country)} · ${label(m.league)}</small><h2>${label(m.home_team)} ${label(m.current_score??m.score??`${safe(m.home_score,0)}-${safe(m.away_score,0)}`)} ${label(m.away_team)}</h2></div><button class="btn" id="close">Cerrar ✕</button></div><div class="stats">${[['Minuto',m.api_minute],['Lectura',m.decision_status??m.official_status],['Calidad',m.data_quality],['Próximo gol',m.probability_next_goal==null?'N/A':m.probability_next_goal+'%'],['Sin más goles',m.probability_no_more_goals==null?'N/A':m.probability_no_more_goals+'%'],['Cuota oficial',m.official_odds]].map(([k,v])=>`<div class="stat"><small>${h(k)}</small><b>${label(v)}</b></div>`).join('')}</div><h3>Comparación de 23 criterios</h3><p class="small">N/A = datos no publicados. PROXY/INFERENCE no equivalen a hechos; no hay notas inventadas.</p><div class="tablebox"><table class="table"><thead><tr><th>N.º</th><th>Criterio</th><th>Local</th><th>Visitante</th><th>Estado / origen</th></tr></thead><tbody>${arr(c.criteria).map(x=>`<tr><td>${h(x.number)}</td><td>${label(x.name)}</td><td>${label(x.home_value)}</td><td>${label(x.away_value)}</td><td>${label(x.status)}<br><small class="muted">${label(x.evidence)}</small></td></tr>`).join('')}</tbody></table></div><h3>Explicación</h3><p>${label(m.main_reading??m.official_reason)}</p>`;
+ }catch(e){div.innerHTML=`<p>No se pudo cargar la ficha: ${h(e.message)}</p><button class="btn" id="close">Cerrar</button>`}}
+function close(){ $('#dialog').classList.remove('open'); }
+document.addEventListener('click',e=>{const tab=e.target.closest('[data-tab]');if(tab){state.tab=tab.dataset.tab;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b===tab));render();return}const fi=e.target.closest('[data-fixture]');if(fi){detail(decodeURIComponent(fi.dataset.fixture));return}if(e.target.id==='close'||e.target.id==='dialog')close()});
+$('#refresh').addEventListener('click',refresh);document.addEventListener('keydown',e=>{if(e.key==='Escape')close()});
+refresh();setInterval(refresh,15000);
+</script>
+</body>
+</html>

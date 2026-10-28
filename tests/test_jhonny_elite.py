@@ -212,11 +212,11 @@ def test_official_results_archive_survives_tracker_restart(tmp_path, monkeypatch
     assert any(x.get("match_id") == "901" and x.get("result_status") == "WON" for x in rows)
 
 
-def test_result_day_cutoff_is_2330_bolivia(tmp_path, monkeypatch):
+def test_result_day_cutoff_is_midnight_bolivia(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     monkeypatch.setattr(Config, "DATA_DIR", str(tmp_path))
     tracker = SignalTracker()
     before = datetime(2026, 9, 16, 3, 29, tzinfo=timezone.utc)  # 23:29 del 15 en Bolivia
-    after = datetime(2026, 9, 16, 3, 30, tzinfo=timezone.utc)   # 23:30 del 15 en Bolivia
+    after = datetime(2026, 9, 16, 4, 0, tzinfo=timezone.utc)    # 00:00 del 16 en Bolivia
     assert tracker._logical_day_for_datetime(before) == "2026-09-15"
     assert tracker._logical_day_for_datetime(after) == "2026-09-16"
