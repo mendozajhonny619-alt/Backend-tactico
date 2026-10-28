@@ -43,7 +43,7 @@ function LiveMatchStrip({ matches = [], onDetail }) {
           <div className="v17-live-team"><span>{safe(match.away_team)}</span><b>{safe(match.away_score, 0)}</b></div>
           <div className="v17-live-reading">
             <span>{safe(match.suggested_market, "OBSERVE")}</span>
-            <strong>{Math.round(Number(match.official_confidence ?? match.candidate_score ?? 0))}%</strong>
+            <strong>{(match.official_confidence == null && match.candidate_score == null) ? "N/D" : `${Math.round(Number(match.official_confidence ?? match.candidate_score))}%`}</strong>
           </div>
           <div className="v17-live-dynamics">
             <span>{dynamicLabel(match.dynamic_match_state)}</span>
@@ -108,7 +108,7 @@ export default function DashboardV17() {
           <div className="v17-brand-mark">JE</div>
           <div>
             <span className="v17-kicker">FOOTBALL INTELLIGENCE</span>
-            <h1>JHONNY ELITE <em>20</em></h1>
+            <h1>JHONNY ELITE <em>V3</em></h1>
           </div>
         </div>
 
@@ -122,7 +122,7 @@ export default function DashboardV17() {
 
       <section className="v17-hero-summary">
         <div>
-          <span className="v17-hero-label">Master Protocol · Economy</span>
+          <span className="v17-hero-label">Protocolo V3 · Economía API · {data.shadow_mode ? "MODO SHADOW (simulación)" : "MODO OPERATIVO"}</span>
           <h2>{stats.liveMatches} partidos elegibles en vivo</h2>
           <p>Primera/segunda división y copas prioritarias. DataTruth, memoria 5/10/15, IA táctica, matemática y value alimentan una sola autoridad: MasterDecisionAI.</p>
         </div>
@@ -165,6 +165,17 @@ export default function DashboardV17() {
                 onDetail={setSelected}
                 onViewAll={() => openFocus("signals")}
                 emptyText="No existe una señal con ventaja suficiente ahora. El escaneo sigue activo."
+              />
+
+              <SectionPanelV17
+                title="Hipótesis Shadow · NO oficiales"
+                subtitle="Decisiones simuladas del motor. No son señales publicadas, ni aciertos ni recomendaciones confirmadas."
+                items={data.shadow_candidates || []}
+                dense
+                limit={6}
+                onDetail={setSelected}
+                onViewAll={() => openFocus("observe")}
+                emptyText="Sin decisiones Shadow avanzadas por el momento."
               />
 
               <SectionPanelV17

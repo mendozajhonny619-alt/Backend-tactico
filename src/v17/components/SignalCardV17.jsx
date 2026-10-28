@@ -3,6 +3,7 @@ import { ChevronRight, Flame, Snowflake, TrendingUp } from "lucide-react";
 import ClockStatusBadge from "./ClockStatusBadge";
 
 function pct(value) {
+  if (value === null || value === undefined || value === "") return "—";
   const n = Number(value);
   return Number.isFinite(n) ? `${n.toFixed(0)}%` : "—";
 }
@@ -42,13 +43,15 @@ function dominantTeam(signal) {
 
 export default function SignalCardV17({ signal, compact = false, dense = false, onDetail }) {
   const market = String(signal.market !== "OTHER" ? signal.market : signal.suggested_market || "OBSERVE").toUpperCase();
+  const shadow = Boolean(signal.shadow_only) || String(signal.decision_status || "").toUpperCase() === "SHADOW";
   const strength = signal.signal_strength || signal.signal_tier || signal.elite_rank || signal.master_rank || (signal.can_publish ? "MEDIA" : "OBSERVE");
   const confidence = signal.official_confidence ?? signal.master_confidence ?? signal.elite_score ?? signal.candidate_score;
   const isOver = market === "OVER";
   const score = signal.scoreline || signal.current_score || `${safe(signal.home_score, 0)}-${safe(signal.away_score, 0)}`;
 
   return (
-    <article className={`v17-signal-card ${rankClass(strength)} ${dense ? "dense" : ""}`}>
+    <article className={`v17-signal-card ${shadow ? "observe" : rankClass(strength)} ${dense ? "dense" : ""}`}>
+      {shadow ? <div className="v17-shadow-warning">SIMULACIÓN · NO OFICIAL</div> : null}
       <div className="v17-signal-accent" />
       <div className="v17-signal-top">
         <div className="v17-match-title">
@@ -64,8 +67,8 @@ export default function SignalCardV17({ signal, compact = false, dense = false, 
       <div className={`v17-market-banner ${isOver ? "over" : market === "UNDER" ? "under" : "observe"}`}>
         <div>{isOver ? <Flame size={18}/> : market === "UNDER" ? <Snowflake size={18}/> : <TrendingUp size={18}/>}</div>
         <div><small>LECTURA</small><strong>{market}</strong></div>
-        <div><small>LÍNEA</small><strong>{signal.line ? Number(signal.line).toFixed(1) : "AUTO"}</strong></div>
-        <div><small>CUOTA</small><strong>{signal.odds_available ? Number(signal.odds).toFixed(2) : "—"}</strong></div>
+        <div><small>LÍNEA</small><strong>{signal.line !== null && signal.line !== undefined ? Number(signal.line).toFixed(1) : "N/D"}</strong></div>
+        <div><small>CUOTA</small><strong>{signal.odds_available && signal.odds != null ? Number(signal.odds).toFixed(2) : "N/D"}</strong></div>
       </div>
 
       {!dense ? (
@@ -112,7 +115,7 @@ export default function SignalCardV17({ signal, compact = false, dense = false, 
           <div className="v17-evidence-grid">
             <div><small>Live</small><strong>{pct(signal.candidate_score)}</strong></div>
             <div><small>Prepartido</small><strong>{signal.pre_match_triggered ? (signal.pre_match_available ? "VALIDADO" : "SIN DATO") : "NO REQUERIDO"}</strong></div>
-            <div><small>xG restante</small><strong>{Number(signal.expected_goals_remaining || 0).toFixed(2)}</strong></div>
+            <div><small>xG restante</small><strong>{signal.expected_goals_remaining == null ? "N/D" : Number(signal.expected_goals_remaining).toFixed(2)}</strong></div>
             <div><small>Inestabilidad</small><strong>{pct(signal.dynamic_instability_score)}</strong></div>
           </div>
 

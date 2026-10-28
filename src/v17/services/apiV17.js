@@ -1,6 +1,6 @@
-const API_BASE =
-  import.meta.env.VITE_API_URL ||
-  "http://127.0.0.1:8000";
+// Relative origin means a single FastAPI serves PC and mobile; localhost on a
+// phone would point to the phone, not the PC running the scanner.
+const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 const V17_BASE = `${API_BASE}/v17`;
 
@@ -28,7 +28,7 @@ async function fetchWithTimeout(url, options = {}, timeout = DEFAULT_TIMEOUT) {
     return await response.json();
   } catch (error) {
     if (error?.name === "AbortError") {
-      throw new Error("El backend de Render tardó demasiado en responder. Si está en plan Free puede estar despertando; pulsa actualizar en unos segundos.");
+      throw new Error("El motor local tardó demasiado en responder. Comprueba el estado del scanner en PowerShell.");
     }
     throw error;
   } finally {

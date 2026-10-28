@@ -32,3 +32,12 @@ body.v17-modal-open{overflow:hidden}.v17-modal-backdrop{position:fixed;inset:0;z
 
 .v17-history-period-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:10px 0 14px}.v17-history-period-card{position:relative;display:grid;gap:3px;padding:11px;border:1px solid var(--border);border-radius:14px;background:rgba(7,27,37,.58)}.v17-history-period-card small{font-size:8px;color:var(--muted);font-weight:800;letter-spacing:.08em}.v17-history-period-card strong{font-size:14px}.v17-history-period-card span{font-size:9px;color:var(--muted)}.v17-history-period-card em{position:absolute;right:10px;top:10px;font-style:normal;font-weight:900;color:var(--cyan);font-size:12px}.v17-history-period-card .won-text{color:var(--green)}.v17-history-period-card .lost-text{color:var(--red)}
 @media(max-width:760px){.v17-history-period-grid{grid-template-columns:1fr 1fr}.v17-history-period-card:last-child{grid-column:1/-1}.v17-history-period-card{padding:10px}.v17-history-period-card strong{font-size:12px}}
+
+/* V3: comparison23 is horizontally scrollable on narrow screens. */
+.v3-comparison-wrap {padding: 12px 0;}
+.v3-comparison-wrap > p {font-size: .88rem; opacity: .8;}
+.v3-compare-table-scroll {overflow-x:auto; max-width:100%; border: 1px solid rgba(148,163,184,.22); border-radius: 12px;}
+.v3-compare-table {border-collapse: collapse; width:100%; min-width:650px; font-size:.85rem;}
+.v3-compare-table th,.v3-compare-table td {padding:10px; text-align:left; vertical-align:top; border-bottom:1px solid rgba(148,163,184,.14);}
+.v3-compare-table td small {display:block; opacity:.7; padding-top:4px;}
+.v17-shadow-warning {font-size:.7rem; font-weight:800; color:#eab308; letter-spacing:.04em; padding:8px 12px;}

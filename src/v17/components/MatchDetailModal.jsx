@@ -133,7 +133,7 @@ export default function MatchDetailModal({ selection, onClose }) {
           <DetailMetric label="Confianza" value={pct(confidence)} accent />
           <DetailMetric label="Fuerza" value={detail.signal_strength || detail.elite_rank || detail.master_rank || "OBSERVE"} />
           <DetailMetric label="Riesgo" value={detail.risk_status || detail.risk_level || "—"} />
-          <DetailMetric label="Línea oficial" value={detail.official_line ? num(detail.official_line).toFixed(1) : detail.line ? num(detail.line).toFixed(1) : "N/D"} />
+          <DetailMetric label="Línea oficial" value={detail.official_line != null ? num(detail.official_line).toFixed(1) : detail.line != null ? num(detail.line).toFixed(1) : "N/D"} />
           <DetailMetric label="Cuota oficial" value={detail.official_odds ? num(detail.official_odds).toFixed(2) : detail.odds_available ? num(detail.odds).toFixed(2) : "N/D"} />
           <DetailMetric label="Fuente cuota" value={detail.odds_source || detail.odds_provider || detail.bookmaker || "N/D"} />
         </div>
@@ -144,6 +144,7 @@ export default function MatchDetailModal({ selection, onClose }) {
         <nav className="v17-detail-tabs">
           <button className={tab === "summary" ? "active" : ""} onClick={() => setTab("summary")}>Resumen</button>
           <button className={tab === "live" ? "active" : ""} onClick={() => setTab("live")}>Live</button>
+          <button className={tab === "comparison" ? "active" : ""} onClick={() => setTab("comparison")}>23 criterios</button>
           <button className={tab === "ai" ? "active" : ""} onClick={() => setTab("ai")}>IA + Matemática</button>
           <button className={tab === "prematch" ? "active" : ""} onClick={() => setTab("prematch")}>Prepartido</button>
           <button className={tab === "evidence" ? "active" : ""} onClick={() => setTab("evidence")}>Evidencia</button>
@@ -211,6 +212,26 @@ export default function MatchDetailModal({ selection, onClose }) {
               </div>
               {Array.isArray(detail.events) && detail.events.length ? <JsonFallback value={{ eventos: detail.events.slice(-12) }}/>: null}
             </>
+          ) : null}
+
+          {tab === "comparison" ? (
+            <section className="v3-comparison-wrap">
+              <h3>Comparador de 23 criterios · Datos verificables</h3>
+              <p>No se asignan puntuaciones 1–10 sin evidencia. N/A significa que el proveedor no entregó una métrica utilizable, no que haya cero.</p>
+              <div className="v3-compare-table-scroll">
+                <table className="v3-compare-table">
+                  <thead><tr><th>N.º</th><th>Criterio</th><th>{safe(detail.home_team,"Local")}</th><th>{safe(detail.away_team,"Visitante")}</th><th>Evidencia / estado</th></tr></thead>
+                  <tbody>{(detail.comparison23?.criteria || []).map((criterion) => (
+                    <tr key={criterion.number}>
+                      <td>{criterion.number}</td><td>{criterion.name}</td>
+                      <td>{safe(criterion.home_value,"N/A")}</td><td>{safe(criterion.away_value,"N/A")}</td>
+                      <td><strong>{criterion.status}</strong><small>{criterion.evidence}</small></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+              {!detail.comparison23 && <div className="v17-detail-notice">Comparador aún no cargado; comprueba que el partido esté en la memoria LIVE.</div>}
+            </section>
           ) : null}
 
           {tab === "ai" ? (
