@@ -115,14 +115,18 @@ class JhonnyEliteEngine:
             reverse=True,
         )
 
-        # Global shadow mode evaluates and stores decisions but never emits official picks.
-        if bool(getattr(Config, "SHADOW_MODE", False)):
+        # Shadow candidates stay visible for research, but never become official
+        # signals and must never be written to the official results tracker.
+        shadow_candidates: List[Dict[str, Any]] = []
+        if bool(getattr(Config, "SHADOW_MODE", True)):
             for item in published:
                 item["shadow_original_can_publish"] = True
                 item["can_publish"] = False
                 item["official_can_publish"] = False
                 item["decision_status"] = "SHADOW"
                 item["official_status"] = "SHADOW"
+                item["shadow_only"] = True
+                shadow_candidates.append(item)
             published = []
 
         max_published = max(1, min(6, int(getattr(Config, "SIGNAL_MAX_SIMULTANEOUS", getattr(Config, "MAX_PUBLISHED_SIGNALS_PER_CYCLE", 6)))))
@@ -165,7 +169,7 @@ class JhonnyEliteEngine:
             key=lambda x: (sf(x.get("official_confidence")), sf(x.get("candidate_score"))),
             reverse=True,
         )
-        observe = strong_candidates + opportunities + observations
+        observe = shadow_candidates + strong_candidates + opportunities + observations
         blocked = [x for x in analyzed if x.get("decision_status") == "BLOCKED"]
         no_bet = [x for x in analyzed if x.get("decision_status") == "NO_BET"]
 
@@ -177,6 +181,7 @@ class JhonnyEliteEngine:
             "analyzed_count": len(analyzed),
             "top_signals": published,
             "strong_candidates": strong_candidates,
+            "shadow_candidates": shadow_candidates,
             "opportunities": opportunities,
             "observations": observations,
             "observe": observe,
@@ -186,6 +191,7 @@ class JhonnyEliteEngine:
             "summary": {
                 "published": len(published),
                 "strong_candidates": len(strong_candidates),
+                "shadow_candidates": len(shadow_candidates),
                 "opportunities": len(opportunities),
                 "observations": len(observations),
                 "observe": len(observe),

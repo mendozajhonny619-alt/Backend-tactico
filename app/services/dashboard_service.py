@@ -53,12 +53,13 @@ class DashboardService:
         # as a backwards-compatible combined view, but do not duplicate the same
         # item again under OVER/UNDER when building the API payload.
         strong_candidates = data.get("strong_candidates", []) or []
+        shadow_candidates = data.get("shadow_candidates", []) or []
         opportunities = data.get("opportunities", []) or []
         observations = data.get("observations", []) or []
         observe = data.get("observe", []) or (strong_candidates + opportunities + observations)
         no_bet = data.get("no_bet", []) or []
 
-        active_analysis = strong_candidates + opportunities + observations
+        active_analysis = shadow_candidates + strong_candidates + opportunities + observations
         if not active_analysis:
             active_analysis = list(observe)
 
@@ -66,6 +67,7 @@ class DashboardService:
         under = [x for x in active_analysis if str(x.get("suggested_market") or x.get("market")).upper() == "UNDER"]
         sections = {
             "strong_candidates": strong_candidates,
+            "shadow_candidates": shadow_candidates,
             "opportunities": opportunities,
             "observations": observations,
             "over_candidates": over,

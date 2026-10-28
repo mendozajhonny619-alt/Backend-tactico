@@ -82,15 +82,24 @@ class ApiQuotaMonitor:
         """
         state = self.snapshot()
         remaining = state.get("daily_remaining")
+        limit = state.get("daily_limit")
         if not isinstance(remaining, int):
             return True
-        return remaining - max(0, int(required)) >= max(0, int(reserve))
+        protected = max(0, int(reserve))
+        if isinstance(limit, int) and limit > 0 and protected >= limit:
+            # Example: a default reserve of 300 cannot disable a free 100/day plan.
+            protected = max(2, int(limit * 0.2))
+        return remaining - max(0, int(required)) >= protected
 
     def pressure_level(self, high_percent: float = 82.0, critical_percent: float = 92.0, critical_remaining: int = 100) -> str:
         state = self.snapshot()
         used = state.get("daily_used_percent")
         remaining = state.get("daily_remaining")
-        if isinstance(remaining, int) and remaining <= max(0, int(critical_remaining)):
+        limit = state.get("daily_limit")
+        threshold = max(0, int(critical_remaining))
+        if isinstance(limit, int) and limit > 0:
+            threshold = min(threshold, max(2, int(limit * 0.10)))
+        if isinstance(remaining, int) and remaining <= threshold:
             return "CRITICAL"
         if isinstance(used, (int, float)) and used >= float(critical_percent):
             return "CRITICAL"

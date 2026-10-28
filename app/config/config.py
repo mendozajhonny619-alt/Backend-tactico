@@ -241,7 +241,8 @@ class Config:
     MAX_LIVE_DATA_AGE_SECONDS = max(30, int(os.getenv("MAX_LIVE_DATA_AGE_SECONDS", 150)))
     MAX_ODDS_AGE_SECONDS = max(30, int(os.getenv("MAX_ODDS_AGE_SECONDS", 180)))
     PUBLISH_MIN_CONFIDENCE = float(os.getenv("PUBLISH_MIN_CONFIDENCE", 88.0))
-    SHADOW_MODE = os.getenv("SHADOW_MODE", "false").lower() == "true"
+    # V3 installs in simulation mode. Production activation requires an explicit review.
+    SHADOW_MODE = os.getenv("SHADOW_MODE", "true").lower() == "true"
     SIGNAL_MAX_SIMULTANEOUS = max(1, min(6, int(os.getenv("SIGNAL_MAX_SIMULTANEOUS", 6))))
     REENTRY_COOLDOWN_SECONDS = max(60, int(os.getenv("REENTRY_COOLDOWN_SECONDS", 300)))
     SIGNAL_REVIEW_5_MIN = max(1, int(os.getenv("SIGNAL_REVIEW_5_MIN", 5)))
@@ -261,10 +262,10 @@ class Config:
         ).split(",") if x.strip()
     ]
 
-    # Historial oficial. El día operativo cambia a las 23:30 hora Bolivia.
+    # V3: day boundaries use midnight in America/La_Paz, no records are deleted.
     RESULTS_TIMEZONE = os.getenv("RESULTS_TIMEZONE", "America/La_Paz").strip() or "America/La_Paz"
-    RESULTS_CUTOFF_HOUR = max(0, min(23, int(os.getenv("RESULTS_CUTOFF_HOUR", 23))))
-    RESULTS_CUTOFF_MINUTE = max(0, min(59, int(os.getenv("RESULTS_CUTOFF_MINUTE", 30))))
+    RESULTS_CUTOFF_HOUR = max(0, min(23, int(os.getenv("RESULTS_CUTOFF_HOUR", 0))))
+    RESULTS_CUTOFF_MINUTE = max(0, min(59, int(os.getenv("RESULTS_CUTOFF_MINUTE", 0))))
     RESULTS_RETENTION_DAYS = max(30, int(os.getenv("RESULTS_RETENTION_DAYS", 365)))
     OFFICIAL_RESULTS_LIMIT = max(500, int(os.getenv("OFFICIAL_RESULTS_LIMIT", 5000)))
 

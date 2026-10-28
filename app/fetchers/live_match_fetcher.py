@@ -99,6 +99,7 @@ class LiveMatchFetcher:
         self._detail_rotation_cursor: int = 0
         self._stats_rotation_cursor: int = 0
         self._api_football_cooldown_until: float = 0.0
+        self._tracking_status_last_attempt: Dict[str, float] = {}
 
         self._clock_memory: Dict[str, Dict[str, Any]] = {}
 
@@ -286,6 +287,10 @@ class LiveMatchFetcher:
             logger.warning("LIVE_FETCHER: API_FOOTBALL_KEY no configurada.")
             return []
 
+        if bool(getattr(Config, "API_ECONOMY_MODE", True)) and not api_quota_monitor.can_spend(required=1):
+            logger.warning("LIVE_FETCHER: presupuesto diario agotado; no se consulta API-Football")
+            return []
+
         try:
             logger.info("LIVE_FETCHER: solicitando partidos en vivo a API-Football...")
 
@@ -465,6 +470,21 @@ class LiveMatchFetcher:
             if text and text not in seen:
                 seen.add(text)
                 ids.append(text)
+        if time.time() < self._api_football_cooldown_until:
+            return []
+        # Avoid hammering one missing fixture every 30 s. An attempt is recorded
+        # even if the provider fails; active live discovery stays independent.
+        now = time.time()
+        poll_ttl = max(60, int(getattr(Config, "TRACKING_STATUS_TTL_SECONDS", 90)))
+        ids = [fid for fid in ids if now - self._tracking_status_last_attempt.get(fid, 0) >= poll_ttl]
+        if not ids:
+            return []
+        if bool(getattr(Config, "API_ECONOMY_MODE", True)) and not api_quota_monitor.can_spend(required=1):
+            return []
+        for fid in ids:
+            self._tracking_status_last_attempt[fid] = now
+        if len(self._tracking_status_last_attempt) > 5000:
+            self._tracking_status_last_attempt = {k: t for k, t in self._tracking_status_last_attempt.items() if now - t <= 7200}
         output: List[Dict[str, Any]] = []
         for start in range(0, len(ids), 20):
             batch = ids[start:start + 20]
@@ -801,10 +821,10 @@ class LiveMatchFetcher:
 
         except Exception as exc:
             logger.warning(
-                "LIVE_FETCHER: error evaluando filtro de liga. Se permite por seguridad | error=%s",
+                "LIVE_FETCHER: error evaluando filtro de liga. Se excluye por seguridad | error=%s",
                 exc,
             )
-            return True
+            return False
 
     def _detail_priority_score(self, raw_match: Dict[str, Any]) -> float:
         """Prioriza qué fixtures merecen detalle sin gastar llamadas en ligas irrelevantes."""
@@ -1241,7 +1261,7 @@ class LiveMatchFetcher:
             len(raw_matches or []),
             len(normalized_list),
             blocked_by_league,
-            deep_scan_used,
+            len(deep_scan_ids),
             self.MAX_DEEP_SCAN_MATCHES,
         )
 
