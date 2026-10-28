@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from threading import Event
 from datetime import datetime, timezone
 
 from app.config.config import Config
@@ -15,7 +16,7 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def run_worker() -> None:
+def run_worker(stop_event: Event | None = None) -> None:
     """Continuous live scan.
 
     This worker never downloads pre-match information globally. The unified
@@ -31,7 +32,7 @@ def run_worker() -> None:
     previous_scores: dict[str, tuple[int, int]] = {}
     logger.info("JHONNY ELITE worker started | interval=%ss | post-goal=%ss", interval, post_goal_interval)
 
-    while True:
+    while stop_event is None or not stop_event.is_set():
         started = time.time()
         score_changed = False
         try:
@@ -83,7 +84,7 @@ def run_worker() -> None:
                 "updated_at": now_iso(),
                 "scan_interval_seconds": interval,
                 "cycle_seconds": round(time.time() - started, 3),
-                "worker_mode": "JHONNY_ELITE_20_MASTER_ECONOMY",
+                "worker_mode": "JHONNY_ELITE_V3_SHADOW" if getattr(Config, "SHADOW_MODE", True) else "JHONNY_ELITE_V3_OPERATIVE",
                 "api_economy_mode": bool(getattr(Config, "API_ECONOMY_MODE", True)),
                 "api_quota": api_quota_monitor.snapshot(),
                 "api_quota_pressure": api_quota_monitor.pressure_level(high_percent=float(getattr(Config, "API_THROTTLE_USED_PERCENT", 82.0)), critical_percent=float(getattr(Config, "API_CRITICAL_USED_PERCENT", 92.0))),
@@ -103,16 +104,19 @@ def run_worker() -> None:
         next_interval = post_goal_interval if score_changed else interval
         # Master Protocol requires a 30s decision cycle. Economy pressure is handled
         # inside fetch/enrichment budgets rather than by stopping the master loop.
-        time.sleep(max(1.0, next_interval - elapsed))
+        sleep_time = max(1.0, next_interval - elapsed)
+        if stop_event is not None:
+            stop_event.wait(sleep_time)
+        else:
+            time.sleep(sleep_time)
 
 
-def iniciar_worker() -> None:
-    run_worker()
+def iniciar_worker(stop_event: Event | None = None) -> None:
+    run_worker(stop_event=stop_event)
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
-    run_worker()
+    raise SystemExit("Para evitar dos scanners simultaneos, inicia con INICIAR_JHONNY_ELITE.bat o uvicorn main:app")
 
 # Legacy compatibility: old dashboard modules may still import this helper.
 def get_last_live_matches():

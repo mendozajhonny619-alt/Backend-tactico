@@ -1,3 +1,1 @@
-from .config import Config
-
-__all__ = ["Config"]
+"""Repositorio JHONNY ELITE; los modulos ejecutables viven en app/."""

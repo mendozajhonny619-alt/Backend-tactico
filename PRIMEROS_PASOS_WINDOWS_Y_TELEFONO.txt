@@ -1,0 +1,65 @@
+JHONNY ELITE V3 - USO REAL DESDE COMPUTADORA Y TELEFONO
+=====================================================
+
+01. EXTRAE el ZIP completo en una carpeta local de tu computadora.
+    No ejecutes directamente dentro del ZIP.
+
+02. En Windows 10/11 compatible, instala Python 3.11, 3.12 o 3.13 si no
+    lo tienes. Se necesita Internet la primera vez para instalar dependencias.
+    Tu PC HP 245 G6 de 4 GB debe utilizar una carga moderada.
+
+03. Haz doble clic en CONFIGURAR_API.bat y escribe tu API_FOOTBALL_KEY
+    en .env (solo en tu computadora). Guarda y cierra. JAMAS compartas
+    .env por WhatsApp, correo, ni en ZIP; no incluyas tus claves en capturas.
+
+04. Haz doble clic en INICIAR_JHONNY_ELITE.bat.
+    - La primera vez prepara .venv e instala dependencias.
+    - Copia tu contrasena del texto mostrado en PowerShell.
+    - Al entrar al navegador el usuario es jhonny.
+    - Se usa Shadow Mode: simula y analiza, no publica picks oficiales.
+
+05. TELEFONO: ambos dispositivos deben estar conectados a la misma red
+    Wi-Fi PRIVADA. En el telefono abre el enlace http://IP_DE_TU_PC:8000/panel
+    que muestra PowerShell. Acepta solo permiso de firewall para la red PRIVADA.
+    Windows puede pedir confirmacion de acceso al puerto 8000.
+    NO abras el puerto 8000 en tu router ni lo expongas en Internet.
+    La autenticacion HTTP Basic NO cifra la contrasena: usa una red Wi-Fi
+    de confianza. Para acceso desde Internet, se requiere HTTPS/VPN/VPS.
+
+06. Si no hay Node.js, se abre el PANEL LOCAL RESPONSIVE incluido.
+    Si quieres el PANEL REACT original, instala Node.js >=20.19
+    y ejecuta COMPILAR_PANEL_REACT.bat una sola vez. Reinicia el sistema.
+    Ambos paneles leen los mismos endpoints del backend; no hacen scanner.
+
+07. Para cerrar, usa Ctrl+C en la ventana. No ejecutes worker.py aparte.
+    No uses --workers 2 ni --reload porque duplicarias las consultas.
+
+08. HOY se calcula con cambio a las 00:00 de America/La_Paz.
+    El historial se almacena bajo app/v17/storage. No borres esa carpeta.
+
+09. DIAGNOSTICO RAPIDO:
+    - Pantalla "esperando scanner": verifica API_FOOTBALL_KEY y reinicia.
+    - En telefono no abre: misma red, IP correcta, Windows firewall
+      en red privada, y que PowerShell siga abierto.
+    - Fallo de instalacion: revisa conexion, espacio de disco y Python.
+    - Si no hay partidos, puede ser que proveedor no tenga partidos LIVE
+      disponibles o que falten cobertura/creditos. No son inventados.
+
+10. IMPORTANTE: Esta entrega aplica mejoras del Protocolo Maestro V3,
+    pero NO certifica cobertura mundial real, precision predictiva ni
+    todos los 154 requisitos. Se necesita la prueba real en tu HP con API.
+
+11. CAMBIO DE PROTOCOLO: los archivos internos V17/V20 siguen presentes por
+    compatibilidad. La version local V3 actualiza la entrada, las rutas y el
+    panel, sin reescribir los motores historicos.
+
+12. Si la primera instalacion queda interrumpida, vuelve a hacer doble clic
+    en INICIAR_JHONNY_ELITE.bat: verificara los modulos e intentara instalar
+    las dependencias faltantes. Deja espacio libre suficiente en disco.
+
+13. No uses el mismo ZIP como si fuese una aplicacion APK. El telefono muestra
+    el panel mediante navegador y la PC encendida se encarga del escaneo.
+
+14. La frecuencia remota de API-Football depende de la cuota contratada. Un
+    ciclo interno de 30 segundos NO implica que el plan gratuito soporte una
+    llamada real cada 30 segundos durante todo el dia.

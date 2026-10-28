@@ -1,151 +1,86 @@
-# JHONNY ELITE 20 — MASTER PROTOCOL + ECONOMY
+# JHONNY ELITE V3 — ELITE LIVE INTELLIGENCE
 
-Plataforma de inteligencia futbolística live construida alrededor de una regla central: **publicar menos, justificar mejor y medir todo**.
+**Mismo proyecto original actualizado; Python + FastAPI + escáner LIVE + motor JHONNY + almacenamiento existente + React.**
 
-> JHONNY ELITE no garantiza resultados. El sistema estima probabilidades y valor bajo incertidumbre; `NO_BET` es una decisión válida.
+**Estado de esta entrega:** actualización local orientada a Windows y acceso móvil por Wi-Fi privado. Primero **Shadow Mode / simulación**. No hay apuestas automáticas, promesa de acierto ni garantía de cumplimiento íntegro de los 154 requisitos del Protocolo Maestro.
 
-## Arquitectura operativa
+## Arranque recomendado en Windows
+
+1. Descomprime la carpeta `Backend-tactico-main` **completa** en `Documentos` o en otra carpeta local. No ejecutes nada dentro del ZIP.
+2. Instala Python 3.11 a 3.13 de fuente oficial; durante la instalación marca `Add Python to PATH`. Se necesita Internet inicialmente para instalar las bibliotecas.
+3. Abre **`CONFIGURAR_API.bat`**, coloca la clave de tu cuenta autorizada en `API_FOOTBALL_KEY=...` y guarda el archivo `.env` **solo en tu PC**. No envíes ese archivo al chat.
+4. Haz doble clic en **`INICIAR_JHONNY_ELITE.bat`**. En el primer inicio se crea `.venv` y se instalan dependencias. Si falta una dependencia, el siguiente inicio intenta reinstalarla.
+5. Abre `http://127.0.0.1:8000/panel` en tu PC. La consola muestra usuario `jhonny` y una contraseña única generada en `.env`.
+6. Desde el teléfono, conectado a **la misma red Wi-Fi privada**, abre el enlace `http://IP_DE_LA_PC:8000/panel` que aparece en la consola. Configura el firewall de Windows **solo para redes privadas** si hace falta. **No publiques el puerto 8000 en Internet.**
+
+**Para cerrar el software:** Ctrl+C en la consola. El escáner se ejecuta dentro del proceso FastAPI; no se debe arrancar `worker.py` aparte ni ejecutar Uvicorn con `--workers 2` o `--reload`.
+
+Consulta **`PRIMEROS_PASOS_WINDOWS_Y_TELEFONO.txt`** para pasos y resolución de problemas.
+
+## El panel para teléfono y computadora
+
+- `web_local/index.html` es un **panel móvil/escritorio listo para usar sin Node ni Internet para compilarlo**. Se sirve automáticamente desde `/panel` y muestra LIVE, oportunidades, Shadow, bloqueos, historial y detalle de 23 criterios.
+- `src/` conserva el **frontend React original** y sus mejoras V3. Si tienes Node.js compatible, ejecuta `COMPILAR_PANEL_REACT.bat`, reinicia el backend y se utilizará el panel React compilado desde `dist/`.
+- Ambos paneles utilizan **el mismo backend y la misma fuente de datos**, sin segundo escáner ni consumo de API al refrescar la pantalla.
+- El teléfono es un **panel web responsive**, no un APK nativo ni un escáner autónomo. La PC debe estar encendida para usarlo por Wi-Fi. Acceso desde fuera de la red requiere una solución segura con HTTPS/VPN o servidor remoto, aún no incluida.
+
+## Arquitectura que se conservó
 
 ```text
-LIVE -> NORMALIZE/FUSION -> CLOCK -> DATATRUTH
-     -> MEMORY 5/10/15 -> TACTICAL/CONTEXT/MOMENTUM
-     -> CANDIDATE -> PREMATCH + ODDS
-     -> MATH HT/FT/5/10/15 -> CONTRADICTIONS -> CONSENSUS 4/5
-     -> MASTER DECISION AI -> TRACK -> SETTLEMENT -> PERFORMANCE
+API-Football (según proveedor, plan, cobertura y presupuesto)
+    -> LiveMatchFetcher -> filtro/catálogo actual -> DataTruth/Clock
+    -> lecturas/contexto/memoria -> oportunidad
+    -> investigación prepartido y cuotas bajo demanda
+    -> motor matemático -> riesgo/contradicciones -> MasterDecisionAI
+    -> SHADOW visible; producción solo tras validación habilitada
+    -> SignalTracker -> historial y performance
+    -> FastAPI /v17/* -> panel PC/teléfono
 ```
 
-`MasterDecisionAI20` es la **única autoridad final** para los campos `official_*`. React no recalcula decisiones.
+El backend conserva los módulos históricos `app/v17/` y `app/jhonny_elite/`, incluidas referencias internas a V20. **No se reentrenaron los modelos, ni se alteró el historial oficial, ni se sustituyó MasterDecisionAI**. La versión de la aplicación local/entrada es V3; los identificadores heredados del motor se mantienen para compatibilidad y trazabilidad hasta completar una migración de contratos probada.
 
-El protocolo detallado está en [`MASTER_PROTOCOL_20.md`](MASTER_PROTOCOL_20.md).
+### Lo actualizado
 
-## Qué cambia en V20
+- Fallo de normalización LIVE corregido; respuesta vacía no produce `NameError`.
+- Candidatos Shadow visibles y separados del historial/las señales oficiales.
+- Inicio seguro en Shadow Mode, bloqueo de worker duplicado y parada ordenada.
+- Distribución de resultados sin pérdida de cola y distinción entre xG provisto y proxy.
+- Resultados diarios filtrados a las **00:00 America/La_Paz** y marcador 0 preservado.
+- Comparación de **23 criterios**, con hechos, proxies, inferencias y N/A; ninguna nota sin respaldo.
+- Seis señales activas como máximo para el tracker; las suspendidas por falta de datos no se liquidan artificialmente como VOID ni desaparecen del historial pendiente.
+- Panel responsive local y acceso desde teléfono con usuario/contraseña en red privada.
+- Caché/batching existente conservados, límite adaptado a la cuota conocida y menos consultas repetidas de estado final.
+- Limpieza documentada de archivos sin uso verificado y de secretos que venían en el ZIP.
 
-- DataTruth anti-datos-vacíos: ausencia de estadísticas no equivale a UNDER.
-- Memoria temporal real de 5/10/15 min.
-- Modelo matemático con horizontes HT, FT y gol en próximos 5/10/15 min.
-- Línea, cuota, edge y EV obligatorios para publicación O/U.
-- Consenso mínimo 4 de 5 capas.
-- Contradiction Judge explícito con bloqueos críticos.
-- Máximo 6 picks activos simultáneos.
-- Identidad `match + market + line` y `signal_id` UUID por publicación.
-- Shadow Mode separado de producción.
-- ROI con cuotas reales y métricas Brier/Log Loss/Calibration Error.
-- Segmentación por liga, mercado, línea, minuto, riesgo y calidad.
-- Panel V20 muestra DataTruth, consenso, EV, horizontes 5/10/15 y memoria temporal.
-- Economy conserva filtros top-2/copa, lotes, caché y enriquecimiento solo tras candidato.
+### Requisitos todavía pendientes / no certificados
 
-## Worker
+La cobertura mundial por ID de todas las primeras/segundas divisiones, los torneos Nations League y sus temporadas, la disponibilidad/licencia de cuotas en vivo, la calibración histórica de probabilidades, las definiciones contractuales de OVER_NEXT_15, toda la máquina de estados oficial y la validación de cientos de encuentros simultáneos **no quedan demostrados solamente por instalar esta actualización**. Algunas funciones históricas existen de forma parcial; requieren pruebas con credenciales y datos reales y, en ciertos casos, desarrollo adicional.
 
-El ciclo normal es `30s` y el post-gol puede reanalizar a `15s`.
+No se ejecutó ningún consumo de API-Football durante la preparación ni se verificó directamente esta instalación en Windows físico, debido a que la revisión se realizó en un entorno aislado Linux. **El comportamiento Windows/teléfono debe validarse en la HP.**
 
-El frontend puede refrescar a 15–30 s, pero **no sustituye** al worker del backend.
+## Pruebas offline
 
-## Alcance
+Para desarrolladores, desde la carpeta raíz:
 
-Por defecto: primeras y segundas divisiones senior + competiciones prioritarias (UEFA, Libertadores, Sudamericana, CONCACAF, Copa América y copas nacionales configuradas). Se excluyen juveniles, reservas, amateur, regionales y divisiones inferiores.
-
-La cobertura exacta depende del proveedor y de las competiciones disponibles en la cuenta API.
-
-## Multifuente
-
-Se incluye el contrato normalizado y Data Fusion para API-Football, Flashscore, prepartido y odds. API-Football es la fuente activa incluida. Flashscore es un **adaptador opcional**, no un scraper integrado.
-
-## Instalación backend
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-uvicorn main:app --host 0.0.0.0 --port 8000
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
-Configura al menos `API_FOOTBALL_KEY`. Para publicar picks con value también necesitas cobertura de cuotas válida.
+Las pruebas no verifican la conexión a API-Football ni el build React; las dependencias de Node requieren descarga para compilar el frontend original.
 
-Rutas:
+## Seguridad y confidencialidad
 
-- `/ready`
-- `/v17/health`
-- `/v17/dashboard`
-- `/v17/live`
-- `/v17/signals`
-- `/v17/history`
-- `/v17/opportunities`
-- `/v17/blocked`
-- `/v17/stats`
-- `/v17/match/{fixture_id}`
+- `.env` **no se entrega** en el ZIP; solo se incluye `.env.example` sin valores secretos. El iniciador crea `.env` en la PC.
+- Usa API keys exclusivamente en backend; no copies claves al frontend ni compartas `.env`.
+- HTTP Basic por Wi-Fi **no cifra** contraseñas. Empléalo únicamente en una Wi-Fi privada de confianza; no uses Wi-Fi pública, port forwarding ni redes abiertas.
+- Las bases/historial local existentes se preservaron salvo duplicados idénticos especificados en `ARCHIVOS_RETIRADOS_V3.md`.
 
-## Frontend
+## Documentos
 
-```bash
-npm install
-npm run build
-```
+- `CAMBIOS_JHONNY_ELITE_V3.md`: lista de cambios, pruebas, limitaciones.
+- `ARCHIVOS_RETIRADOS_V3.md`: listado verificable de eliminaciones y traslados.
+- `docs/legacy/`: documentación V20 histórica, **no** las instrucciones vigentes.
+- `PRIMEROS_PASOS_WINDOWS_Y_TELEFONO.txt`: guía breve para usuario final.
 
-Variables:
-
-```env
-VITE_API_URL=http://127.0.0.1:8000
-VITE_DASHBOARD_POLL_MS=15000
-```
-
-## Variables recomendadas de producción
-
-```env
-WORKER_ENABLED=true
-MASTER_PROTOCOL_ENABLED=true
-SCAN_INTERVAL_SECONDS=30
-POST_GOAL_RESCAN_SECONDS=15
-API_ECONOMY_MODE=true
-STRICT_COMPETITION_SCOPE=true
-GLOBAL_SENIOR_SCOPE=false
-UNDER_MINUTE_MIN=60
-UNDER_PREFERRED_MINUTE=65
-PUBLISH_MIN_CONFIDENCE=84
-MASTER_MIN_CONSENSUS=4
-SIGNAL_MAX_SIMULTANEOUS=6
-MAX_PREMATCH_ENRICHMENTS_PER_CYCLE=1
-PREMATCH_MAX_NEW_PACKAGES_PER_HOUR=8
-ODDS_MIN_CANDIDATE_SCORE=78
-SHADOW_MODE=false
-```
-
-Consulta `.env.example` para la configuración completa.
-
-## Economy
-
-El worker sigue su ciclo de decisión de 30 s. El ahorro proviene de **no profundizar todo**:
-
-1. descubre live;
-2. filtra competiciones;
-3. reutiliza cache y detalle por lotes;
-4. puntúa localmente;
-5. solo candidatos consumen prepartido;
-6. solo candidatos avanzados consultan cuota;
-7. el panel lee memoria y no consume API-Football al abrir un detalle.
-
-## Historial y performance
-
-Solo los picks realmente publicados se registran como oficiales. Observaciones, candidatos, NO_BET y bloqueados pueden analizarse por separado, pero no inflan el hit rate.
-
-El tracker calcula hit rate, ROI, cuota/edge/confianza media, Brier, Log Loss y Calibration Error. El ROI no inventa beneficio cuando falta cuota.
-
-## Persistencia
-
-El estado local usa `JHONNY_DATA_DIR`. En Render u otro host efímero monta un disco persistente si deseas conservar historial entre reinicios.
-
-## Pruebas
-
-```bash
-pip install -r requirements-dev.txt
-pytest -q
-python -m compileall -q app main.py worker.py
-```
-
-La suite V20 cubre DataTruth, memoria 5/10/15, autoridad Master, cuota/value obligatorios, contradicciones, identidad de señal, calibración, Economy, settlement y endpoints.
-
-## Render
-
-`render.yaml` mantiene un único proceso Python worker/API y un sitio Vite estático. Para escaneo continuo utiliza una instancia que no se suspenda por inactividad.
-
-No subas claves reales a Git. Usa variables privadas en Render.
+**Lema:** OBSERVAR · COMPARAR · ANTICIPAR · VALIDAR · MONITOREAR · APRENDER.
