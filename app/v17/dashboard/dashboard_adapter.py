@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+from app.config.config import Config
+from app.v17.core.comparison23 import build_comparison23
 from app.v17.core.league_filter import LeagueFilter
 from app.jhonny_elite.engine import JhonnyEliteEngine
 from app.v17.signals.signal_tracker import SignalTracker
@@ -214,9 +216,12 @@ class V17DashboardAdapter:
                 # tracking; el tracking aporta marcador de entrada/final. Se fusionan
                 # en memoria, sin nuevas llamadas a API-Football.
                 merged = {**fixture_item, **signal_item}
+                merged["comparison23"] = build_comparison23(merged)
                 return {"ok": True, "source": "SIGNAL+FIXTURE_MEMORY", "item": merged, "updated_at": utc_now_iso()}
         if fixture_item:
-            return {"ok": True, "source": "FIXTURE_MEMORY", "item": dict(fixture_item), "updated_at": utc_now_iso()}
+            detail = dict(fixture_item)
+            detail["comparison23"] = build_comparison23(detail)
+            return {"ok": True, "source": "FIXTURE_MEMORY", "item": detail, "updated_at": utc_now_iso()}
         return {"ok": False, "source": "NOT_FOUND", "item": {}, "updated_at": utc_now_iso()}
 
     def _refresh_detail_index(
@@ -278,6 +283,7 @@ class V17DashboardAdapter:
         # makes closed signals disappear immediately from Active.
         cycle_top_signals = engine_result.get("top_signals", [])
         strong_candidates = engine_result.get("strong_candidates", [])
+        shadow_candidates = engine_result.get("shadow_candidates", [])
         opportunities = engine_result.get("opportunities", [])
         observations = engine_result.get("observations", [])
         observe = engine_result.get("observe", [])
@@ -287,7 +293,9 @@ class V17DashboardAdapter:
         all_analyzed = engine_result.get("all_analyzed", [])
 
         pending_signals = tracking_result.get("pending", [])
-        top_signals = pending_signals
+        # Signals with broken data remain pending for contractual settlement,
+        # but are NOT active recommendations in the panel.
+        top_signals = [x for x in pending_signals if x.get("operational_active", True) is not False]
 
         # If the engine found more valid signals than the remaining global slots,
         # SignalTracker correctly refuses the excess.  They are still genuine
@@ -348,6 +356,7 @@ class V17DashboardAdapter:
             "published_signals": len(top_signals),
             "new_signals_this_cycle": len(cycle_top_signals),
             "strong_candidates": len(strong_candidates),
+            "shadow_candidates": len(shadow_candidates),
             "opportunities": len(opportunities),
             "observations": len(observations),
             "observe": len(observe),
@@ -408,6 +417,8 @@ class V17DashboardAdapter:
             "live_matches": self._compact_signals([x for x in all_analyzed if not x.get("tracking_only_terminal")]),
             "top_signals": self._compact_signals(top_signals),
             "strong_candidates": self._compact_signals(strong_candidates),
+            "shadow_candidates": self._compact_signals(shadow_candidates),
+            "shadow_mode": bool(getattr(Config, "SHADOW_MODE", True)),
             "opportunities": self._compact_signals(opportunities),
             "observations": self._compact_signals(observations),
             "observe": self._compact_signals(observe),
@@ -662,7 +673,7 @@ class V17DashboardAdapter:
         result = dict(engine_result or {})
         identity_index = self._build_identity_index(raw_matches)
 
-        for key in ["top_signals", "observe", "no_bet", "blocked", "all_analyzed"]:
+        for key in ["top_signals", "strong_candidates", "shadow_candidates", "opportunities", "observations", "observe", "no_bet", "blocked", "all_analyzed"]:
             result[key] = [
                 self._merge_visual_identity(item, identity_index)
                 for item in result.get(key, [])
@@ -912,6 +923,11 @@ class V17DashboardAdapter:
 
             compact.append({
                 "version": "JHONNY_ELITE_20.0",
+                "decision_status": item.get("decision_status"),
+                "official_status": item.get("official_status"),
+                "can_publish": bool(item.get("can_publish")),
+                "shadow_only": bool(item.get("shadow_only")),
+                "shadow_original_can_publish": bool(item.get("shadow_original_can_publish")),
                 "signal_key": item.get("signal_key"),
                 "signal_id": item.get("signal_id"),
                 "match_id": item.get("match_id"),

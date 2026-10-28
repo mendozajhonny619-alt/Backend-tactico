@@ -145,11 +145,13 @@ class SignalTracker:
                 registered.append(deepcopy(existing))
                 continue
 
-            # Master Protocol: never exceed six simultaneously active official picks.
-            if len(self._pending) >= int(getattr(Config, "SIGNAL_MAX_SIMULTANEOUS", 6)):
+            # Six active signals, not six unresolved settlement records.
+            active_count = sum(x.get("operational_active", True) is not False for x in self._pending.values())
+            if active_count >= int(getattr(Config, "SIGNAL_MAX_SIMULTANEOUS", 6)):
                 continue
 
             tracked = self._create_tracking_record(signal)
+            tracked["operational_active"] = True
             self._pending[signal_key] = tracked
             registered.append(deepcopy(tracked))
 
@@ -175,10 +177,20 @@ class SignalTracker:
             current_match = match_index.get(match_id)
 
             if not current_match:
-                tracked["tracking_status"] = "PENDING"
+                tracked["missing_snapshot_cycles"] = safe_int(tracked.get("missing_snapshot_cycles"), 0) + 1
                 tracked["pending_reason"] = "MATCH_NOT_FOUND_IN_LIVE_SNAPSHOT"
+                # Keep settlement open, but after a prolonged outage remove
+                # it from Active. Worker still requests its final fixture status.
+                max_missing_cycles = max(1, int(20 * 60 / max(15, int(getattr(Config, "SCAN_INTERVAL_SECONDS", 30)))))
+                if tracked["missing_snapshot_cycles"] >= max_missing_cycles:
+                    tracked["operational_active"] = False
+                    tracked["tracking_status"] = "SUSPENDED_AWAITING_SETTLEMENT"
+                else:
+                    tracked["tracking_status"] = "PENDING"
                 still_pending[signal_key] = tracked
                 continue
+
+            tracked["missing_snapshot_cycles"] = 0
 
             current_blockers = set(current_match.get("official_blockers") or current_match.get("hard_blockers") or [])
             critical_invalidation = any(code in current_blockers for code in {
@@ -186,16 +198,22 @@ class SignalTracker:
                 "STALE_SOURCE", "DATA_QUALITY_COLLAPSE", "SOURCE_CONFLICT"
             })
             if critical_invalidation:
-                resolved = {**deepcopy(tracked), **deepcopy(current_match)}
+                # A data/clock fault revokes operational approval; it cannot
+                # retroactively settle a real selection as VOID/INVALIDATED.
+                # Preserve the entry snapshot and await a reliable final score.
+                resolved = deepcopy(tracked)
                 resolved.update({
-                    "resolved": True,
-                    "result_status": "INVALIDATED",
-                    "result_label": "INVALIDADA",
-                    "close_reason": "DATA_OR_CLOCK_CONTEXT_BREAK",
-                    "resolved_at": utc_now_iso(),
+                    "resolved": False,
+                    "operational_active": False,
+                    "tracking_status": "SUSPENDED_AWAITING_SETTLEMENT",
+                    "pending_reason": "DATA_OR_CLOCK_CONTEXT_BREAK",
+                    "lifecycle_review": "SUSPENDED_DATA_RISK",
                 })
             else:
                 resolved = self.resolver.resolve(tracked, current_match)
+                # Do not reopen an operationally suspended historical signal.
+                if tracked.get("operational_active") is False:
+                    resolved["operational_active"] = False
 
             resolved["market"] = tracked.get("market") or tracked.get("market_direction") or "OTHER"
             resolved["market_direction"] = normalize_market(resolved.get("market"))
@@ -248,7 +266,8 @@ class SignalTracker:
                 except Exception:
                     pass  # Don't break resolution if feedback recording fails
             else:
-                resolved["tracking_status"] = "PENDING"
+                if resolved.get("operational_active") is not False:
+                    resolved["tracking_status"] = "PENDING"
                 entry_minute = safe_int(resolved.get("entry_minute"), 0)
                 current_minute = safe_int(resolved.get("current_minute"), entry_minute)
                 age_minutes = max(0, current_minute - entry_minute)
@@ -263,6 +282,9 @@ class SignalTracker:
                     resolved["lifecycle_review"] = "VALIDATE_5"
                 else:
                     resolved["lifecycle_review"] = "ACTIVE"
+                if resolved.get("operational_active") is False:
+                    resolved["tracking_status"] = "SUSPENDED_AWAITING_SETTLEMENT"
+                    resolved["lifecycle_review"] = "SUSPENDED_DATA_RISK"
                 still_pending[signal_key] = resolved
 
         self._pending = still_pending
@@ -354,7 +376,7 @@ class SignalTracker:
             "over": by_market.get("OVER", {}),
             "under": by_market.get("UNDER", {}),
             "today": self.daily_summary(),
-            "results_cutoff_local": f"{int(getattr(Config, 'RESULTS_CUTOFF_HOUR', 23)):02d}:{int(getattr(Config, 'RESULTS_CUTOFF_MINUTE', 30)):02d}",
+            "results_cutoff_local": f"{int(getattr(Config, 'RESULTS_CUTOFF_HOUR', 0)):02d}:{int(getattr(Config, 'RESULTS_CUTOFF_MINUTE', 0)):02d}",
             "results_timezone": str(getattr(Config, "RESULTS_TIMEZONE", "America/La_Paz")),
             "persistence_backend": "POSTGRES" if self.official_results_store.enabled else "LOCAL_JSON",
             "persistence_durable": bool(self.official_results_store.enabled),
@@ -761,16 +783,19 @@ class SignalTracker:
         try:
             return ZoneInfo(str(getattr(Config, "RESULTS_TIMEZONE", "America/La_Paz")))
         except Exception:
-            return ZoneInfo("America/La_Paz")
+            # Windows may not have a timezone database before tzdata is installed.
+            return timezone(timedelta(hours=-4))
 
     def _logical_day_for_datetime(self, dt: datetime) -> str:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         local = dt.astimezone(self._result_timezone())
-        cutoff_h = int(getattr(Config, "RESULTS_CUTOFF_HOUR", 23))
-        cutoff_m = int(getattr(Config, "RESULTS_CUTOFF_MINUTE", 30))
-        if (local.hour, local.minute) >= (cutoff_h, cutoff_m):
-            local = local + timedelta(days=1)
+        cutoff_h = int(getattr(Config, "RESULTS_CUTOFF_HOUR", 0))
+        cutoff_m = int(getattr(Config, "RESULTS_CUTOFF_MINUTE", 0))
+        # The operating day begins at the cutoff; it never jumps to tomorrow
+        # at the cutoff. Midnight gives the standard Bolivian calendar day.
+        if (local.hour, local.minute) < (cutoff_h, cutoff_m):
+            local = local - timedelta(days=1)
         return local.date().isoformat()
 
     def _logical_day_for_iso(self, value: Any) -> str:
@@ -833,7 +858,7 @@ class SignalTracker:
                     {
                         "version": "JHONNY_ELITE_OFFICIAL_RESULTS_20.1",
                         "timezone": str(getattr(Config, "RESULTS_TIMEZONE", "America/La_Paz")),
-                        "cutoff": f"{int(getattr(Config, 'RESULTS_CUTOFF_HOUR', 23)):02d}:{int(getattr(Config, 'RESULTS_CUTOFF_MINUTE', 30)):02d}",
+                        "cutoff": f"{int(getattr(Config, 'RESULTS_CUTOFF_HOUR', 0)):02d}:{int(getattr(Config, 'RESULTS_CUTOFF_MINUTE', 0)):02d}",
                         "updated_at": utc_now_iso(),
                         "results": self._archive,
                     },

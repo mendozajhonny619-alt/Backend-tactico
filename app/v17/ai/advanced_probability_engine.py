@@ -48,13 +48,17 @@ class AdvancedProbabilityEngine:
         current_total = home + away
         remaining_minutes = clamp(96.0 - minute, 1.0, 96.0)
 
-        xg = max(0.0, sf(match.get("xg") or match.get("xG")))
+        raw_xg = match.get("xg") if match.get("xg") is not None else match.get("xG")
+        xg = max(0.0, sf(raw_xg))
         shots = max(0.0, sf(match.get("shots")))
         sot = max(0.0, sf(match.get("shots_on_target")))
         dangerous = max(0.0, sf(match.get("dangerous_attacks")))
 
         # Cuando xG no existe, estimamos una amenaza esperada conservadora.
-        xg_proxy = max(xg, sot * 0.24 + max(0.0, shots - sot) * 0.055 + dangerous * 0.004)
+        xg_available = bool(match.get("xg_available")) and raw_xg is not None
+        # A real (including zero) xG must never be silently replaced by a proxy.
+        xg_source = "PROVIDER_XG" if xg_available else "ESTIMATED_PROXY"
+        xg_proxy = xg if xg_available else sot * 0.24 + max(0.0, shots - sot) * 0.055 + dangerous * 0.004
         live_rate_per_min = xg_proxy / max(12.0, float(minute))
 
         # 20.1: el acumulado del partido no puede dominar una prediccion tardia.
@@ -164,6 +168,9 @@ class AdvancedProbabilityEngine:
 
         return {
             "math_engine_version": self.VERSION,
+            "xg_source": xg_source,
+            "xg_proxy_used": not xg_available,
+            "calibration_status": "NOT_VALIDATED_OUT_OF_SAMPLE",
             "recent_hazard_available": recent_rate_per_min is not None,
             "recent_hazard_rate_per_min": round(recent_rate_per_min, 5) if recent_rate_per_min is not None else None,
             "recent_hazard_threat": round(recent_threat, 2) if recent_threat is not None else None,
@@ -251,22 +258,47 @@ class AdvancedProbabilityEngine:
         home_lambda: float,
         away_lambda: float,
     ) -> List[Dict[str, Any]]:
-        rows: List[Tuple[float, int, int]] = []
-        for hg in range(0, 5):
-            ph = self._poisson(hg, home_lambda)
-            for ag in range(0, 5):
-                pa = self._poisson(ag, away_lambda)
-                rows.append((ph * pa, current_home + hg, current_away + ag))
+        # Enumerate enough of each Poisson tail to reach near-total mass.
+        # Report the remaining mass separately as OTROS instead of dropping it.
+        def support(lam: float) -> List[float]:
+            probabilities = []
+            for k in range(0, 40):
+                probabilities.append(self._poisson(k, lam))
+                if k >= 5 and 1.0 - sum(probabilities) < 1e-10:
+                    break
+            return probabilities
+
+        home_probs = support(home_lambda)
+        away_probs = support(away_lambda)
+        rows: List[Tuple[float, int, int]] = [
+            (ph * pa, current_home + hg, current_away + ag)
+            for hg, ph in enumerate(home_probs)
+            for ag, pa in enumerate(away_probs)
+        ]
         rows.sort(reverse=True, key=lambda x: x[0])
-        return [
+        distribution = [
             {
                 "score": f"{h}-{a}",
-                "probability": round(p * 100, 2),
+                "probability": round(probability * 100, 6),
                 "additional_home_goals": h - current_home,
                 "additional_away_goals": a - current_away,
             }
-            for p, h, a in rows
+            for probability, h, a in rows
         ]
+        residue = round(100.0 - sum(x["probability"] for x in distribution), 6)
+        # Reconcile tiny floating-point rounding on the largest score, never
+        # publish a negative "otros" probability.
+        if residue < 0 and distribution:
+            distribution[0]["probability"] = round(distribution[0]["probability"] + residue, 6)
+        elif residue > 0:
+            distribution.append({
+                "score": "OTROS",
+                "probability": residue,
+                "additional_home_goals": None,
+                "additional_away_goals": None,
+                "kind": "RESIDUAL_MASS",
+            })
+        return distribution
 
     @staticmethod
     def _poisson(k: int, lam: float) -> float:

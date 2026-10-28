@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict
 
 from fastapi import APIRouter
 
+from app.config.config import Config
 from app.services.app_container import app_container
 
 
@@ -561,9 +562,10 @@ def dashboard() -> Dict[str, Any]:
 
     opportunity_sections = opportunities_data.get("sections", {}) or {}
     strong_candidate_items = opportunity_sections.get("strong_candidates", []) or []
+    shadow_candidate_items = opportunity_sections.get("shadow_candidates", []) or []
     opportunity_items = opportunity_sections.get("opportunities", []) or []
     observation_items = opportunity_sections.get("observations", []) or []
-    observe_items = strong_candidate_items + opportunity_items + observation_items
+    observe_items = shadow_candidate_items + strong_candidate_items + opportunity_items + observation_items
     if not observe_items:
         # Compatibility with snapshots generated before protocol-stage buckets
         # existed.  Unlike the previous implementation, this fallback is not
@@ -581,6 +583,8 @@ def dashboard() -> Dict[str, Any]:
         "live_matches": live_data.get("items", []),
         "top_signals": signals_data.get("items", []),
         "strong_candidates": strong_candidate_items,
+        "shadow_candidates": shadow_candidate_items,
+        "shadow_mode": bool(getattr(Config, "SHADOW_MODE", True)),
         "opportunities": opportunity_items,
         "observations": observation_items,
         "observe": observe_items,

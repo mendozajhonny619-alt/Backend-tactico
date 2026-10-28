@@ -74,8 +74,11 @@ class ResultResolver:
         )
         entry_home = safe_int(result.get("entry_home_score"), safe_int(result.get("home_score"), 0))
         entry_away = safe_int(result.get("entry_away_score"), safe_int(result.get("away_score"), 0))
-        current_home = safe_int(match.get("home_score") or match.get("local_score"), entry_home)
-        current_away = safe_int(match.get("away_score") or match.get("visitante_score"), entry_away)
+        # 0 is a valid provider value, never treat it as missing.
+        home_raw = match.get("home_score") if match.get("home_score") is not None else match.get("local_score")
+        away_raw = match.get("away_score") if match.get("away_score") is not None else match.get("visitante_score")
+        current_home = safe_int(home_raw, entry_home)
+        current_away = safe_int(away_raw, entry_away)
 
         entry_total = safe_int(result.get("entry_total_goals"), entry_home + entry_away)
         current_total = current_home + current_away
