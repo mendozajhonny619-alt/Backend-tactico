@@ -32,10 +32,27 @@ class DataQualityGuard:
         home_score = safe_int(match.get("home_score"), 0)
         away_score = safe_int(match.get("away_score"), 0)
 
-        total_attacks = safe_int(match.get("total_attacks"), 0)
-        total_dangerous = safe_int(match.get("total_dangerous_attacks"), 0)
-        total_shots = safe_int(match.get("total_shots"), 0)
-        total_shots_on = safe_int(match.get("total_shots_on"), 0)
+        # API-Football normalizes these as `shots`/`dangerous_attacks` and
+        # `shots_on_target`. The previous guard read ONLY older flat aliases,
+        # labelling populated fixtures WEAK_DATA or NO_SHOTS_DATA.
+        def first_present(*names: str) -> Any:
+            for name in names:
+                value = match.get(name)
+                if value is not None and value != "":
+                    return value
+            return None
+
+        total_attacks = safe_int(first_present("total_attacks"), 0)
+        total_dangerous = safe_int(first_present("dangerous_attacks", "total_dangerous_attacks"), 0)
+        total_shots = safe_int(first_present("shots", "total_shots"), 0)
+        total_shots_on = safe_int(first_present("shots_on_target", "total_shots_on"), 0)
+
+        side_rows = [match.get("home_stats"), match.get("away_stats")]
+        known_fields = set()
+        for row in side_rows:
+            if isinstance(row, dict):
+                known_fields.update(row.get("stats_available_fields") or [])
+        dangerous_stat_available = "Dangerous Attacks" in known_fields
 
         if not match_id:
             issues.append("MISSING_MATCH_ID")
@@ -55,7 +72,12 @@ class DataQualityGuard:
         if minute >= 15 and total_shots <= 0:
             warnings.append("NO_SHOTS_DATA")
 
-        if minute >= 25 and total_dangerous <= 0:
+        # Dangerous Attacks is not a standard field in every API-Football
+        # competition. Missing *optional* data must not weaken a fixture that
+        # has independently verified finishing statistics.
+        if minute >= 25 and total_dangerous <= 0 and (
+            dangerous_stat_available or (not known_fields and total_shots <= 0)
+        ):
             warnings.append("NO_DANGEROUS_ATTACKS_DATA")
 
         is_valid = len(issues) == 0

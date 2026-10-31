@@ -3,13 +3,17 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Tuple
 
+from app.v17.ai.scenario_policy_v3 import choose_scenarios
+from app.v17.ai.poisson_market_math import preview_full_time_lines
+
 
 def sf(value: Any, default: float = 0.0) -> float:
     try:
         if value is None or value == "":
             return default
-        return float(value)
-    except Exception:
+        result = float(value)
+        return result if math.isfinite(result) else default
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -32,7 +36,7 @@ class AdvancedProbabilityEngine:
     revisados por MasterDecisionAI.
     """
 
-    VERSION = "JE_POISSON_HAZARD_20.1_RECENCY_CALIBRATED"
+    VERSION = "JE_POISSON_HAZARD_V3_10_EXPERIMENTAL"
 
     def evaluate(
         self,
@@ -46,7 +50,11 @@ class AdvancedProbabilityEngine:
         home = si(match.get("home_score"), 0)
         away = si(match.get("away_score"), 0)
         current_total = home + away
-        remaining_minutes = clamp(96.0 - minute, 1.0, 96.0)
+        # A stopped/completed match has zero remaining exposure. A live
+        # match past 96' must not be forced to have one extra imaginary minute.
+        remaining_minutes = clamp(96.0 - minute, 0.0, 96.0)
+        if str(match.get('status_short') or '').upper() in {'FT', 'AET', 'PEN', 'CANC', 'ABD'}:
+            remaining_minutes = 0.0
 
         raw_xg = match.get("xg") if match.get("xg") is not None else match.get("xG")
         xg = max(0.0, sf(raw_xg))
@@ -115,7 +123,7 @@ class AdvancedProbabilityEngine:
         elif score_diff <= 1 and minute >= 55:
             intensity_multiplier *= 1.08
 
-        remaining_lambda = clamp(rate * remaining_minutes * intensity_multiplier, 0.03, 4.20)
+        remaining_lambda = clamp(rate * remaining_minutes * intensity_multiplier, 0.0, 4.20)
         p_no_more_goal = math.exp(-remaining_lambda)
         p_goal = 1.0 - p_no_more_goal
         p_two_plus = 1.0 - math.exp(-remaining_lambda) * (1.0 + remaining_lambda)
@@ -160,17 +168,49 @@ class AdvancedProbabilityEngine:
             100.0,
         )
 
-        alternatives: List[Dict[str, Any]] = []
-        if instability >= 48:
-            alternatives = scenarios[1:3]
-        elif scenarios[1:2] and scenarios[1]["probability"] >= 18:
-            alternatives = scenarios[1:2]
+        # All FT Over/Under preview lines come from the SAME remaining-goal
+        # distribution.  Never use P(any goal) for an unrelated O/U line.
+        # This preview is not evidence of an offered or profitable market.
+        ft_line_probabilities = preview_full_time_lines(remaining_lambda, current_total)
+        limitations = ["POISSON_HAZARD_EXPERIMENTAL_NOT_CALIBRATED_OUT_OF_SAMPLE",
+                       "FIXED_96_MINUTE_EXPOSURE_ASSUMPTION"]
+        if not xg_available:
+            limitations.append("XG_ESTIMATED_PROXY_NOT_PROVIDER_XG")
+        if sf(pre.get("pre_match_avg_total_goals"), 0.0) <= 0:
+            limitations.append("GENERIC_PREMATCH_AVERAGE_2_45")
+        if recent_rate_per_min is None:
+            limitations.append("NO_VERIFIED_RECENT_HAZARD")
+        if p_goal >= .95 or p_no_more_goal >= .95:
+            limitations.append("EXTREME_RAW_PROBABILITY_REQUIRES_CALIBRATION")
+
+        selection = choose_scenarios(match, scenarios)
+        # A secondary FT result is exceptional and must carry evidence. The
+        # complete distribution remains for model validation and O/U pricing.
+        alternatives = [selection['scenario_secondary']] if selection['scenario_secondary'] else []
 
         return {
             "math_engine_version": self.VERSION,
             "xg_source": xg_source,
             "xg_proxy_used": not xg_available,
             "calibration_status": "NOT_VALIDATED_OUT_OF_SAMPLE",
+            "raw_model_probability_status": "RESEARCH_ONLY_NOT_CALIBRATED",
+            "model_limitations": limitations,
+            "model_time_horizon_assumption": "96_MINUTES_FIXED",
+            "model_input_diagnostics": {
+                "xg_source": xg_source,
+                "live_total_shots": round(shots, 3),
+                "live_shots_on_target": round(sot, 3),
+                "live_xg_cumulative": round(xg, 4) if xg_available else None,
+                "prematch_avg_total_goals_used": round(prematch_avg, 4),
+                "prematch_average_fallback": sf(pre.get("pre_match_avg_total_goals"), 0.0) <= 0,
+                "recent_hazard_available": recent_rate_per_min is not None,
+                "remaining_minutes_model": round(remaining_minutes, 3),
+                "model_intensity_multiplier": round(intensity_multiplier, 5),
+                "model_rate_per_minute": round(rate, 6),
+                "quality_of_snapshot": str(match.get("data_quality") or "UNKNOWN"),
+            },
+            "ft_line_probability_method": "POISSON_CONDITIONAL_HALF_GOAL_FT",
+            "ft_line_probabilities_research_only": ft_line_probabilities,
             "recent_hazard_available": recent_rate_per_min is not None,
             "recent_hazard_rate_per_min": round(recent_rate_per_min, 5) if recent_rate_per_min is not None else None,
             "recent_hazard_threat": round(recent_threat, 2) if recent_threat is not None else None,
@@ -188,6 +228,11 @@ class AdvancedProbabilityEngine:
             "primary_final_score": primary.get("score"),
             "primary_score_probability": round(sf(primary.get("probability")), 2),
             "alternative_scores": alternatives,
+            "scenario_primary": selection['scenario_primary'],
+            "scenario_secondary": selection['scenario_secondary'],
+            "scenario_secondary_reason": selection['scenario_secondary_reason'],
+            "scenario_secondary_status": selection['scenario_secondary_status'],
+            "scenario_policy_version": selection['scenario_policy_version'],
             "score_scenarios": scenarios[:10],
             "score_distribution_full": scenarios,
             "goal_next_5_probability": round(goal_next_5 * 100, 2),
@@ -195,6 +240,8 @@ class AdvancedProbabilityEngine:
             "goal_next_15_probability": round(goal_next_15 * 100, 2),
             "score_change_probability": round(p_goal * 100, 2),
             "score_stability_probability": round(p_no_more_goal * 100, 2),
+            "probability_no_next_goal": round(p_no_more_goal * 100, 2),
+            "prediction_hypothesis": "SCORE_STABILITY" if p_no_more_goal >= p_goal else "MORE_GOALS_POSSIBLE",
             "math_support_over": round(p_goal * 100, 2),
             "math_support_under": round(p_no_more_goal * 100, 2),
             "current_total_goals": current_total,

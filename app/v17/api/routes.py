@@ -5,12 +5,41 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict
 
 from fastapi import APIRouter
+from fastapi.responses import FileResponse
+from pathlib import Path
 
 from app.config.config import Config
 from app.services.app_container import app_container
 
 
 router = APIRouter()
+
+# V3 panel assets live in src/ so this update only modifies app/ and src/.
+# The router is included before main.py's legacy /panel fallback.
+_PANEL_DIR = Path(__file__).resolve().parents[3] / "src" / "panel_v3"
+
+
+@router.get("/panel", include_in_schema=False)
+def panel_v3():
+    return FileResponse(_PANEL_DIR / "index.html", media_type="text/html", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/panel.css", include_in_schema=False)
+@router.get("/panel-v3.css", include_in_schema=False)
+def panel_v3_styles():
+    return FileResponse(_PANEL_DIR / "panel.css", media_type="text/css", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/panel-v3-shinobi.png", include_in_schema=False)
+def panel_v3_shinobi_background():
+    return FileResponse(_PANEL_DIR / "shinobi_portrait.png", media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@router.get("/panel.js", include_in_schema=False)
+@router.get("/panel-v3.js", include_in_schema=False)
+def panel_v3_script():
+    return FileResponse(_PANEL_DIR / "panel.js", media_type="text/javascript", headers={"Cache-Control": "no-store"})
+
 
 # Executor pequeño para proteger las rutas del panel.
 # La idea es que ningún endpoint visual se quede colgado esperando procesos lentos.
@@ -109,6 +138,9 @@ def _timeout_payload(name: str) -> Dict[str, Any]:
             "performance_analysis": {},
             "pending_signals": [],
             "closed_history": [],
+            "shadow_history": [],
+            "shadow_outcomes": [],
+            "shadow_outcome_summary": {},
             "today_results": [],
             "history_groups": {},
             "daily_summary": {},
@@ -222,7 +254,15 @@ def _normalize_signals(payload: Dict[str, Any]) -> Dict[str, Any]:
 def _normalize_opportunities(payload: Dict[str, Any]) -> Dict[str, Any]:
     sections = _safe_dict(payload.get("sections"))
 
+    # The V3 engine emits mutually exclusive promotion stages.  Previously
+    # this normalizer silently kept only the legacy OVER/UNDER/observe aliases,
+    # dropping observations, opportunities and shadow candidates.  The system
+    # counter could therefore say "6 observations" while the panel rendered 0.
     normalized_sections = {
+        "strong_candidates": _safe_list(sections.get("strong_candidates")),
+        "shadow_candidates": _safe_list(sections.get("shadow_candidates")),
+        "opportunities": _safe_list(sections.get("opportunities")),
+        "observations": _safe_list(sections.get("observations")),
         "over_candidates": _safe_list(sections.get("over_candidates")),
         "under_candidates": _safe_list(sections.get("under_candidates")),
         "observe": _safe_list(sections.get("observe")),
@@ -232,12 +272,17 @@ def _normalize_opportunities(payload: Dict[str, Any]) -> Dict[str, Any]:
     items = _safe_list(payload.get("items"))
 
     if not items:
-        items = (
-            normalized_sections["over_candidates"]
-            + normalized_sections["under_candidates"]
-            + normalized_sections["observe"]
-            + normalized_sections["rejected"]
+        # Never concatenate aliases with stage buckets: that duplicates cards
+        # for the same fixture.  Fall back to the legacy combined list only
+        # when no explicit stages were supplied by an older backend.
+        staged = (
+            normalized_sections["shadow_candidates"]
+            + normalized_sections["strong_candidates"]
+            + normalized_sections["opportunities"]
+            + normalized_sections["observations"]
         )
+        items = staged or normalized_sections["observe"]
+        items = items + normalized_sections["rejected"]
 
     return {
         "summary": _safe_dict(payload.get("summary")),
@@ -293,6 +338,9 @@ def _normalize_history(payload: Dict[str, Any]) -> Dict[str, Any]:
         "performance_analysis": _safe_dict(payload.get("performance_analysis")),
         "pending_signals": _safe_list(payload.get("pending_signals")),
         "closed_history": _safe_list(payload.get("closed_history")),
+        "shadow_history": _safe_list(payload.get("shadow_history")),
+        "shadow_outcomes": _safe_list(payload.get("shadow_outcomes")),
+        "shadow_outcome_summary": _safe_dict(payload.get("shadow_outcome_summary")),
         "today_results": _safe_list(payload.get("today_results")),
         "history_groups": _safe_dict(payload.get("history_groups")),
         "daily_summary": _safe_dict(payload.get("daily_summary")),
@@ -390,6 +438,18 @@ def signals() -> Dict[str, Any]:
         "ok": True,
         **_normalize_signals(payload),
     }
+
+
+@router.get("/v17/research-results")
+def shadow_research_results(range: str = "today", family: str = "goals", offset: int = 0, limit: int = 100) -> Dict[str, Any]:
+    """Paginated local Shadow outcomes, not bookmaker signals or API calls."""
+    from fastapi import HTTPException
+    try:
+        return _get_dashboard_service().get_shadow_results(
+            range_key=range, family=family, offset=offset, limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/v17/history")
@@ -575,7 +635,8 @@ def dashboard() -> Dict[str, Any]:
 
     return {
         "ok": True,
-        "version": "JHONNY_ELITE_20.0",
+        "version": "JHONNY_ELITE_20.0",  # legacy API contract
+        "platform_version": "JHONNY_ELITE_V3.6",
         "updated_at": updated_at,
         "frontend_safe": True,
         "fallback": any_fallback,
@@ -592,6 +653,9 @@ def dashboard() -> Dict[str, Any]:
         "blocked": blocked_data.get("items", []),
         "pending_signals": history_data.get("pending_signals", []),
         "closed_history": history_data.get("closed_history", []),
+        "shadow_history": history_data.get("shadow_history", []),
+        "shadow_outcomes": history_data.get("shadow_outcomes", []),
+        "shadow_outcome_summary": history_data.get("shadow_outcome_summary", {}),
         "today_results": history_data.get("today_results", []),
         "history_groups": history_data.get("history_groups", {}),
         "daily_summary": history_data.get("daily_summary", {}),

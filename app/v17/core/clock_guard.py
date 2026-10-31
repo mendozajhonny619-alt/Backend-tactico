@@ -33,12 +33,22 @@ def parse_datetime(value: Any) -> Optional[datetime]:
 
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (ValueError, OverflowError, OSError):
+            return None
     try:
         text = str(value).strip()
         if not text:
             return None
 
+        # Some providers serialize Unix epochs as strings.
+        if text.replace(".", "", 1).isdigit() and len(text.split(".")[0]) >= 10:
+            try:
+                return datetime.fromtimestamp(float(text), tz=timezone.utc)
+            except (ValueError, OverflowError, OSError):
+                return None
         text = text.replace("Z", "+00:00")
         parsed = datetime.fromisoformat(text)
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
@@ -75,17 +85,32 @@ class ClockGuard:
 
         same_minute_count = safe_int(match.get("same_minute_count"), 0)
 
+        # Source timestamp wins. HTTP receipt/fetched_at is a FALLBACK, not
+        # proof that cached *statistics* themselves are fresh.
         updated_at = (
-            match.get("updated_at")
+            match.get("source_timestamp")
+            or match.get("stats_source_timestamp")
+            or match.get("updated_at")
             or match.get("_snapshot_at")
             or match.get("timestamp")
             or match.get("last_update")
             or match.get("sync_updated_at")
+            or match.get("fetched_at")
             or match.get("created_at")
         )
+        timestamp_basis = ("SOURCE" if match.get("source_timestamp") or match.get("stats_source_timestamp")
+                           else "RECEIVED_OR_SNAPSHOT" if updated_at is not None else "UNKNOWN")
 
         timestamp_missing = updated_at is None or parse_datetime(updated_at) is None
         data_age_seconds = self._calculate_age_seconds(updated_at)
+        stats_age = match.get("stats_age_seconds")
+        try:
+            if stats_age is not None:
+                data_age_seconds = max(data_age_seconds if not timestamp_missing else 0, int(float(stats_age)))
+                if timestamp_missing:
+                    timestamp_basis = "STATS_CACHE_ONLY"
+        except (TypeError, ValueError):
+            pass
 
         if data_age_seconds >= 9999:
             fallback_age = match.get("data_age_seconds")
@@ -201,6 +226,9 @@ class ClockGuard:
             "display_minute": match.get("display_minute") or api_minute,
             "estimated_minute": estimated_minute,
             "data_age_seconds": data_age_seconds,
+            "data_age_known": not timestamp_missing,
+            "data_timestamp_basis": timestamp_basis,
+            "data_timestamp": parse_datetime(updated_at).isoformat() if parse_datetime(updated_at) else None,
             "same_minute_count": same_minute_count,
             "timestamp_missing": timestamp_missing,
             "stats_confirmed": stats_confirmed,
