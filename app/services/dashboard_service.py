@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict
+from app.jhonny_elite.master_protocol import ShadowModeRecorder
 
 
 def now_iso() -> str:
@@ -15,11 +16,12 @@ class DashboardService:
     immutable-ish snapshot so the panel remains fast on desktop and mobile.
     """
 
-    VERSION = "JHONNY_ELITE_20.0"
+    VERSION = "JHONNY_ELITE_V3.6_COMPAT20"
 
     def __init__(self, runtime_state, dashboard_adapter) -> None:
         self.runtime_state = runtime_state
         self.dashboard_adapter = dashboard_adapter
+        self.shadow_journal = ShadowModeRecorder()
 
     def _dashboard(self) -> Dict[str, Any]:
         data = self.dashboard_adapter.last_dashboard()
@@ -107,12 +109,20 @@ class DashboardService:
             "performance_analysis": data.get("performance_analysis", {}),
             "pending_signals": pending,
             "closed_history": closed,
+            "shadow_history": self.shadow_journal.recent(limit=60),
+            "shadow_outcomes": data.get("shadow_outcomes", []),
+            "shadow_outcome_summary": data.get("shadow_outcome_summary", {}),
             "today_results": data.get("today_results", []),
             "history_groups": data.get("history_groups", {}),
             "daily_summary": data.get("daily_summary", {}),
             "learning": data.get("learning", {}),
             "updated_at": now_iso(),
         }
+
+    def get_shadow_results(self, *, range_key="today", family="goals", offset=0, limit=100) -> Dict[str, Any]:
+        return self.dashboard_adapter.shadow_outcomes.query(
+            range_key=range_key, family=family, offset=offset, limit=limit,
+        )
 
     def get_match_detail(self, fixture_id: Any, signal_key: Any = None) -> Dict[str, Any]:
         return self.dashboard_adapter.get_match_detail(fixture_id=fixture_id, signal_key=signal_key)

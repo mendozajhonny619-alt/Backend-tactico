@@ -219,11 +219,15 @@ class Config:
     VALUE_REQUIRED_FOR_PREMIUM = os.getenv("VALUE_REQUIRED_FOR_PREMIUM", "true").lower() == "true"
     MAX_PREMATCH_ENRICHMENTS_PER_CYCLE = max(1, int(os.getenv("MAX_PREMATCH_ENRICHMENTS_PER_CYCLE", 1)))
     MAX_PUBLISHED_SIGNALS_PER_CYCLE = max(1, min(6, int(os.getenv("MAX_PUBLISHED_SIGNALS_PER_CYCLE", 6))))
-    ODDS_CACHE_TTL_SECONDS = max(60, int(os.getenv("ODDS_CACHE_TTL_SECONDS", 180)))
+    ODDS_CACHE_TTL_SECONDS = max(15, int(os.getenv("ODDS_CACHE_TTL_SECONDS", 45)))
+    ODDS_PREMATCH_FALLBACK_ENABLED = os.getenv("ODDS_PREMATCH_FALLBACK_ENABLED", "false").lower() == "true"
+    ODDS_LIVE_BET_CATALOG_ENABLED = os.getenv("ODDS_LIVE_BET_CATALOG_ENABLED", "true").lower() == "true"
+    ODDS_HISTORY_ENABLED = os.getenv("ODDS_HISTORY_ENABLED", "true").lower() == "true"
+    ODDS_ALLOW_ATTACHED_QUOTE = os.getenv("ODDS_ALLOW_ATTACHED_QUOTE", "false").lower() == "true"
     ODDS_MIN_CANDIDATE_SCORE = float(os.getenv("ODDS_MIN_CANDIDATE_SCORE", 76.0))
     UNDER_ODDS_PREFETCH_MIN_SCORE = float(os.getenv("UNDER_ODDS_PREFETCH_MIN_SCORE", 66.0))
     ODDS_REQUIRE_REAL_MARKET = os.getenv("ODDS_REQUIRE_REAL_MARKET", "true").lower() == "true"
-    THE_ODDS_FALLBACK_ENABLED = os.getenv("THE_ODDS_FALLBACK_ENABLED", "true").lower() == "true"
+    THE_ODDS_FALLBACK_ENABLED = os.getenv("THE_ODDS_FALLBACK_ENABLED", "false").lower() == "true"
     THE_ODDS_REGION = os.getenv("THE_ODDS_REGION", "eu").strip() or "eu"
     THE_ODDS_CACHE_TTL_SECONDS = max(120, int(os.getenv("THE_ODDS_CACHE_TTL_SECONDS", 300)))
     PREMATCH_ECONOMY_MODE = os.getenv("PREMATCH_ECONOMY_MODE", "true").lower() == "true"

@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import time
@@ -1038,8 +1039,15 @@ class LiveMatchFetcher:
                     should_fetch=should_fetch_players,
                 )
 
-                home_stats = self._extract_team_stats_api_football(statistics, 0)
-                away_stats = self._extract_team_stats_api_football(statistics, 1)
+                # /fixtures/statistics normally returns HOME then AWAY, but
+                # index order is not a reliable team identifier. A reordered
+                # or partial provider response must not attribute the away
+                # side's goals/shots to the home team (or vice versa).
+                aligned_statistics, team_mapping_status = self._align_team_statistics(
+                    statistics, home_team.get("id"), away_team.get("id")
+                )
+                home_stats = self._extract_team_stats_api_football(aligned_statistics, 0)
+                away_stats = self._extract_team_stats_api_football(aligned_statistics, 1)
 
                 totals = self._build_totals(home_stats, away_stats)
                 data_quality = self._classify_data_quality(home_stats, away_stats, totals)
@@ -1079,6 +1087,31 @@ class LiveMatchFetcher:
                 now_ts = time.time()
                 now_iso = datetime.now().isoformat(timespec="seconds")
                 score_text = f"{home_score}-{away_score}"
+
+                # Compact audit of WHAT THIS SNAPSHOT actually contains.
+                # This is metadata only: no credentials, raw HTTP payloads,
+                # new provider calls, or persistent history in the live loop.
+                statistics_audit = {
+                    "version": "API_FIELD_COVERAGE_V3_8",
+                    "team_mapping": team_mapping_status,
+                    "statistics_source": (
+                        "EMBEDDED" if embedded_statistics else
+                        "ENDPOINT_OR_CACHE" if statistics else "NOT_RECEIVED"
+                    ),
+                    "home_published_fields": list(home_stats.get("stats_available_fields") or []),
+                    "away_published_fields": list(away_stats.get("stats_available_fields") or []),
+                    "home_missing_fields": list(home_stats.get("stats_missing_fields") or []),
+                    "away_missing_fields": list(away_stats.get("stats_missing_fields") or []),
+                    "home_unmapped_provider_fields": list(home_stats.get("stats_unmapped_fields") or []),
+                    "away_unmapped_provider_fields": list(away_stats.get("stats_unmapped_fields") or []),
+                    "home_provider_types": list(home_stats.get("stats_provider_fields") or []),
+                    "away_provider_types": list(away_stats.get("stats_provider_fields") or []),
+                    "home_field_origin": dict(home_stats.get("stats_field_origin") or {}),
+                    "away_field_origin": dict(away_stats.get("stats_field_origin") or {}),
+                    "stats_age_seconds": source_metadata.get("stats_age_seconds"),
+                    "stats_completeness_score": source_metadata.get("stats_completeness_score"),
+                    "has_live_stats": has_live_stats,
+                }
 
                 clock_fields = self._build_live_clock_fields(
                     fixture_id=fixture_id,
@@ -1189,6 +1222,9 @@ class LiveMatchFetcher:
                         **away_stats,
                         "xg": away_stats["xG"],
                     },
+
+                    "statistics_audit": statistics_audit,
+                    "statistics_team_mapping_status": team_mapping_status,
 
                     "events": events,
                     "event_count": len(events),
@@ -1658,142 +1694,173 @@ class LiveMatchFetcher:
     def _should_fetch_player_stats(self, minute: int) -> bool:
         return minute >= 15 and minute <= 90
 
-    def _extract_team_stats_api_football(self, statistics: List[Dict[str, Any]], team_index: int) -> Dict[str, Any]:
-        """
-        Extrae y normaliza estadísticas reales de API-Football.
+    # Canonical provider names are part of the contract with both 23-criteria
+    # scanners. API variants must be normalized BEFORE presence/absence is
+    # decided; e.g. "Shots on Target" is not a missing "Shots on Goal".
+    STAT_FIELD_ALIASES = {
+        "Ball Possession": ("Ball Possession", "Possession"),
+        "Total Shots": ("Total Shots", "Shots Total"),
+        "Shots on Goal": ("Shots on Goal", "Shots on Target"),
+        "Shots off Goal": ("Shots off Goal", "Shots off Target"),
+        "Blocked Shots": ("Blocked Shots", "Shots Blocked"),
+        "Shots insidebox": ("Shots insidebox", "Shots inside box"),
+        "Shots outsidebox": ("Shots outsidebox", "Shots outside box"),
+        "Corner Kicks": ("Corner Kicks", "Corners"),
+        "Dangerous Attacks": ("Dangerous Attacks",),
+        "Fouls": ("Fouls",),
+        "Offsides": ("Offsides",),
+        "Yellow Cards": ("Yellow Cards",),
+        "Red Cards": ("Red Cards",),
+        "Goalkeeper Saves": ("Goalkeeper Saves", "Goals Saves", "goals.saves"),
+        "Total passes": ("Total passes", "Total Passes"),
+        "Passes accurate": ("Passes accurate", "Accurate Passes"),
+        "Passes %": ("Passes %", "Pass Accuracy", "Pass Accuracy %"),
+        "expected_goals": ("expected_goals", "Expected Goals", "xG"),
+        "goals_prevented": ("goals_prevented", "Goals Prevented"),
+    }
 
-        Mejora V17:
-        - Aprovecha más campos de /fixtures/statistics.
-        - Diferencia dato faltante de dato real en cero mediante flags *_available.
-        - Mantiene compatibilidad con los nombres antiguos usados por V17.
+    @staticmethod
+    def _align_team_statistics(
+        statistics: List[Dict[str, Any]], home_id: Any, away_id: Any
+    ) -> tuple[List[Dict[str, Any]], str]:
+        """Only trust team order when provider IDs are absent for BOTH sides.
+
+        When the provider supplies IDs, use them, not array position. If only
+        one team matches, return a blank row for the other; two unrelated IDs
+        are a data conflict, never an opportunity to swap/guess statistics.
         """
+        rows = [x for x in (statistics or []) if isinstance(x, dict)]
+        if not rows:
+            return [], "NOT_RECEIVED"
+
+        def row_id(row: Dict[str, Any]) -> Any:
+            team = row.get("team")
+            return team.get("id") if isinstance(team, dict) else None
+
+        home_key, away_key = str(home_id or ""), str(away_id or "")
+        if not home_key or not away_key or home_key == away_key:
+            return rows, "UNVERIFIED_FIXTURE_TEAM_IDS"
+        identified = [x for x in rows if row_id(x) is not None]
+        if not identified:
+            return rows, "UNVERIFIED_POSITIONAL"
+        by_id = {}
+        for row in identified:
+            identifier = str(row_id(row))
+            by_id.setdefault(identifier, row)
+        home_row, away_row = by_id.get(home_key), by_id.get(away_key)
+        if home_row is not None and away_row is not None:
+            return [home_row, away_row], "VERIFIED_TEAM_IDS"
+        if home_row is not None or away_row is not None:
+            return [home_row or {}, away_row or {}], "PARTIAL_TEAM_IDS"
+        return [], "TEAM_ID_MISMATCH"
+
+    def _extract_team_stats_api_football(self, statistics: List[Dict[str, Any]], team_index: int) -> Dict[str, Any]:
+        """Normalize real values and preserve exact field provenance.
+
+        A missing (or malformed) provider value is NOT an observed zero. For
+        backward compatibility the numeric projections retain old defaults,
+        but every downstream evidence consumer must check published-field
+        flags. Unrecognized provider fields remain visible in the compact
+        metadata audit instead of silently disappearing.
+        """
+        canonical_names = LiveMatchFetcher.STAT_FIELD_ALIASES
         default_stats = {
-            "possession": 50.0,
-            "shots": 0.0,
-            "shots_on_target": 0.0,
-            "shots_off_goal": 0.0,
-            "blocked_shots": 0.0,
-            "shots_inside_box": 0.0,
-            "shots_outside_box": 0.0,
-            "corners": 0.0,
-            "dangerous_attacks": 0.0,
-            "fouls": 0.0,
-            "offsides": 0.0,
-            "yellow_cards": 0.0,
-            "red_cards": 0.0,
-            "goalkeeper_saves": 0.0,
-            "total_passes": 0.0,
-            "passes_accurate": 0.0,
-            "pass_accuracy": 0.0,
-            "goals_prevented": 0.0,
-            "xG": 0.0,
-            "xg_available": False,
+            "possession": 50.0, "shots": 0.0, "shots_on_target": 0.0,
+            "shots_off_goal": 0.0, "blocked_shots": 0.0,
+            "shots_inside_box": 0.0, "shots_outside_box": 0.0,
+            "corners": 0.0, "dangerous_attacks": 0.0,
+            "fouls": 0.0, "offsides": 0.0, "yellow_cards": 0.0,
+            "red_cards": 0.0, "goalkeeper_saves": 0.0,
+            "total_passes": 0.0, "passes_accurate": 0.0,
+            "pass_accuracy": 0.0, "goals_prevented": 0.0,
+            "xG": 0.0, "xg_available": False,
             "goals_prevented_available": False,
             "stats_available_fields": [],
-            "stats_missing_fields": [],
+            "stats_missing_fields": list(canonical_names),
+            "stats_provider_fields": [],
+            "stats_unmapped_fields": [],
+            "stats_field_origin": {},
         }
-        if not statistics or len(statistics) <= team_index:
+        if not isinstance(statistics, list) or len(statistics) <= team_index:
             return default_stats
-        try:
-            team_data = statistics[team_index]
-            stats_list = team_data.get("statistics", []) or []
-            stats_map = {
-                str(s.get("type") or "").strip().lower(): s.get("value")
-                for s in stats_list
-                if s.get("type")
-            }
+        team_data = statistics[team_index]
+        if not isinstance(team_data, dict):
+            return default_stats
+        stats_list = team_data.get("statistics") or []
+        if not isinstance(stats_list, list):
+            return default_stats
 
-            def has_value(*names: str) -> bool:
-                for name in names:
-                    key = str(name).strip().lower()
-                    if key in stats_map and stats_map.get(key) is not None:
-                        return True
-                return False
+        raw_values: Dict[str, tuple[str, Any]] = {}
+        published_types: List[str] = []
+        for item in stats_list:
+            if not isinstance(item, dict):
+                continue
+            original_type = str(item.get("type") or "").strip()
+            if not original_type:
+                continue
+            raw_values[original_type.casefold()] = (original_type, item.get("value"))
+            if original_type not in published_types:
+                published_types.append(original_type)
 
-            def first_value(*names: str) -> Any:
-                for name in names:
-                    key = str(name).strip().lower()
-                    if key in stats_map:
-                        return stats_map.get(key)
+        def parsed(value: Any, *, percent: bool = False) -> float | None:
+            if value is None or isinstance(value, bool) or str(value).strip() == "":
                 return None
+            try:
+                number = float(str(value).replace("%", "").strip())
+            except (ValueError, TypeError, OverflowError):
+                return None
+            if not math.isfinite(number) or number < 0:
+                return None
+            if percent and number > 100:
+                return None
+            return number
 
-            def parse_pct(v: Any, default: float = 50.0) -> float:
-                if v is None or v == "":
-                    return default
-                try:
-                    return float(str(v).replace("%", "").strip())
-                except Exception:
-                    return default
+        valid: Dict[str, float] = {}
+        origins: Dict[str, str] = {}
+        known_types: set[str] = set()
+        for canonical, aliases in canonical_names.items():
+            for name in aliases:
+                known_types.add(name.casefold())
+                if name.casefold() not in raw_values:
+                    continue
+                actual_name, raw = raw_values[name.casefold()]
+                number = parsed(raw, percent=(canonical in {"Ball Possession", "Passes %"}))
+                if number is None:
+                    continue
+                valid[canonical] = number
+                origins[canonical] = actual_name
+                break
 
-            def parse_flt(v: Any, default: float = 0.0) -> float:
-                if v is None or v == "":
-                    return default
-                try:
-                    return float(str(v).replace("%", "").strip())
-                except Exception:
-                    return default
-
-            possession = parse_pct(first_value("Ball Possession", "Possession"))
-            shots = parse_flt(first_value("Total Shots", "Shots Total", "Total shots"))
-            sot = parse_flt(first_value("Shots on Goal", "Shots on Target", "Shots on target"))
-            shots_off = parse_flt(first_value("Shots off Goal", "Shots off Target", "Shots off target"))
-            blocked = parse_flt(first_value("Blocked Shots", "Shots Blocked"))
-            inside_box = parse_flt(first_value("Shots insidebox", "Shots inside box"))
-            outside_box = parse_flt(first_value("Shots outsidebox", "Shots outside box"))
-            corners = parse_flt(first_value("Corner Kicks", "Corners"))
-            da = parse_flt(first_value("Dangerous Attacks", "dangerous attacks"))
-            fouls = parse_flt(first_value("Fouls"))
-            offsides = parse_flt(first_value("Offsides"))
-            yellow_cards = parse_flt(first_value("Yellow Cards", "Yellow cards"))
-            red_cards = parse_flt(first_value("Red Cards", "Red cards"))
-            saves = parse_flt(first_value("Goalkeeper Saves", "Goals Saves", "goals.saves"))
-            total_passes = parse_flt(first_value("Total passes", "Total Passes"))
-            passes_accurate = parse_flt(first_value("Passes accurate", "Accurate Passes"))
-            pass_accuracy = parse_pct(first_value("Passes %", "Pass Accuracy", "Pass Accuracy %"), default=0.0)
-            xg_raw = first_value("expected_goals", "Expected Goals", "xG")
-            xg_available = xg_raw is not None and xg_raw != ""
-            xg = parse_flt(xg_raw)
-            goals_prevented_raw = first_value("goals_prevented", "Goals Prevented")
-            goals_prevented_available = goals_prevented_raw is not None and goals_prevented_raw != ""
-            goals_prevented = parse_flt(goals_prevented_raw)
-
-            expected_fields = [
-                "Ball Possession", "Total Shots", "Shots on Goal", "Shots off Goal",
-                "Blocked Shots", "Shots insidebox", "Shots outsidebox", "Corner Kicks",
-                "Fouls", "Offsides", "Yellow Cards", "Red Cards", "Goalkeeper Saves",
-                "Total passes", "Passes accurate", "Passes %", "expected_goals", "goals_prevented",
-            ]
-            available_fields = [field for field in expected_fields if has_value(field)]
-            missing_fields = [field for field in expected_fields if not has_value(field)]
-
-            return {
-                "possession": possession,
-                "shots": shots,
-                "shots_on_target": sot,
-                "shots_off_goal": shots_off,
-                "blocked_shots": blocked,
-                "shots_inside_box": inside_box,
-                "shots_outside_box": outside_box,
-                "corners": corners,
-                "dangerous_attacks": da,
-                "fouls": fouls,
-                "offsides": offsides,
-                "yellow_cards": yellow_cards,
-                "red_cards": red_cards,
-                "goalkeeper_saves": saves,
-                "total_passes": total_passes,
-                "passes_accurate": passes_accurate,
-                "pass_accuracy": pass_accuracy,
-                "goals_prevented": goals_prevented,
-                "xG": xg,
-                "xg_available": xg_available,
-                "goals_prevented_available": goals_prevented_available,
-                "stats_available_fields": available_fields,
-                "stats_missing_fields": missing_fields,
-            }
-        except Exception as exc:
-            logger.warning("Error parseando estadísticas de equipo API-Football: %s", exc)
-            return default_stats
+        projection = {
+            "possession": "Ball Possession", "shots": "Total Shots",
+            "shots_on_target": "Shots on Goal",
+            "shots_off_goal": "Shots off Goal", "blocked_shots": "Blocked Shots",
+            "shots_inside_box": "Shots insidebox",
+            "shots_outside_box": "Shots outsidebox",
+            "corners": "Corner Kicks", "dangerous_attacks": "Dangerous Attacks",
+            "fouls": "Fouls", "offsides": "Offsides",
+            "yellow_cards": "Yellow Cards", "red_cards": "Red Cards",
+            "goalkeeper_saves": "Goalkeeper Saves",
+            "total_passes": "Total passes", "passes_accurate": "Passes accurate",
+            "pass_accuracy": "Passes %", "xG": "expected_goals",
+            "goals_prevented": "goals_prevented",
+        }
+        result = dict(default_stats)
+        for field, canonical in projection.items():
+            if canonical in valid:
+                result[field] = valid[canonical]
+        result.update({
+            "xg_available": "expected_goals" in valid,
+            "goals_prevented_available": "goals_prevented" in valid,
+            "stats_available_fields": [name for name in canonical_names if name in valid],
+            "stats_missing_fields": [name for name in canonical_names if name not in valid],
+            "stats_provider_fields": published_types[:40],
+            "stats_unmapped_fields": [
+                name for name in published_types if name.casefold() not in known_types
+            ][:40],
+            "stats_field_origin": origins,
+        })
+        return result
 
     def _build_totals(self, home_stats: Dict[str, Any], away_stats: Dict[str, Any]) -> Dict[str, Any]:
         return {
@@ -1818,12 +1885,22 @@ class LiveMatchFetcher:
             "goals_prevented_available": bool(home_stats.get("goals_prevented_available") or away_stats.get("goals_prevented_available")),
             "available_stat_fields_count": len(set((home_stats.get("stats_available_fields") or []) + (away_stats.get("stats_available_fields") or []))),
             "missing_stat_fields_count": len(set((home_stats.get("stats_missing_fields") or []) + (away_stats.get("stats_missing_fields") or []))),
+            "both_available_fields_count": len(
+                set(home_stats.get("stats_available_fields") or [])
+                & set(away_stats.get("stats_available_fields") or [])
+            ),
         }
 
     def _classify_data_quality(self, home_stats: Dict[str, Any], away_stats: Dict[str, Any], totals: Dict[str, Any]) -> str:
-        available_count = totals.get("available_stat_fields_count", 0)
-        has_core_stats = totals.get("shots", 0) > 0 or totals.get("corners", 0) > 0 or totals.get("total_passes", 0) > 0
-        has_threat_stats = totals.get("shots_on_target", 0) > 0 or totals.get("shots_inside_box", 0) > 0 or totals.get("blocked_shots", 0) > 0
+        # One team's published fields must not confer HIGH coverage on the
+        # other. Ratings for comparative analysis need bilateral evidence.
+        shared_fields = (
+            set(home_stats.get("stats_available_fields") or [])
+            & set(away_stats.get("stats_available_fields") or [])
+        )
+        available_count = len(shared_fields)
+        has_core_stats = bool(shared_fields.intersection({"Total Shots", "Corner Kicks", "Total passes"}))
+        has_threat_stats = bool(shared_fields.intersection({"Shots on Goal", "Shots insidebox", "Blocked Shots"}))
         has_extended_stats = available_count >= 8
 
         if has_extended_stats and has_core_stats and has_threat_stats:
@@ -1832,7 +1909,7 @@ class LiveMatchFetcher:
             return "MEDIUM_HIGH"
         if has_core_stats:
             return "MEDIUM"
-        if available_count > 0:
+        if totals.get("available_stat_fields_count", 0) > 0:
             return "LOW_DATA_AVAILABLE"
         return "LOW_FIXTURE_ONLY"
 
@@ -1957,13 +2034,16 @@ class LiveMatchFetcher:
             "goals_prevented",
         }
 
-        available_fields = set(home_stats.get("stats_available_fields") or [])
-        available_fields.update(away_stats.get("stats_available_fields") or [])
-
         if not expected_fields:
             return 0.0
-
-        return round(min(1.0, len(available_fields) / len(expected_fields)), 3)
+        # Average per-side completeness rather than union. A fixture with 18
+        # fields for HOME and none for AWAY is only 50% covered, not 100%.
+        scores = [
+            len(set(side.get("stats_available_fields") or []).intersection(expected_fields))
+            / len(expected_fields)
+            for side in (home_stats, away_stats)
+        ]
+        return round(sum(scores) / len(scores), 3)
 
     def _build_data_source_metadata(
         self,
@@ -1996,6 +2076,8 @@ class LiveMatchFetcher:
             data_source_quality = "STALE_CACHE"
         elif data_quality in {"HIGH", "MEDIUM_HIGH"} and has_live_stats:
             data_source_quality = "HIGH"
+        elif data_quality == "LOW_DATA_AVAILABLE":
+            data_source_quality = "LOW_PARTIAL"
         elif has_live_stats:
             data_source_quality = "MEDIUM"
         else:

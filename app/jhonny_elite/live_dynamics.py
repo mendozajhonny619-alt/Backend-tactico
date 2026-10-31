@@ -5,6 +5,8 @@ from copy import deepcopy
 import time
 from typing import Any, Deque, Dict
 
+from app.config.config import Config
+
 
 def sf(value: Any, default: float = 0.0) -> float:
     try:
@@ -51,6 +53,18 @@ class LiveDynamicsMemory:
         if not fixture_id:
             return self._with_empty_dynamics(item)
 
+        # A fixture-only feed or a stale cached statistical snapshot cannot
+        # be interpreted as evidence of a closing/quiet match. Starting again
+        # with a fresh baseline is safer than comparing it to stale counters.
+        stats_age = item.get("stats_age_seconds")
+        if (item.get("has_live_stats") is False
+                or item.get("clock_stale") or item.get("clock_frozen")
+                or str(item.get("data_truth_status") or "").upper() in {"CONFLICTED", "STALE"}
+                or (stats_age is not None and sf(stats_age, 0.0) > sf(
+                    getattr(Config, "MAX_LIVE_DATA_AGE_SECONDS", 150), 150))):
+            self._history.pop(fixture_id, None)
+            return self._with_empty_dynamics(item)
+
         now = sf(item.get("fetched_at") or item.get("sync_updated_at"), time.time())
         if now <= 0:
             now = time.time()
@@ -59,6 +73,20 @@ class LiveDynamicsMemory:
         history = self._history.setdefault(fixture_id, deque(maxlen=self.max_snapshots))
         current = self._snapshot(item, now)
         previous = history[-1] if history else None
+
+        if previous and (
+            current["at"] <= previous["at"]
+            or current["minute"] < previous["minute"]
+            or current["home_score"] < previous["home_score"]
+            or current["away_score"] < previous["away_score"]
+            or any(
+                previous.get(key) is not None and current.get(key) is not None
+                and current[key] + 0.005 < previous[key]
+                for key in ("shots", "sot", "dangerous", "corners", "xg")
+            )
+        ):
+            history.clear()
+            previous = None
 
         dynamics = self._calculate(previous, current, item)
         current["recent_threat_score"] = dynamics["recent_threat_score"]
@@ -74,10 +102,18 @@ class LiveDynamicsMemory:
         if previous is None:
             return self._empty_dynamics()
 
+        if not any(
+            current.get(key) is not None and previous.get(key) is not None
+            for key in ("shots", "sot", "xg")
+        ):
+            return self._empty_dynamics()
+
         elapsed_seconds = max(1.0, current["at"] - previous["at"])
         elapsed_minutes = max(0.25, elapsed_seconds / 60.0)
 
         def delta(key: str) -> float:
+            if current.get(key) is None or previous.get(key) is None:
+                return 0.0
             return max(0.0, sf(current.get(key)) - sf(previous.get(key)))
 
         d_shots = delta("shots")
@@ -136,10 +172,13 @@ class LiveDynamicsMemory:
             recent_threat * 0.60
             + (25.0 if score_changed else 0.0)
             + min(18.0, total_goal_delta * 12.0)
-            + min(12.0, abs(home_threat - away_threat) * 0.12),
+            + (min(12.0, abs(home_threat - away_threat) * 0.12)
+               if home_threat is not None and away_threat is not None else 0.0),
         )
 
-        if home_threat > away_threat + 10:
+        if home_threat is None or away_threat is None:
+            dominant = "UNKNOWN"
+        elif home_threat > away_threat + 10:
             dominant = "HOME"
         elif away_threat > home_threat + 10:
             dominant = "AWAY"
@@ -156,8 +195,8 @@ class LiveDynamicsMemory:
             "delta_corners": round(d_corners, 2),
             "delta_xg": round(d_xg, 3),
             "recent_threat_score": round(recent_threat, 2),
-            "recent_home_threat_score": round(home_threat, 2),
-            "recent_away_threat_score": round(away_threat, 2),
+            "recent_home_threat_score": round(home_threat, 2) if home_threat is not None else None,
+            "recent_away_threat_score": round(away_threat, 2) if away_threat is not None else None,
             "recent_dominant_team": dominant,
             "dynamic_trend": trend,
             "dynamic_match_state": dynamic_state,
@@ -170,33 +209,71 @@ class LiveDynamicsMemory:
     def _snapshot(self, match: Dict[str, Any], at: float) -> Dict[str, Any]:
         hs = match.get("home_stats") if isinstance(match.get("home_stats"), dict) else {}
         aw = match.get("away_stats") if isinstance(match.get("away_stats"), dict) else {}
+        home = self._side_snapshot(hs)
+        away = self._side_snapshot(aw)
+        explicit_flags = "stats_available_fields" in hs or "stats_available_fields" in aw
+
+        def total(side_key: str, *flat_names: str) -> float | None:
+            if explicit_flags:
+                h, a = home.get(side_key), away.get(side_key)
+                return h + a if h is not None and a is not None else None
+            if match.get("has_live_stats") is False:
+                return None
+            for field in flat_names:
+                if match.get(field) is not None and match.get(field) != "":
+                    return sf(match[field])
+            return None
+
         return {
             "at": at,
             "minute": si(match.get("effective_minute") or match.get("api_minute") or match.get("minute"), 0),
             "home_score": si(match.get("home_score"), 0),
             "away_score": si(match.get("away_score"), 0),
-            "shots": sf(match.get("shots") or match.get("total_shots")),
-            "sot": sf(match.get("shots_on_target") or match.get("total_shots_on")),
-            "dangerous": sf(match.get("dangerous_attacks") or match.get("total_dangerous_attacks")),
-            "corners": sf(match.get("corners") or match.get("total_corners")),
-            "xg": sf(match.get("xg") or match.get("xG") or match.get("total_xg")),
-            "home": self._side_snapshot(hs),
-            "away": self._side_snapshot(aw),
+            "shots": total("shots", "shots", "total_shots"),
+            "sot": total("sot", "shots_on_target", "total_shots_on"),
+            "dangerous": total("dangerous", "dangerous_attacks", "total_dangerous_attacks"),
+            "corners": total("corners", "corners", "total_corners"),
+            "xg": total("xg", "xg", "xG", "total_xg"),
+            "home": home,
+            "away": away,
         }
 
     @staticmethod
-    def _side_snapshot(stats: Dict[str, Any]) -> Dict[str, float]:
-        return {
-            "shots": sf(stats.get("shots")),
-            "sot": sf(stats.get("shots_on_target")),
-            "dangerous": sf(stats.get("dangerous_attacks")),
-            "corners": sf(stats.get("corners")),
-            "xg": sf(stats.get("xG") or stats.get("xg")),
+    def _side_snapshot(stats: Dict[str, Any]) -> Dict[str, float | None]:
+        available = stats.get("stats_available_fields")
+        provider_flags = set(available) if isinstance(available, (list, tuple, set)) else None
+        mapping = {
+            "shots": ("Total Shots", ("shots",)),
+            "sot": ("Shots on Goal", ("shots_on_target",)),
+            "dangerous": ("Dangerous Attacks", ("dangerous_attacks",)),
+            "corners": ("Corner Kicks", ("corners",)),
+            "xg": ("expected_goals", ("xG", "xg")),
         }
+        result: Dict[str, float | None] = {}
+        for key, (provider_field, keys) in mapping.items():
+            if provider_flags is not None and provider_field not in provider_flags and not (
+                key == "xg" and stats.get("xg_available") is True
+            ):
+                result[key] = None
+                continue
+            result[key] = None
+            for field in keys:
+                if stats.get(field) is not None and stats.get(field) != "":
+                    result[key] = sf(stats[field])
+                    break
+        return result
 
     @staticmethod
-    def _side_delta_threat(current: Dict[str, Any], previous: Dict[str, Any], elapsed_minutes: float) -> float:
+    def _side_delta_threat(current: Dict[str, Any], previous: Dict[str, Any], elapsed_minutes: float) -> float | None:
+        if not any(
+            current.get(key) is not None and previous.get(key) is not None
+            for key in ("shots", "sot", "xg")
+        ):
+            return None
+
         def d(key: str) -> float:
+            if current.get(key) is None or previous.get(key) is None:
+                return 0.0
             return max(0.0, sf(current.get(key)) - sf(previous.get(key)))
 
         raw = d("sot") * 25.0 + d("shots") * 6.0 + d("dangerous") * 1.2 + d("corners") * 8.0 + d("xg") * 40.0

@@ -20,6 +20,7 @@ from app.v17.ai.pre_match_profile_ai import PreMatchProfileAI
 from app.v17.ai.risk_ai import RiskAI
 from app.v17.ai.tactical_ai import TacticalAI
 from app.v17.core.clock_guard import ClockGuard
+from app.v17.core.tactical_scanner23 import build_tactical_scanner23
 from app.v17.core.context_reader import ContextReader
 from app.v17.core.data_quality_guard import DataQualityGuard
 from app.v17.services.candidate_odds_service import CandidateOddsService
@@ -110,8 +111,16 @@ class JhonnyEliteEngine:
                 analyzed.append(self._error_item(raw, exc))
 
         published = sorted(
-            [x for x in analyzed if x.get("can_publish")],
-            key=lambda x: (sf(x.get("official_confidence")), sf(x.get("official_expected_value")), sf(x.get("value_edge"))),
+            [x for x in analyzed if x.get("can_publish") and x.get("official_can_publish", x.get("can_publish"))
+             and x.get("official_status", x.get("decision_status")) == "CONFIRMED_SIGNAL"],
+            # Master approves first; rank only among valid signals by EV,
+            # quote freshness, data quality and confidence. No fake slots.
+            key=lambda x: (
+                sf(x.get("official_expected_value")),
+                -sf(x.get("odds_age_seconds"), 9999),
+                sf(x.get("data_truth_score")),
+                sf(x.get("official_confidence")),
+            ),
             reverse=True,
         )
 
@@ -119,7 +128,7 @@ class JhonnyEliteEngine:
         # signals and must never be written to the official results tracker.
         shadow_candidates: List[Dict[str, Any]] = []
         if bool(getattr(Config, "SHADOW_MODE", True)):
-            for item in published:
+            for item in published[:6]:
                 item["shadow_original_can_publish"] = True
                 item["can_publish"] = False
                 item["official_can_publish"] = False
@@ -127,9 +136,18 @@ class JhonnyEliteEngine:
                 item["official_status"] = "SHADOW"
                 item["shadow_only"] = True
                 shadow_candidates.append(item)
+            # Excess Shadow-eligible observations remain visible as strong
+            # candidates, not as extra official/Top 6 cards.
+            for item in published[6:]:
+                item["can_publish"] = False
+                item["official_can_publish"] = False
+                item["official_status"] = "STRONG_CANDIDATE"
+                item["decision_status"] = "STRONG_CANDIDATE"
+                item["shadow_only"] = True
+                item["capacity_suppressed"] = True
             published = []
 
-        max_published = max(1, min(6, int(getattr(Config, "SIGNAL_MAX_SIMULTANEOUS", getattr(Config, "MAX_PUBLISHED_SIGNALS_PER_CYCLE", 6)))))
+        max_published = max(0, min(6, int(getattr(Config, "SIGNAL_MAX_SIMULTANEOUS", getattr(Config, "MAX_PUBLISHED_SIGNALS_PER_CYCLE", 6)))))
         overflow = published[max_published:]
         published = published[:max_published]
         for item in overflow:
@@ -240,6 +258,7 @@ class JhonnyEliteEngine:
         clock = self.clock_guard.evaluate(match)
         quality = self.data_quality_guard.evaluate(match)
         quality = self.data_truth_ai.evaluate(match, quality, clock)
+        tactical23 = build_tactical_scanner23(match)
         context = self.context_reader.evaluate(match)
         tactical = self.tactical_ai.evaluate(match, context)
         market_read = self.market_ai.evaluate(match, context, tactical)
@@ -289,7 +308,35 @@ class JhonnyEliteEngine:
                 else sf(getattr(Config, "ODDS_MIN_CANDIDATE_SCORE", 76), 76)
             )
             if candidate_score >= odds_floor:
-                odds = self.odds_service.enrich(match, direction, model_probability)
+                odds = self.odds_service.enrich(match, direction, model_probability, math_evidence=math)
+
+        # A Poisson calculation is not automatically a trustworthy prediction.
+        # In Shadow we may display it as an UNCALIBRATED estimate, but only when
+        # the provider supplied real live statistics and DataTruth/clock pass.
+        # Odds/market availability is intentionally independent of this preview.
+        preview_blockers = []
+        if not match.get("has_live_stats"):
+            preview_blockers.append("NO_LIVE_STATS")
+        if str(quality.get("data_truth_status") or "").upper() in {"INSUFFICIENT", "LOW", "CONFLICTED", "STALE"} or not quality.get("data_valid", False):
+            preview_blockers.append("DATA_TRUTH_NOT_SUFFICIENT")
+        if (clock.get("timestamp_missing") or clock.get("clock_stale") or
+                clock.get("clock_frozen") or clock.get("clock_blockers")):
+            preview_blockers.append("CLOCK_NOT_TRUSTED")
+        if sf(clock.get("data_age_seconds"), 9999) > sf(getattr(Config, "MAX_LIVE_DATA_AGE_SECONDS", 150), 150):
+            preview_blockers.append("LIVE_DATA_TOO_OLD")
+        if str(match.get("scan_phase") or "FULL_SCAN").upper() != "FULL_SCAN":
+            preview_blockers.append("NOT_FULL_SCAN")
+        if not isinstance(math.get("expected_goals_remaining"), (int, float)):
+            preview_blockers.append("MODEL_NOT_AVAILABLE")
+        # In a live match after the usual stoppage window we cannot assume
+        # exactly zero minutes remain: the referee may extend play. A model
+        # horizon of 0 would otherwise imply a misleading 100% no-goal forecast.
+        live_minute = si(match.get("effective_minute") or match.get("api_minute") or match.get("minute"), 0)
+        if live_minute >= 96:
+            preview_blockers.append("MATCH_END_TIME_UNVERIFIED")
+        if str(match.get("status_short") or "").upper() in {"FT", "AET", "PEN", "CANC", "ABD"}:
+            preview_blockers.append("MATCH_NOT_ACTIVE")
+        prediction_status = "EXPERIMENTAL" if not preview_blockers else "N/A"
 
         contradiction = self.contradiction_judge.evaluate(
             direction=direction,
@@ -319,9 +366,12 @@ class JhonnyEliteEngine:
 
         home = si(match.get("home_score"), 0)
         away = si(match.get("away_score"), 0)
-        line = sf(decision.get("official_line"), sf(odds.get("line"), home + away + 0.5))
+        # A target line such as (current goals + 0.5) is NOT a bookmaker's
+        # offered market.  Never show it as a real line without real odds.
+        real_line = sf(decision.get("official_line"), sf(odds.get("line"), 0.0)) if odds.get("odds_available") else 0.0
+        line = real_line if real_line > 0 else None
         official_market_for_key = str(decision.get("official_market") or "NO_BET")
-        signal_key = f"JE20:{match.get('match_id')}:{official_market_for_key}:{line:.1f}"
+        signal_key = f"JE20:{match.get('match_id')}:{official_market_for_key}:{(line or 0.0):.1f}"
 
         support, cautions = self._explain(
             direction=direction,
@@ -358,6 +408,13 @@ class JhonnyEliteEngine:
             "official_can_publish": bool(decision.get("official_can_publish")),
             "candidate_score": round(candidate_score, 2),
             "candidate_detected": candidate,
+            "prediction_status": prediction_status,
+            "prediction_evidence_gaps": preview_blockers,
+            "prediction_disclaimer": "Estimación experimental Poisson; no calibrada fuera de muestra y no constituye señal oficial." if not preview_blockers else "Pronóstico no disponible: evidencia insuficiente o reloj dudoso.",
+            "prediction_calibrated": False,
+            "decision_reason_codes": list(dict.fromkeys(
+                (decision.get("official_blockers") or []) + (decision.get("official_warnings") or []) + blockers
+            )),
             "pre_match_triggered": enrichment_allowed,
             "pre_match_cached": prematch_cached,
             "pre_match_queued": enrichment_deferred,
@@ -378,14 +435,36 @@ class JhonnyEliteEngine:
             "missing_points": cautions[:3],
             "main_reading": decision.get("official_reason", ""),
             "why_signal": decision.get("official_reason", ""),
+            "tactical_scanner23": tactical23,
             "pre_match_profile": pre_match_profile,
             **self._flatten_prematch(pre_match_profile),
             "mathematical_evidence": math,
             **math,
             "candidate_odds": odds,
             "line": line,
+            "theoretical_line_hint": (home + away + 0.5) if direction else None,
             "odds": sf(odds.get("odds"), 0.0),
             "odds_available": bool(odds.get("odds_available")),
+            "valuation_status": odds.get("valuation_status"),
+            "odds_timestamp": odds.get("odds_timestamp"),
+            "odds_age_seconds": odds.get("odds_age_seconds"),
+            "odds_source": odds.get("odds_source"),
+            "bookmaker": odds.get("bookmaker"),
+            "market_id": odds.get("market_id"),
+            "market_name": odds.get("market_name"),
+            "market_period": odds.get("market_period"),
+            "market_type": odds.get("market_type"),
+            "quote_is_live": bool(odds.get("quote_is_live")),
+            "market_verified": bool(odds.get("market_verified")),
+            "fixture_verified": bool(odds.get("fixture_verified")),
+            "odds_status": odds.get("odds_status"),
+            "odds_fixture_id": odds.get("odds_fixture_id"),
+            "expected_value": odds.get("expected_value"),
+            # Probability of winning the EXACT FT half-goal market, not the
+            # heuristic candidate index or a generic next-goal percentage.
+            # Retained for historical calibration only when the exact-line
+            # computation exists. Uncalibrated values remain research-only.
+            "model_probability": odds.get("model_probability_for_value"),
             "implied_probability": sf(odds.get("implied_probability"), 0.0),
             "value_edge": sf(odds.get("value_edge"), 0.0),
             "has_positive_value": bool(odds.get("has_positive_value")),
