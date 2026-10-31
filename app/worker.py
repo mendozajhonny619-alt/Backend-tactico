@@ -60,6 +60,9 @@ def run_worker() -> None:
                 for x in adapter.tracker.pending()
                 if isinstance(x, dict)
             }
+            # The same lifecycle query closes research predictions. No second
+            # worker and no duplicate API request are created for Shadow.
+            pending_ids.update(adapter.shadow_outcomes.pending_fixture_ids())
             missing_tracked = [x for x in pending_ids if x and x not in live_ids]
             tracking_snapshots = fetcher.get_fixture_statuses(missing_tracked) if missing_tracked else []
 
